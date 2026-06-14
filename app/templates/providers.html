@@ -33,25 +33,18 @@
             <option value="">Select a provider first → models will load automatically</option>
           </select>
         </div>
-        <div><label>Role</label>
-          <select id="pr-role">
-            <option value="chat">✍️ Writer (Chat)</option>
-            <option value="supervisor">🛡️ Supervisor</option>
-            <option value="fallback">🔄 Fallback</option>
-          </select>
-        </div>
+        <div><label>Temperature</label><input id="pr-temp" type="number" step="0.1" value="0.8" min="0" max="2"></div>
       </div>
       <div class="form-row two">
-        <div><label>Temperature</label><input id="pr-temp" type="number" step="0.1" value="0.8" min="0" max="2"></div>
         <div>
           <label>API Key</label>
           <div class="text-sm text-dim" style="padding:.45rem 0">
             ✅ Uses <code id="pr-key-source">OPENROUTER_API_KEY</code> from environment
           </div>
         </div>
-      </div>
-      <div style="display:none" id="pr-custom-url-row" class="mb">
-        <label>Base URL (custom only)</label><input id="pr-url" placeholder="https://api.example.com/v1">
+        <div style="display:none" id="pr-custom-url-row">
+          <label>Base URL (custom only)</label><input id="pr-url" placeholder="https://api.example.com/v1">
+        </div>
       </div>
       <button class="btn btn-primary" type="submit">➕ Add Provider</button>
     </form>
