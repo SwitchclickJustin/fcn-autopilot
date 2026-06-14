@@ -30,6 +30,18 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("FCN Auto-Pilot starting up...")
+    
+    # Check if old DB exists at default location and migrate to persistent volume
+    import os, shutil
+    default_db = "fcn.db"
+    persistent_db = settings.database_path
+    if default_db != persistent_db and os.path.exists(default_db):
+        if not os.path.exists(persistent_db):
+            shutil.copy2(default_db, persistent_db)
+            logger.info(f"Migrated DB from {default_db} to {persistent_db}")
+        else:
+            logger.info(f"Persistent DB exists at {persistent_db}, skipping migration")
+    
     db = await get_db()
     await db.close()
     providers = await get_providers()
@@ -77,10 +89,13 @@ async def debug_db():
     size = os.path.getsize(db_path) if exists else 0
     providers = await get_providers()
     personas = await get_personas()
+    # Check if /data is a real volume or ephemeral
+    data_is_mount = os.path.ismount("/data") if os.path.exists("/data") else False
     return {
         "db_path": db_path,
         "exists": exists,
         "size_bytes": size,
+        "data_is_mount": data_is_mount,
         "providers_count": len(providers),
         "personas_count": len(personas),
         "providers": [{"name": p["name"], "model": p["model"], "role": p["role"]} for p in providers],
