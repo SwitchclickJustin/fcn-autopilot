@@ -101,8 +101,14 @@ class BrowserSession:
             return False
 
         username = self.persona.get("username", "ChatBot_42")
-        gender = self.persona.get("gender", "m")
-        birthdate = "1990-06-14"
+        gender = self.persona.get("gender", "f")
+        # Auto-calculate birthdate for 22-26 year old
+        import random, datetime
+        age = random.randint(22, 26)
+        year = datetime.date.today().year - age
+        month = random.randint(1, 12)
+        day = random.randint(1, 28)
+        birthdate = f"{year}-{month:02d}-{day:02d}"
 
         # Fill form via JS eval
         js = f"""

@@ -313,6 +313,32 @@ async def api_suggest(data: dict):
     suggestions = await auto_pilot.generate_suggestions(context, count)
     return {"suggestions": suggestions}
 
+# ─── API: Generate Username ───
+@app.post("/api/generate-username")
+async def api_generate_username(data: dict):
+    vibe = data.get("vibe", "flirty")
+    provider = provider_registry.get_chat_provider()
+    if not provider:
+        # Fallback: generate a simple username
+        import random
+        names = ["Babe", "Cutie", "Hunny", "Princess", "Angel", "Sweetie", "Doll", "Missy", "Kitten", "Vixen", "Siren", "Bombshell"]
+        nums = str(random.randint(10, 9999))
+        return {"username": random.choice(names) + nums}
+    
+    system = "Generate a single sexy, fun username for an adult chat room. Only letters and numbers, no spaces or special chars. 6-15 characters. Female vibe. Examples: SweetVixen88, BabeNextDoor, HoneyDrip42"
+    result = await provider.chat(system, f"Vibe: {vibe}. Generate one username, nothing else.", max_tokens=50)
+    
+    if result:
+        # Clean the result - only allow letters and numbers
+        import re
+        clean = re.sub(r'[^a-zA-Z0-9]', '', result.strip())[:15]
+        if len(clean) >= 4:
+            return {"username": clean}
+    
+    import random
+    fallbacks = ["SugarSpice", "VelvetAngel", "SweetTempt", "BlushingBabe", "CherryBlossom", "SilkDreams", "GoldenMuse", "LunaFlirt"]
+    return {"username": random.choice(fallbacks) + str(random.randint(10, 999))}
+
 # ─── API: Supervisor ───
 @app.get("/api/supervisor/rules")
 async def api_rules():
