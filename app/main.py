@@ -49,7 +49,7 @@ app = FastAPI(title="FCN Auto-Pilot", version="0.1.0", lifespan=lifespan)
 # Static files + templates
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory="app/templates", cache_size=0)
 
 # ─── WebSocket connections ───
 connected_websockets: set = set()
