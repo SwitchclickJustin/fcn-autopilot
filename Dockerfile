@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libffi-dev curl \
+    gcc libffi-dev curl git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
