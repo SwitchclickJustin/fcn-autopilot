@@ -62,11 +62,22 @@
         <input id="p-proxy-custom" placeholder="socks5://user:pass@host:port">
         <div class="text-sm text-dim">Leave blank to use Browser Use's built-in proxy. For Decodo: <code>socks5://sp2ihy1g3e:8tjpKDcFwLem7j5v+2@us.decodo.com:10000</code></div>
       </div>
+      <div class="mb">
+        <label>🌐 Browser Fingerprint</label>
+        <select id="p-ua">
+          <option value="random">🎲 Random (rotate per session)</option>
+          <option value="chrome_win">Chrome / Windows</option>
+          <option value="chrome_mac">Chrome / macOS</option>
+          <option value="safari_mac">Safari / macOS</option>
+          <option value="safari_ios">Safari / iPhone</option>
+          <option value="firefox_linux">Firefox / Linux</option>
+        </select>
+        <div class="text-sm text-dim">Applied to the cloud browser before navigating to FCN.</div>
+      </div>
 
       <!-- Hidden fields (auto-set) -->
       <input type="hidden" id="p-length" value="short">
       <input type="hidden" id="p-proxy" value="us">
-      <input type="hidden" id="p-ua" value="random">
       <input type="hidden" id="p-tz" value="">
       <input type="hidden" id="p-lang" value="">
       <input type="hidden" id="p-fp-rotate" value="per_session">
@@ -163,8 +174,8 @@ async function savePersona(e) {
     default_tone: document.getElementById('p-tone').value,
     default_length: 'short',
     proxy_country: 'us',
-    proxy_custom: '',
-    user_agent: 'random',
+    proxy_custom: document.getElementById('p-proxy-custom').value.trim(),
+    user_agent: document.getElementById('p-ua').value,
     timezone: '',
     language: '',
     fingerprint_rotation: 'per_session',
@@ -211,6 +222,7 @@ async function editPersona(id) {
     document.getElementById('p-goals').value = p.goals || '';
     document.getElementById('p-telegram').value = p.telegram_handle || '';
     document.getElementById('p-proxy-custom').value = p.proxy_custom || '';
+    document.getElementById('p-ua').value = p.user_agent || 'random';
     if (p.default_tone) document.getElementById('p-tone').value = p.default_tone;
     window.scrollTo({top: 0, behavior: 'smooth'});
     toast('✏️ Editing persona');

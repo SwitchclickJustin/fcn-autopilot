@@ -56,6 +56,7 @@ class BrowserSession:
         self.persona = persona
         self.session_id: str = ""
         self.live_url: str = ""
+        self.cdp_url: str = ""
         self.status: str = "created"
         self._connected: bool = False
 
@@ -86,16 +87,27 @@ class BrowserSession:
             self.status = "error"
             return False
 
-        # Parse live URL from output
+        # Parse live URL and CDP URL from output
         for line in result.split("\n"):
-            if "http" in line and "trycloudflare" in line:
-                self.live_url = line.strip()
-            elif "session" in line.lower():
-                # Extract session ID
-                parts = line.split()
-                for p in parts:
-                    if len(p) > 10 and "-" not in p:
-                        self.session_id = p
+            if "live_url" in line:
+                self.live_url = line.split("live_url:")[-1].strip()
+            elif "cdp_url" in line:
+                self.cdp_url = line.split("cdp_url:")[-1].strip()
+
+        # Set user-agent from persona config
+        ua = self.persona.get("user_agent", "random")
+        if ua and ua != "random" and self.cdp_url:
+            # Map friendly names to real UA strings
+            ua_map = {
+                "chrome_win": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
+                "chrome_mac": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
+                "safari_mac": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 Safari/604.1",
+                "safari_ios": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+                "firefox_linux": "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
+            }
+            real_ua = ua_map.get(ua, "")
+            if real_ua:
+                await _bu(["eval", f"navigator.__defineGetter__('userAgent', () => '{real_ua}');"], timeout=5)
 
         # Navigate to FCN
         room = self.persona.get("selected_rooms", ["SextChat"])[0]
