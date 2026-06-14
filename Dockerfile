@@ -18,9 +18,9 @@ COPY . .
 # Create data directory for SQLite (Railway persistent volume)
 RUN mkdir -p /data
 
-# Health check — give the app time to start
+# Health check — use PORT env var (Railway provides this)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+  CMD python3 -c "import os,urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\",8000)}/health')"
 
 EXPOSE 8000
 
