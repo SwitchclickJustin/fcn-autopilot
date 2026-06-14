@@ -101,6 +101,7 @@ async def websocket_endpoint(ws: WebSocket):
         connected_websockets.discard(ws)
 
 # ─── Pages ───
+# ─── Pages ───
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     try:
@@ -109,8 +110,7 @@ async def dashboard(request: Request):
         session = await get_active_session()
         rules = await get_rules()
         ban_events = await get_ban_events()
-        return templates.TemplateResponse("dashboard.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "dashboard.html", context={
             "personas": personas,
             "providers": providers,
             "session": session,
@@ -123,22 +123,19 @@ async def dashboard(request: Request):
         import traceback
         tb = traceback.format_exc()
         logger.error(f"DASHBOARD ERROR: {e}\n{tb}")
-        # Return the error as plain text so we can read it
         return HTMLResponse(f"<pre>{tb}</pre>", status_code=500)
 
 @app.get("/personas", response_class=HTMLResponse)
 async def personas_page(request: Request):
     personas = await get_personas()
-    return templates.TemplateResponse("personas.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "personas.html", context={
         "personas": personas
     })
 
 @app.get("/providers", response_class=HTMLResponse)
 async def providers_page(request: Request):
     providers = await get_providers()
-    return templates.TemplateResponse("providers.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "providers.html", context={
         "providers": providers
     })
 
@@ -146,8 +143,7 @@ async def providers_page(request: Request):
 async def supervisor_page(request: Request):
     rules = await get_rules()
     ban_events = await get_ban_events()
-    return templates.TemplateResponse("supervisor.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "supervisor.html", context={
         "rules": rules,
         "ban_events": ban_events
     })
@@ -158,8 +154,7 @@ async def history_page(request: Request):
     logs = []
     if session:
         logs = await get_chat_log(session["id"], 100)
-    return templates.TemplateResponse("history.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "history.html", context={
         "logs": logs
     })
 
