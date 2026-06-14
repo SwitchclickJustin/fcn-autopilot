@@ -163,6 +163,7 @@ class AutoPilotEngine:
         length = persona.get("default_length", "medium")
         bio = persona.get("bio", "")
         goals = persona.get("goals", "")
+        tg = persona.get("telegram_handle", "")
         username = persona.get("username", "")
 
         system = (
@@ -170,6 +171,8 @@ class AutoPilotEngine:
             f"Tone: {tone}. Message length: {length}.\n"
             f"Personality: {bio}\n"
         )
+        if tg:
+            system += f"\nYour Telegram handle: @{tg}\n"
         if goals:
             system += f"\nYOUR GOALS:\n{goals}\n"
         system += (

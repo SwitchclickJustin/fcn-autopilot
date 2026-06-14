@@ -49,6 +49,14 @@
         <textarea id="p-goals" rows="3" placeholder="What should this persona achieve? e.g., Get guys to ask for my Snap/Kik, keep conversations going, be the one they remember. Be specific about what you want the AI to work toward."></textarea>
         <div class="text-sm text-dim">This prompt is injected into the AI's system instructions. Tell it what to pursue, what to avoid, and how to escalate.</div>
       </div>
+      <div class="mb">
+        <label>📱 Telegram Handle to Promote</label>
+        <div class="flex" style="gap:.35rem">
+          <span style="padding:.45rem 0;color:var(--text-dim)">@</span>
+          <input id="p-telegram" placeholder="sweetvixen88" style="flex:1">
+        </div>
+        <div class="text-sm text-dim">The AI will work this into conversations naturally when the Goals call for it.</div>
+      </div>
 
       <!-- Hidden fields (auto-set) -->
       <input type="hidden" id="p-length" value="short">
@@ -147,6 +155,7 @@ async function savePersona(e) {
     gender: document.getElementById('p-gender').value,
     bio: document.getElementById('p-bio').value.trim(),
     goals: document.getElementById('p-goals').value.trim(),
+    telegram_handle: document.getElementById('p-telegram').value.trim(),
     default_tone: document.getElementById('p-tone').value,
     default_length: 'short',
     proxy_country: 'us',
@@ -193,6 +202,7 @@ async function editPersona(id) {
   document.getElementById('p-gender').value = p.gender || 'f';
   document.getElementById('p-bio').value = p.bio;
   if (p.goals) document.getElementById('p-goals').value = p.goals;
+  if (p.telegram_handle) document.getElementById('p-telegram').value = p.telegram_handle;
   if (p.default_tone) document.getElementById('p-tone').value = p.default_tone;
   window.scrollTo({top: 0, behavior: 'smooth'});
 }

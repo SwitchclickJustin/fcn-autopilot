@@ -15,6 +15,7 @@ class Persona(BaseModel):
     gender: str = "m"
     bio: str = ""
     goals: str = ""
+    telegram_handle: str = ""
     default_tone: str = "casual"
     default_length: str = "medium"
     proxy_country: str = "us"
