@@ -103,21 +103,28 @@ async def websocket_endpoint(ws: WebSocket):
 # ─── Pages ───
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    personas = await get_personas()
-    providers = await get_providers()
-    session = await get_active_session()
-    rules = await get_rules()
-    ban_events = await get_ban_events()
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "personas": personas,
-        "providers": providers,
-        "session": session,
-        "rules": rules,
-        "ban_events": ban_events,
-        "auto_pilot_on": auto_pilot.enabled,
-        "browser_live_url": browser_manager.current_session.live_url if browser_manager.current_session else ""
-    })
+    try:
+        personas = await get_personas()
+        providers = await get_providers()
+        session = await get_active_session()
+        rules = await get_rules()
+        ban_events = await get_ban_events()
+        return templates.TemplateResponse("dashboard.html", {
+            "request": request,
+            "personas": personas,
+            "providers": providers,
+            "session": session,
+            "rules": rules,
+            "ban_events": ban_events,
+            "auto_pilot_on": auto_pilot.enabled,
+            "browser_live_url": browser_manager.current_session.live_url if browser_manager.current_session else ""
+        })
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"DASHBOARD ERROR: {e}\n{tb}")
+        # Return the error as plain text so we can read it
+        return HTMLResponse(f"<pre>{tb}</pre>", status_code=500)
 
 @app.get("/personas", response_class=HTMLResponse)
 async def personas_page(request: Request):
