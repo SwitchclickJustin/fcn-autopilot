@@ -64,9 +64,16 @@ class BrowserSession:
         logger.info(f"Provisioning cloud browser for {self.persona.get('username')}")
 
         proxy = self.persona.get("proxy_country", "us")
+        custom_proxy = self.persona.get("proxy_custom", "")
         
-        # Set Browser Use config for this session
-        await _bu(["config", "set", "cloud_connect_proxy", proxy], timeout=5)
+        if custom_proxy:
+            # Custom proxy (e.g., Decodo socks5://user:pass@host:port)
+            await _bu(["config", "set", "cloud_connect_proxy", "custom"], timeout=5)
+            await _bu(["config", "set", "cloud_connect_custom_proxy", custom_proxy], timeout=5)
+        else:
+            # Built-in Browser Use proxy locations
+            await _bu(["config", "set", "cloud_connect_proxy", proxy], timeout=5)
+
         await _bu(["config", "set", "cloud_connect_recording", "false"], timeout=5)
 
         # Close any existing session first

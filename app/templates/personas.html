@@ -57,11 +57,15 @@
         </div>
         <div class="text-sm text-dim">The AI will work this into conversations naturally when the Goals call for it.</div>
       </div>
+      <div class="mb">
+        <label>🔄 Custom Proxy (optional)</label>
+        <input id="p-proxy-custom" placeholder="socks5://user:pass@host:port">
+        <div class="text-sm text-dim">Leave blank to use Browser Use's built-in proxy. For Decodo: <code>socks5://sp2ihy1g3e:8tjpKDcFwLem7j5v+2@us.decodo.com:10000</code></div>
+      </div>
 
       <!-- Hidden fields (auto-set) -->
       <input type="hidden" id="p-length" value="short">
       <input type="hidden" id="p-proxy" value="us">
-      <input type="hidden" id="p-proxy-custom" value="">
       <input type="hidden" id="p-ua" value="random">
       <input type="hidden" id="p-tz" value="">
       <input type="hidden" id="p-lang" value="">
@@ -206,6 +210,7 @@ async function editPersona(id) {
     document.getElementById('p-bio').value = p.bio || '';
     document.getElementById('p-goals').value = p.goals || '';
     document.getElementById('p-telegram').value = p.telegram_handle || '';
+    document.getElementById('p-proxy-custom').value = p.proxy_custom || '';
     if (p.default_tone) document.getElementById('p-tone').value = p.default_tone;
     window.scrollTo({top: 0, behavior: 'smooth'});
     toast('✏️ Editing persona');
