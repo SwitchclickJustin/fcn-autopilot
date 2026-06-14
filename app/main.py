@@ -268,6 +268,29 @@ async def api_delete_persona(persona_id: str):
 async def api_providers():
     return await get_providers()
 
+# Get available models from provider API
+@app.post("/api/providers/models")
+async def api_provider_models(data: dict):
+    provider_type = data.get("provider_type", "")
+    api_key = data.get("api_key", "")
+    if not api_key:
+        return {"models": []}
+    try:
+        if provider_type == "openrouter":
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get("https://openrouter.ai/api/v1/models", headers={"Authorization": f"Bearer {api_key}"})
+                if r.status_code == 200:
+                    models = r.json().get("data", [])
+                    return {"models": [m["id"] for m in models[:200]]}
+        elif provider_type == "openai":
+            return {"models": ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]}
+        elif provider_type == "anthropic":
+            return {"models": ["claude-sonnet-4", "claude-3-haiku", "claude-3-opus"]}
+    except Exception as e:
+        logger.error(f"Failed to fetch models: {e}")
+    return {"models": []}
+
 @app.post("/api/providers")
 async def api_create_provider(data: LLMProviderCreate):
     provider = await create_provider(data.model_dump())

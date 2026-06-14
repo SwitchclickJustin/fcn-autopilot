@@ -22,8 +22,12 @@
         </div>
       </div>
       <div class="form-row three">
-        <div><label>Model</label><input id="pr-model" value="openai/gpt-4o-mini"></div>
-        <div><label>API Key</label><input id="pr-key" type="password" required></div>
+        <div><label>Model</label>
+          <select id="pr-model" style="width:100%">
+            <option value="">Select provider type + enter API key first</option>
+          </select>
+        </div>
+        <div><label>API Key</label><input id="pr-key" type="password" required onchange="fetchModels()"></div>
         <div><label>Base URL (custom only)</label><input id="pr-url" placeholder="https://api.example.com/v1"></div>
       </div>
       <div class="form-row three">
@@ -76,12 +80,71 @@
 {% endblock %}
 {% block scripts %}
 <script>
+// Fetch models when provider type or API key changes
+async function fetchModels() {
+  const type = document.getElementById('pr-type').value;
+  const key = document.getElementById('pr-key').value.trim();
+  const sel = document.getElementById('pr-model');
+  
+  if (!key || type === 'custom') {
+    if (type === 'custom') {
+      sel.innerHTML = '<option value="">Enter model name manually</option>';
+      sel.style.width = '100%';
+      // Convert to input for custom models
+      const input = document.createElement('input');
+      input.id = 'pr-model';
+      input.placeholder = 'e.g., gpt-4o-mini';
+      input.style.width = '100%';
+      sel.parentNode.replaceChild(input, sel);
+    }
+    return;
+  }
+
+  sel.innerHTML = '<option value="">Loading models...</option>';
+  
+  try {
+    const r = await fetch('/api/providers/models', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({provider_type: type, api_key: key})
+    });
+    const data = await r.json();
+    
+    sel.innerHTML = '';
+    if (data.models && data.models.length > 0) {
+      // Show most popular first
+      const popular = data.models.filter(m => m.includes('gpt-4o-mini') || m.includes('claude-sonnet') || m.includes('claude-3.5') || m.includes('llama-3') || m.includes('deepseek') || m.includes('mistral'));
+      const rest = data.models.filter(m => !popular.includes(m));
+      
+      if (popular.length > 0) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = '⭐ Popular';
+        popular.forEach(m => { const o = document.createElement('option'); o.value = m; o.textContent = m; optgroup.appendChild(o); });
+        sel.appendChild(optgroup);
+      }
+      const optgroup2 = document.createElement('optgroup');
+      optgroup2.label = 'All Models (' + data.models.length + ')';
+      rest.forEach(m => { const o = document.createElement('option'); o.value = m; o.textContent = m; optgroup2.appendChild(o); });
+      sel.appendChild(optgroup2);
+    } else {
+      sel.innerHTML = '<option value="">No models found — check your API key</option>';
+    }
+  } catch(e) {
+    sel.innerHTML = '<option value="">Error loading models: ' + e.message + '</option>';
+  }
+}
+
+// Re-fetch when provider type changes
+document.getElementById('pr-type').addEventListener('change', fetchModels);
+
 async function addProvider(e) {
   e.preventDefault();
+  const modelEl = document.getElementById('pr-model');
+  const model = modelEl.tagName === 'SELECT' ? modelEl.value : modelEl.value.trim();
   const data = {
     name: document.getElementById('pr-name').value.trim(),
     provider_type: document.getElementById('pr-type').value,
-    model: document.getElementById('pr-model').value.trim(),
+    model: model,
     api_key: document.getElementById('pr-key').value.trim(),
     base_url: document.getElementById('pr-url').value.trim(),
     temperature: parseFloat(document.getElementById('pr-temp').value),
