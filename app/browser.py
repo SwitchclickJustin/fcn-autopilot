@@ -63,8 +63,11 @@ class BrowserSession:
         """Provision a cloud browser and connect. Returns True on success."""
         logger.info(f"Provisioning cloud browser for {self.persona.get('username')}")
 
-        proxy = self.persona.get("proxy_custom", "") or self.persona.get("proxy_country", "us")
-        proxy_flag = f"--proxy {proxy}" if proxy else ""
+        proxy = self.persona.get("proxy_country", "us")
+        
+        # Set Browser Use config for this session
+        await _bu(["config", "set", "cloud_connect_proxy", proxy], timeout=5)
+        await _bu(["config", "set", "cloud_connect_recording", "false"], timeout=5)
 
         # Close any existing session first
         await _bu(["close"])
