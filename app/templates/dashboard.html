@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+{% block title %}FCN Auto-Pilot — Dashboard{% endblock %}
+{% block content %}
+
+<h2>Dashboard</h2>
+<p class="subtitle">Live browser view, auto-pilot controls, and chat suggestions.</p>
+
+<!-- Status Bar -->
+<div class="status-bar">
+  <span class="status-dot" id="status-dot"></span>
+  <span id="status-text">
+    {% if session %}🟢 Connected as {{ session.username }}{% else %}⏸ Idle{% endif %}
+  </span>
+  <span id="ap-status" style="display:none" class="text-orange">🤖 AUTO-PILOT ACTIVE</span>
+  <span style="flex:1"></span>
+  <span id="status-msgs" class="text-sm text-dim">
+    {% if session %}{{ session.messages_sent_today }} msgs today{% endif %}
+  </span>
+</div>
+
+<!-- Auto-Pilot Toggle + Controls -->
+<div class="card">
+  <div class="flex flex-wrap gap-1">
+    <div class="flex" style="gap:.75rem;align-items:center">
+      <label class="toggle">
+        <input type="checkbox" id="ap-toggle" onchange="toggleAutoPilot(this.checked)">
+        <span class="slider"></span>
+      </label>
+      <span><strong id="ap-label">Auto-Pilot OFF</strong></span>
+    </div>
+    <span style="flex:1"></span>
+    <select id="ap-persona" style="width:auto;max-width:200px">
+      <option value="">Select persona...</option>
+      {% for p in personas %}
+      <option value="{{ p.id }}" {% if session and session.persona_id == p.id %}selected{% endif %}>
+        {{ p.name }} ({{ p.username }})
+      </option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-primary" onclick="startSession()" id="btn-start">▶ Start Session</button>
+    <button class="btn btn-red" onclick="stopSession()" id="btn-stop" style="display:none">⏹ Stop</button>
+  </div>
+</div>
+
+<!-- Main Grid: Live View + Controls -->
+<div class="grid-2">
+
+  <!-- Left: Live Browser View -->
+  <div>
+    <div class="card" style="margin-bottom:0">
+      <div class="card-title">Live Browser</div>
+      {% if browser_live_url %}
+      <div class="browser-frame">
+        <iframe src="{{ browser_live_url }}" allow="clipboard-read; clipboard-write"></iframe>
+      </div>
+      {% else %}
+      <div class="browser-frame" id="browser-placeholder">
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);flex-direction:column;gap:.5rem;font-size:.9rem">
+          <span style="font-size:2rem">🌐</span>
+          <span>Start a session to see the live browser.</span>
+          <span class="text-sm">Browser Use Cloud will provision a remote Chromium.</span>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right: Chat Feed + Suggestions -->
+  <div>
+    <!-- Chat Feed -->
+    <div class="card" style="margin-bottom:.75rem">
+      <div class="card-title">Chat Feed</div>
+      <div class="chat-feed" id="chat-feed">
+        <p class="empty">Start a session to see chat messages.</p>
+      </div>
+    </div>
+
+    <!-- Quick Send -->
+    <div class="card" style="margin-bottom:.75rem">
+      <div class="card-title">Quick Send</div>
+      <div class="flex" style="gap:.5rem">
+        <input type="text" id="quick-msg" placeholder="Type a message..." style="flex:1" onkeydown="if(event.key==='Enter')sendMessage()">
+        <button class="btn btn-primary" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <!-- Suggestions -->
+    <div class="card" style="margin-bottom:0">
+      <div class="card-title">Suggestions</div>
+      <div class="form-row">
+        <div>
+          <label>Tone</label>
+          <select id="suggest-tone">
+            <option value="casual">Casual</option>
+            <option value="flirty">Flirty</option>
+            <option value="teasing">Teasing</option>
+            <option value="deep">Deep</option>
+            <option value="funny">Funny</option>
+            <option value="direct">Direct</option>
+          </select>
+        </div>
+        <div>
+          <label>Length</label>
+          <select id="suggest-length">
+            <option value="short">Short</option>
+            <option value="medium" selected>Medium</option>
+            <option value="long">Long</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="generateSuggestions()">✨ Generate Suggestions</button>
+      <div id="suggestions-area" style="margin-top:.75rem"></div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+// ─── WebSocket ───
+let ws = null;
+let lastMessages = [];
+
+function connectWS() {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'chat_update' && msg.data.messages) {
+      updateChatFeed(msg.data.messages);
+    }
+    if (msg.type === 'status') {
+      if (msg.data.auto_pilot) {
+        document.getElementById('ap-toggle').checked = true;
+        document.getElementById('ap-label').textContent = '🤖 Auto-Pilot ON';
+        document.getElementById('ap-status').style.display = 'inline';
+        document.getElementById('status-dot').className = 'status-dot autopilot';
+      }
+    }
+  };
+
+  ws.onclose = () => setTimeout(connectWS, 3000);
+}
+
+// ─── Chat Feed ───
+function updateChatFeed(messages) {
+  const feed = document.getElementById('chat-feed');
+  if (JSON.stringify(messages) !== JSON.stringify(lastMessages)) {
+    lastMessages = messages;
+    feed.innerHTML = messages.map(m => `<div class="chat-msg">${escHtml(m)}</div>`).join('');
+    feed.scrollTop = feed.scrollHeight;
+  }
+}
+
+// ─── Polling fallback (if WS disconnects) ───
+let pollTimer = null;
+function startPolling() {
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/session/state');
+      const data = await r.json();
+      if (data.messages) updateChatFeed(data.messages);
+      if (data.live_url) {
+        const ph = document.getElementById('browser-placeholder');
+        if (ph) {
+          ph.innerHTML = `<iframe src="${data.live_url}" allow="clipboard-read; clipboard-write" style="width:100%;height:100%;border:none"></iframe>`;
+          ph.id = 'browser-frame-active';
+        }
+      }
+    } catch(e) {}
+  }, 3000);
+}
+
+// ─── Session ───
+async function startSession() {
+  const personaId = document.getElementById('ap-persona').value;
+  if (!personaId) { toast('Select a persona first'); return; }
+
+  const btn = document.getElementById('btn-start');
+  btn.disabled = true; btn.textContent = '⏳ Connecting...';
+
+  try {
+    const r = await fetch('/api/session/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({persona_id: personaId})
+    });
+    const data = await r.json();
+    if (data.error) { toast('Error: ' + data.error); btn.disabled = false; btn.textContent = '▶ Start Session'; return; }
+
+    document.getElementById('status-text').textContent = '🟢 Connected as ' + (data.username || '');
+    document.getElementById('status-dot').className = 'status-dot connected';
+    document.getElementById('btn-start').style.display = 'none';
+    document.getElementById('btn-stop').style.display = 'inline-flex';
+
+    if (data.live_url) {
+      const ph = document.getElementById('browser-placeholder');
+      if (ph) {
+        ph.innerHTML = `<iframe src="${data.live_url}" allow="clipboard-read; clipboard-write" style="width:100%;height:100%;border:none"></iframe>`;
+        ph.id = 'browser-frame-active';
+      }
+    }
+
+    toast('Session started!');
+    startPolling();
+  } catch(e) {
+    toast('Failed: ' + e.message);
+  }
+  btn.disabled = false; btn.textContent = '▶ Start Session';
+}
+
+async function stopSession() {
+  await fetch('/api/session/stop', {method: 'POST'});
+  document.getElementById('status-text').textContent = '⏸ Idle';
+  document.getElementById('status-dot').className = 'status-dot';
+  document.getElementById('btn-start').style.display = 'inline-flex';
+  document.getElementById('btn-stop').style.display = 'none';
+  if (pollTimer) clearInterval(pollTimer);
+  toast('Session stopped');
+}
+
+// ─── Auto-Pilot ───
+async function toggleAutoPilot(enabled) {
+  try {
+    const r = await fetch('/api/session/toggle-autopilot', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled})
+    });
+    const data = await r.json();
+    document.getElementById('ap-label').textContent = data.auto_pilot ? '🤖 Auto-Pilot ON' : 'Auto-Pilot OFF';
+    document.getElementById('ap-status').style.display = data.auto_pilot ? 'inline' : 'none';
+    document.getElementById('status-dot').className = data.auto_pilot ? 'status-dot autopilot' : 'status-dot connected';
+    toast(data.auto_pilot ? 'Auto-Pilot engaged!' : 'Auto-Pilot disengaged');
+  } catch(e) {
+    toast('Error: ' + e.message);
+  }
+}
+
+// ─── Send Message ───
+async function sendMessage() {
+  const input = document.getElementById('quick-msg');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  try {
+    await fetch('/api/session/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg})
+    });
+    input.value = '';
+    toast('Sent!');
+  } catch(e) {
+    toast('Send failed: ' + e.message);
+  }
+}
+
+// ─── Suggestions ───
+async function generateSuggestions() {
+  const area = document.getElementById('suggestions-area');
+  area.innerHTML = '<div class="flex text-sm text-dim"><span class="spinner"></span> Generating...</div>';
+  const tone = document.getElementById('suggest-tone').value;
+
+  try {
+    const r = await fetch('/api/suggest', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        context: lastMessages.join(' | '),
+        count: 5
+      })
+    });
+    const data = await r.json();
+    area.innerHTML = '';
+    if (data.suggestions) {
+      data.suggestions.forEach((s, i) => {
+        const card = document.createElement('div');
+        card.className = 'suggestion-card';
+        card.innerHTML = `<div class="num">${i+1}</div>
+          <div class="text">${escHtml(s)}</div>
+          <div class="flex gap-1">
+            <button class="btn btn-green btn-sm" onclick="quickSend('${escAttr(s)}')">Send</button>
+            <button class="btn btn-secondary btn-sm" onclick="copyText('${escAttr(s)}')">Copy</button>
+          </div>`;
+        area.appendChild(card);
+      });
+    }
+  } catch(e) {
+    area.innerHTML = '<p class="text-red text-sm">Error: ' + e.message + '</p>';
+  }
+}
+
+function quickSend(msg) {
+  document.getElementById('quick-msg').value = msg;
+  sendMessage();
+}
+
+function copyText(msg) { navigator.clipboard.writeText(msg).then(() => toast('Copied!')).catch(() => {}); }
+
+// ─── Utilities ───
+function escHtml(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+function escAttr(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
+
+// ─── Init ───
+connectWS();
+
+// Check for existing session on load
+{% if session and session.status == 'active' %}
+document.getElementById('btn-start').style.display = 'none';
+document.getElementById('btn-stop').style.display = 'inline-flex';
+startPolling();
+{% endif %}
+</script>
+{% endblock %}

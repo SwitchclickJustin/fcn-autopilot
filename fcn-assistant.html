@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FCN Chat Assistant</title>
+<style>
+/* ─── Reset & Base ─── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0f1218;
+  --surface: #1a1f2a;
+  --surface-2: #232a38;
+  --border: #2d3648;
+  --text: #d6dee8;
+  --text-dim: #8892a4;
+  --accent: #6c8cff;
+  --accent-hover: #8aa4ff;
+  --green: #34d399;
+  --orange: #f59e0b;
+  --red: #ef4444;
+  --radius: 8px;
+}
+html { font-size: 15px; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.5;
+  display: flex; min-height: 100vh;
+}
+
+/* ─── Sidebar ─── */
+.sidebar {
+  width: 240px; background: var(--surface); border-right: 1px solid var(--border);
+  padding: 1.25rem 0; display: flex; flex-direction: column; flex-shrink: 0;
+}
+.sidebar h1 {
+  font-size: 0.9rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-dim); padding: 0 1.25rem 1rem;
+  border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.6rem 1.25rem; cursor: pointer; color: var(--text-dim);
+  font-size: 0.9rem; border: none; background: none; width: 100%; text-align: left;
+  transition: all 0.15s;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--text); }
+.nav-item.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+/* ─── Main Content ─── */
+.main { flex: 1; padding: 2rem; overflow-y: auto; max-width: 900px; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* ─── Headings ─── */
+h2 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.3rem; }
+.subtitle { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 1.5rem; }
+
+/* ─── Cards ─── */
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1.25rem; margin-bottom: 1rem;
+}
+.card-title { font-size: 0.85rem; font-weight: 600; color: var(--text-dim); margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* ─── Form Elements ─── */
+label { display: block; font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.35rem; }
+input, select, textarea {
+  width: 100%; padding: 0.55rem 0.75rem; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: 0.9rem; font-family: inherit;
+  transition: border-color 0.15s;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+textarea { resize: vertical; min-height: 80px; font-size: 0.85rem; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem; }
+.form-row.three { grid-template-columns: 1fr 1fr 1fr; }
+.mb { margin-bottom: 0.75rem; }
+
+/* ─── Buttons ─── */
+.btn {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0.55rem 1.1rem; border-radius: var(--radius); border: none;
+  font-size: 0.9rem; font-weight: 500; cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { border-color: var(--accent); }
+.btn-danger { background: color-mix(in srgb, var(--red) 20%, transparent); color: var(--red); }
+.btn-danger:hover { background: color-mix(in srgb, var(--red) 30%, transparent); }
+.btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+.btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+
+/* ─── Suggestions ─── */
+.suggestion-card {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0.85rem 1rem; margin-bottom: 0.6rem;
+  display: flex; align-items: flex-start; gap: 0.75rem; cursor: pointer;
+  transition: border-color 0.15s;
+}
+.suggestion-card:hover { border-color: var(--accent); }
+.suggestion-card .num {
+  font-size: 0.8rem; font-weight: 700; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.suggestion-card .text { flex: 1; font-size: 0.95rem; line-height: 1.45; padding-top: 2px; }
+.suggestion-card .copy-badge {
+  font-size: 0.7rem; color: var(--green); font-weight: 500;
+  opacity: 0; transition: opacity 0.2s; white-space: nowrap; flex-shrink: 0;
+}
+.suggestion-card.copied .copy-badge { opacity: 1; }
+#suggestions:empty::after {
+  content: 'Generate suggestions above to see them here.'; display: block;
+  color: var(--text-dim); font-size: 0.85rem; font-style: italic; padding: 1rem 0;
+}
+
+/* ─── Options Chips ─── */
+.chip-group { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.chip {
+  padding: 0.3rem 0.7rem; border-radius: 100px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim); font-size: 0.8rem; cursor: pointer;
+  transition: all 0.15s;
+}
+.chip:hover { border-color: var(--accent); color: var(--text); }
+.chip.active { background: color-mix(in srgb, var(--accent) 20%, transparent); border-color: var(--accent); color: var(--text); }
+
+/* ─── Toast ─── */
+.toast {
+  position: fixed; bottom: 1.5rem; right: 1.5rem;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0.75rem 1.25rem; font-size: 0.85rem;
+  opacity: 0; transform: translateY(10px); transition: all 0.25s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+/* ─── Persona List ─── */
+.persona-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.7rem 0.85rem; border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 0.5rem; cursor: pointer; transition: border-color 0.15s;
+}
+.persona-item:hover { border-color: var(--accent); }
+.persona-item .name { font-weight: 500; }
+.persona-item .meta { font-size: 0.8rem; color: var(--text-dim); }
+.persona-item .actions { display: flex; gap: 0.4rem; }
+
+/* ─── Loading ─── */
+.spinner {
+  display: inline-block; width: 18px; height: 18px;
+  border: 2px solid var(--border); border-top: 2px solid var(--accent);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { display: flex; align-items: center; gap: 0.6rem; color: var(--text-dim); font-size: 0.85rem; margin: 0.75rem 0; }
+
+/* ─── Responsive ─── */
+@media (max-width: 768px) {
+  body { flex-direction: column; }
+  .sidebar { width: 100%; flex-direction: row; padding: 0; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); }
+  .sidebar h1 { display: none; }
+  .nav-item { padding: 0.75rem 1rem; white-space: nowrap; width: auto; }
+  .main { padding: 1rem; }
+  .form-row, .form-row.three { grid-template-columns: 1fr; }
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<!-- ─── Sidebar ─── -->
+<nav class="sidebar">
+  <h1>FCN Assistant</h1>
+  <button class="nav-item active" data-page="chat">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+    Chat Assistant
+  </button>
+  <button class="nav-item" data-page="personas">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    Personas
+  </button>
+  <button class="nav-item" data-page="settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    Settings
+  </button>
+</nav>
+
+<!-- ─── Main Content ─── -->
+<div class="main">
+
+  <!-- ═══ Chat Assistant Page ═══ -->
+  <div class="page active" id="page-chat">
+    <h2>Chat Assistant</h2>
+    <p class="subtitle">Paste recent chat messages, set your tone, and get response suggestions to choose from.</p>
+
+    <!-- Persona selector -->
+    <div class="card">
+      <div class="card-title">Active Persona</div>
+      <div class="form-row">
+        <div>
+          <label for="chat-persona">Persona</label>
+          <select id="chat-persona"></select>
+        </div>
+        <div>
+          <label for="chat-username">Username (override)</label>
+          <input type="text" id="chat-username" placeholder="Leave blank to use persona's default">
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat Context -->
+    <div class="card">
+      <div class="card-title">Chat Context</div>
+      <div class="mb">
+        <label for="chat-context">Paste the last ~10 messages from the room (include usernames if visible)</label>
+        <textarea id="chat-context" rows="6" placeholder="e.g.&#10;[Room] Hey anyone up for chatting?&#10;Sarah22: hey there! hows ur night?&#10;[Room] pretty good, just chilling. you?&#10;Sarah22: same. what are you into?"></textarea>
+      </div>
+      <div class="form-row three">
+        <div>
+          <label for="chat-mood">Room vibe / your mood</label>
+          <select id="chat-mood">
+            <option value="casual">Casual / Chatty</option>
+            <option value="flirty">Flirty / Playful</option>
+            <option value="teasing">Teasing / Banter</option>
+            <option value="deep">Deep / Thoughtful</option>
+            <option value="funny">Funny / Witty</option>
+            <option value="direct">Direct / Forward</option>
+            <option value="mysterious">Mysterious / Cool</option>
+          </select>
+        </div>
+        <div>
+          <label for="chat-length">Message length</label>
+          <select id="chat-length">
+            <option value="short">Short (1-2 lines)</option>
+            <option value="medium" selected>Medium (2-4 lines)</option>
+            <option value="long">Long (paragraph)</option>
+          </select>
+        </div>
+        <div>
+          <label for="chat-count">Suggestions</label>
+          <select id="chat-count">
+            <option value="3">3 options</option>
+            <option value="4">4 options</option>
+            <option value="5" selected>5 options</option>
+          </select>
+        </div>
+      </div>
+      <div class="mb">
+        <label for="chat-custom">Custom instruction (optional)</label>
+        <input type="text" id="chat-custom" placeholder="e.g., mention that you're into cooking, keep it subtle">
+      </div>
+      <button class="btn btn-primary" id="btn-generate">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        Generate Suggestions
+      </button>
+    </div>
+
+    <!-- Suggestions -->
+    <div class="card">
+      <div class="card-title">Suggestions <span id="suggestion-count" style="font-weight:400;text-transform:none;color:var(--text-dim);font-size:0.8rem"></span></div>
+      <div id="suggestions"></div>
+      <div id="loading" style="display:none">
+        <div class="loading-text">
+          <span class="spinner"></span>
+          <span>Generating suggestions...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Openers -->
+    <div class="card">
+      <div class="card-title">Quick Openers</div>
+      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem">Generate conversation starters for when you enter the room.</p>
+      <button class="btn btn-secondary btn-sm" id="btn-openers">Generate Openers</button>
+      <div id="openers-result" style="margin-top:0.75rem"></div>
+    </div>
+  </div>
+
+  <!-- ═══ Personas Page ═══ -->
+  <div class="page" id="page-personas">
+    <h2>Personas</h2>
+    <p class="subtitle">Create and manage personas — each with their own style, bio, and defaults.</p>
+
+    <div class="card">
+      <div class="card-title">New Persona</div>
+      <div class="form-row three">
+        <div><label for="p-name">Persona Name</label><input type="text" id="p-name" placeholder="e.g., Cool Chris"></div>
+        <div><label for="p-username">Default Username</label><input type="text" id="p-username" placeholder="e.g., ChrisTX_90"></div>
+        <div><label for="p-gender">Gender</label>
+          <select id="p-gender"><option value="">Select...</option><option value="m">Male</option><option value="f">Female</option><option value="o">Other/Couple</option></select>
+        </div>
+      </div>
+      <div class="form-row two">
+        <div><label for="p-age">Age Range</label><input type="text" id="p-age" placeholder="e.g., 28-35 or leave blank"></div>
+        <div><label for="p-vibe">Default Vibe</label>
+          <select id="p-vibe">
+            <option value="casual">Casual / Chatty</option>
+            <option value="flirty">Flirty / Playful</option>
+            <option value="teasing">Teasing / Banter</option>
+            <option value="deep">Deep / Thoughtful</option>
+            <option value="funny">Funny / Witty</option>
+            <option value="direct">Direct / Forward</option>
+            <option value="mysterious">Mysterious / Cool</option>
+          </select>
+        </div>
+      </div>
+      <div class="mb">
+        <label for="p-bio">Persona Bio / Personality</label>
+        <textarea id="p-bio" rows="3" placeholder="Describe their personality, interests, communication style. e.g., Confident and playful. Loves music, hiking, and cooking. Keeps messages short and flirty with lots of teasing."></textarea>
+      </div>
+      <button class="btn btn-primary" id="btn-save-persona">Save Persona</button>
+      <button class="btn btn-secondary" style="margin-left:0.5rem" id="btn-cancel-edit">Cancel</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Saved Personas</div>
+      <div id="persona-list"></div>
+    </div>
+  </div>
+
+  <!-- ═══ Settings Page ═══ -->
+  <div class="page" id="page-settings">
+    <h2>Settings</h2>
+    <p class="subtitle">Configure your LLM endpoint for generating suggestions.</p>
+
+    <div class="card">
+      <div class="card-title">API Provider</div>
+      <div class="mb">
+        <label for="api-provider">Provider</label>
+        <select id="api-provider">
+          <option value="openrouter">OpenRouter</option>
+          <option value="openai">OpenAI</option>
+          <option value="custom">Custom (OpenAI-compatible)</option>
+        </select>
+      </div>
+      <div class="mb">
+        <label for="api-model">Model</label>
+        <input type="text" id="api-model" placeholder="e.g., openai/gpt-4o-mini">
+      </div>
+      <div class="mb">
+        <label for="api-key">API Key</label>
+        <input type="password" id="api-key" placeholder="sk-...">
+      </div>
+      <div class="mb">
+        <label for="api-url">Base URL (custom only)</label>
+        <input type="text" id="api-url" placeholder="https://api.openai.com/v1">
+      </div>
+      <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Data</div>
+      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.75rem">All data is stored in your browser's localStorage. No data ever leaves your machine except API calls to your configured LLM provider.</p>
+      <button class="btn btn-danger btn-sm" id="btn-clear-all">Clear All Data</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ─── Toast ─── -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════════
+let state = {
+  settings: { provider: 'openrouter', model: 'openai/gpt-4o-mini', key: '', url: '' },
+  personas: [],
+  activePersonaId: null
+};
+
+// ═══════════════════════════════════════════════════════════════
+// Persistence (localStorage)
+// ═══════════════════════════════════════════════════════════════
+function loadState() {
+  try {
+    const saved = localStorage.getItem('fcn_assistant_state');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      state = { ...state, ...parsed };
+    }
+  } catch (e) { console.warn('State load error:', e); }
+}
+
+function saveState() {
+  try {
+    localStorage.setItem('fcn_assistant_state', JSON.stringify({
+      settings: state.settings,
+      personas: state.personas,
+      activePersonaId: state.activePersonaId
+    }));
+  } catch (e) { console.warn('State save error:', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Toast
+// ═══════════════════════════════════════════════════════════════
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Personas
+// ═══════════════════════════════════════════════════════════════
+function renderPersonaList() {
+  const list = document.getElementById('persona-list');
+  if (state.personas.length === 0) {
+    list.innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem;font-style:italic">No personas yet. Create one above.</p>';
+    return;
+  }
+  list.innerHTML = state.personas.map(p => `
+    <div class="persona-item">
+      <div>
+        <div class="name">${escHtml(p.name)}</div>
+        <div class="meta">${escHtml(p.username)} · ${p.gender ? p.gender.toUpperCase() : '?'} · ${escHtml(p.age || 'any age')} · ${p.vibe || 'casual'}</div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-secondary btn-sm" onclick="editPersona('${p.id}')">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deletePersona('${p.id}')">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderPersonaSelector() {
+  const sel = document.getElementById('chat-persona');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">-- No persona --</option>' +
+    state.personas.map(p => `<option value="${p.id}" ${p.id === state.activePersonaId ? 'selected' : ''}>${escHtml(p.name)} (${escHtml(p.username)})</option>`).join('');
+  if (current) sel.value = current;
+}
+
+function saveCurrentPersona() {
+  const id = document.getElementById('p-name').dataset.editId || 'p_' + Date.now();
+  const data = {
+    id,
+    name: document.getElementById('p-name').value.trim(),
+    username: document.getElementById('p-username').value.trim(),
+    gender: document.getElementById('p-gender').value,
+    age: document.getElementById('p-age').value.trim(),
+    vibe: document.getElementById('p-vibe').value,
+    bio: document.getElementById('p-bio').value.trim()
+  };
+  if (!data.name || !data.username) { showToast('Name and username are required'); return; }
+  
+  const idx = state.personas.findIndex(p => p.id === id);
+  if (idx >= 0) state.personas[idx] = data;
+  else state.personas.push(data);
+  
+  state.activePersonaId = id;
+  saveState();
+  renderPersonaList();
+  renderPersonaSelector();
+  clearPersonaForm();
+  showToast('Persona saved');
+}
+
+function editPersona(id) {
+  const p = state.personas.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('p-name').value = p.name;
+  document.getElementById('p-name').dataset.editId = p.id;
+  document.getElementById('p-username').value = p.username;
+  document.getElementById('p-gender').value = p.gender;
+  document.getElementById('p-age').value = p.age;
+  document.getElementById('p-vibe').value = p.vibe || 'casual';
+  document.getElementById('p-bio').value = p.bio;
+  document.getElementById('btn-save-persona').textContent = 'Update Persona';
+  document.getElementById('btn-cancel-edit').style.display = 'inline-flex';
+}
+
+function deletePersona(id) {
+  if (!confirm('Delete this persona?')) return;
+  state.personas = state.personas.filter(p => p.id !== id);
+  if (state.activePersonaId === id) state.activePersonaId = null;
+  saveState();
+  renderPersonaList();
+  renderPersonaSelector();
+  showToast('Persona deleted');
+}
+
+function clearPersonaForm() {
+  ['p-name','p-username','p-gender','p-age','p-bio'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el.tagName === 'SELECT') el.selectedIndex = 0;
+    else el.value = '';
+  });
+  document.getElementById('p-name').dataset.editId = '';
+  document.getElementById('btn-save-persona').textContent = 'Save Persona';
+  document.getElementById('btn-cancel-edit').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LLM Integration
+// ═══════════════════════════════════════════════════════════════
+async function callLLM(systemPrompt, userPrompt, count = 5) {
+  const { provider, model, key, url } = state.settings;
+  if (!key) { showToast('Set your API key in Settings first'); return null; }
+  
+  let apiUrl, apiModel, apiKey;
+  if (provider === 'openrouter') {
+    apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+    apiModel = model || 'openai/gpt-4o-mini';
+    apiKey = key;
+  } else if (provider === 'openai') {
+    apiUrl = 'https://api.openai.com/v1/chat/completions';
+    apiModel = model || 'gpt-4o-mini';
+    apiKey = key;
+  } else {
+    apiUrl = url || 'https://api.openai.com/v1/chat/completions';
+    apiModel = model || 'gpt-4o-mini';
+    apiKey = key;
+  }
+
+  try {
+    const resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        ...(provider === 'openrouter' ? { 'HTTP-Referer': window.location.origin, 'X-Title': 'FCN Assistant' } : {})
+      },
+      body: JSON.stringify({
+        model: apiModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.8,
+        max_tokens: 1000
+      })
+    });
+    
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => resp.statusText);
+      showToast(`API Error (${resp.status}): ${err.substring(0, 100)}`);
+      return null;
+    }
+    
+    const data = await resp.json();
+    return data.choices?.[0]?.message?.content || null;
+  } catch (e) {
+    showToast(`Network error: ${e.message}`);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Suggestion Generation
+// ═══════════════════════════════════════════════════════════════
+async function generateSuggestions() {
+  const context = document.getElementById('chat-context').value.trim();
+  if (!context) { showToast('Paste some chat context first'); return; }
+
+  const personaId = document.getElementById('chat-persona').value;
+  const persona = state.personas.find(p => p.id === personaId);
+  const username = document.getElementById('chat-username').value.trim() || persona?.username || '';
+  const mood = document.getElementById('chat-mood').value;
+  const length = document.getElementById('chat-length').value;
+  const custom = document.getElementById('chat-custom').value.trim();
+  const count = parseInt(document.getElementById('chat-count').value);
+
+  // Build system prompt
+  let system = `You are a chat response assistant. Your job is to suggest ${count} realistic, natural-sounding chat responses that a real person would send in an adult chat room (18+).`;
+
+  if (persona) {
+    system += `\n\nPERSONA: ${persona.name}`;
+    if (persona.bio) system += `\nPersonality: ${persona.bio}`;
+    if (persona.age) system += `\nAge range: ${persona.age}`;
+    if (persona.gender) system += `\nGender: ${persona.gender.toUpperCase()}`;
+  }
+
+  system += `\n\nMOOD / TONE: ${mood.replace(/-/g, ' ')}`;
+  system += `\nMESSAGE LENGTH: ${length} (${length === 'short' ? '1-2 lines, punchy' : length === 'medium' ? '2-4 lines, natural' : 'paragraph length, more detailed'})`;
+
+  if (username) system += `\nYOUR USERNAME: ${username}`;
+  if (custom) system += `\nCUSTOM INSTRUCTION: ${custom}`;
+
+  system += `\n\nIMPORTANT RULES:
+- Make each suggestion sound like a DIFFERENT approach/style so the user has real choices
+- Use natural, conversational language — not overly poetic or formal
+- Match the vibe of the chat context
+- Vary the suggestions: one direct, one playful, one asking a question, etc.
+- Number them 1-${count}
+- NEVER include the username prefix (like "Chris: ") — just the message text
+- Keep it authentic to how real people talk in chat rooms
+- DO NOT include explanations, just the numbered suggestions`;
+
+  const userMsg = `Recent chat messages:\n"""\n${context}\n"""\n\nGenerate ${count} response suggestions following my persona and tone.`;
+
+  const loading = document.getElementById('loading');
+  const result = document.getElementById('suggestions');
+  const countLabel = document.getElementById('suggestion-count');
+  
+  loading.style.display = 'block';
+  result.innerHTML = '';
+  countLabel.textContent = '';
+
+  const content = await callLLM(system, userMsg, count);
+  
+  loading.style.display = 'none';
+  
+  if (!content) {
+    result.innerHTML = '<p style="color:var(--red);font-size:0.85rem">Failed to generate suggestions. Check your API key and try again.</p>';
+    return;
+  }
+
+  // Parse numbered suggestions
+  const lines = content.split('\n').filter(l => l.trim());
+  const suggestions = [];
+  let current = '';
+  
+  for (const line of lines) {
+    const match = line.match(/^(\d+)[.)]\s*(.*)/);
+    if (match) {
+      if (current.trim()) suggestions.push(current.trim());
+      current = match[2];
+    } else {
+      current += ' ' + line;
+    }
+  }
+  if (current.trim()) suggestions.push(current.trim());
+
+  if (suggestions.length === 0) {
+    // Fallback: use the whole content
+    result.innerHTML = `<div class="suggestion-card" onclick="copyText(this)"><div class="num">1</div><div class="text">${escHtml(content)}</div><span class="copy-badge">✓ Copied</span></div>`;
+    countLabel.textContent = '(1)';
+    return;
+  }
+
+  countLabel.textContent = `(${suggestions.length})`;
+  result.innerHTML = suggestions.slice(0, Math.min(count, suggestions.length)).map((s, i) => `
+    <div class="suggestion-card" onclick="copyText(this)" data-text="${escAttr(s)}">
+      <div class="num">${i + 1}</div>
+      <div class="text">${escHtml(s)}</div>
+      <span class="copy-badge">✓ Copied</span>
+    </div>
+  `).join('');
+  showToast('Suggestions ready! Click one to copy.');
+}
+
+async function generateOpeners() {
+  const personaId = document.getElementById('chat-persona').value;
+  const persona = state.personas.find(p => p.id === personaId);
+  const username = document.getElementById('chat-username').value.trim() || persona?.username || '';
+
+  let system = 'You generate realistic, natural conversation openers for an adult chat room (18+). Each opener should sound like something a real person would actually say when entering a room.';
+  if (persona) {
+    system += `\nPersona: ${persona.name}`;
+    if (persona.bio) system += ` | ${persona.bio}`;
+  }
+  system += '\n\nGenerate 5 different openers — vary the approach (friendly, flirty, funny, observational, question-based). Just the openers, numbered 1-5, no explanations.';
+
+  const result = document.getElementById('openers-result');
+  result.innerHTML = '<div class="loading-text"><span class="spinner"></span><span>Generating openers...</span></div>';
+
+  const content = await callLLM(system, 'Generate conversation openers for entering a sexting chat room.', 5);
+  result.innerHTML = '';
+  if (!content) return;
+
+  const lines = content.split('\n').filter(l => l.trim());
+  result.innerHTML = lines.map((l, i) => {
+    const text = l.replace(/^\d+[.)]\s*/, '');
+    return `<div class="suggestion-card" onclick="copyText(this)" data-text="${escAttr(text)}">
+      <div class="num">${i + 1}</div>
+      <div class="text">${escHtml(text)}</div>
+      <span class="copy-badge">✓ Copied</span>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Copy
+// ═══════════════════════════════════════════════════════════════
+function copyText(el) {
+  const text = el.dataset.text || el.querySelector('.text')?.textContent || '';
+  navigator.clipboard.writeText(text).then(() => {
+    el.classList.add('copied');
+    setTimeout(() => el.classList.remove('copied'), 1500);
+    showToast('Copied!');
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    el.classList.add('copied');
+    setTimeout(() => el.classList.remove('copied'), 1500);
+    showToast('Copied!');
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Settings
+// ═══════════════════════════════════════════════════════════════
+function loadSettingsUI() {
+  document.getElementById('api-provider').value = state.settings.provider || 'openrouter';
+  document.getElementById('api-model').value = state.settings.model || 'openai/gpt-4o-mini';
+  document.getElementById('api-key').value = state.settings.key || '';
+  document.getElementById('api-url').value = state.settings.url || '';
+  toggleCustomUrl();
+}
+
+function saveSettings() {
+  state.settings = {
+    provider: document.getElementById('api-provider').value,
+    model: document.getElementById('api-model').value.trim(),
+    key: document.getElementById('api-key').value.trim(),
+    url: document.getElementById('api-url').value.trim()
+  };
+  saveState();
+  showToast('Settings saved');
+}
+
+function toggleCustomUrl() {
+  const urlRow = document.getElementById('api-url').closest('.mb');
+  urlRow.style.display = document.getElementById('api-provider').value === 'custom' ? 'block' : 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Navigation
+// ═══════════════════════════════════════════════════════════════
+function navigate(pageId) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + pageId).classList.add('active');
+  document.querySelector(`.nav-item[data-page="${pageId}"]`).classList.add('active');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════════════
+function escHtml(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+function escAttr(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════════
+loadState();
+loadSettingsUI();
+renderPersonaList();
+renderPersonaSelector();
+if (state.personas.length > 0) {
+  document.getElementById('chat-persona').value = state.activePersonaId || state.personas[0].id;
+}
+
+// ─── Event Listeners ───
+// Settings
+document.getElementById('api-provider').addEventListener('change', toggleCustomUrl);
+document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
+
+// Navigation
+document.querySelectorAll('.nav-item').forEach(n => {
+  n.addEventListener('click', () => navigate(n.dataset.page));
+});
+
+// Personas
+document.getElementById('btn-save-persona').addEventListener('click', saveCurrentPersona);
+document.getElementById('btn-cancel-edit').addEventListener('click', clearPersonaForm);
+document.getElementById('btn-clear-all').addEventListener('click', () => {
+  if (confirm('Clear all personas and settings?')) {
+    localStorage.removeItem('fcn_assistant_state');
+    state = { settings: { provider: 'openrouter', model: 'openai/gpt-4o-mini', key: '', url: '' }, personas: [], activePersonaId: null };
+    renderPersonaList();
+    renderPersonaSelector();
+    loadSettingsUI();
+    showToast('Data cleared');
+  }
+});
+
+// Chat
+document.getElementById('btn-generate').addEventListener('click', generateSuggestions);
+document.getElementById('btn-openers').addEventListener('click', generateOpeners);
+
+// Keyboard shortcut: Ctrl/Cmd+Enter to generate
+document.getElementById('chat-context').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    generateSuggestions();
+  }
+});
+
+// ─── Auto-save persona selections ───
+document.getElementById('chat-persona').addEventListener('change', e => {
+  state.activePersonaId = e.target.value || null;
+  saveState();
+});
+</script>
+</body>
+</html>

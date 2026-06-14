@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}FCN Auto-Pilot — History{% endblock %}
+{% block content %}
+
+<h2>Conversation History</h2>
+<p class="subtitle">Every message sent and received by the auto-pilot.</p>
+
+<div class="card">
+  <div class="flex" style="gap:.75rem;margin-bottom:1rem">
+    <select id="history-filter" style="width:auto">
+      <option value="all">All messages</option>
+      <option value="ai">AI sent only</option>
+      <option value="user">User sent only</option>
+      <option value="blocked">Blocked by supervisor</option>
+    </select>
+    <button class="btn btn-secondary btn-sm" onclick="refreshHistory()">🔄 Refresh</button>
+  </div>
+
+  <div id="history-log">
+    {% if logs %}
+    <div style="max-height:600px;overflow-y:auto">
+      {% for log in logs %}
+      <div class="chat-msg" style="{% if not log.supervisor_approved %}border-left:3px solid var(--red);padding-left:.5rem;{% endif %}">
+        <span class="flex gap-1" style="margin-bottom:.2rem">
+          <span class="text-sm text-dim">{{ log.created_at[11:19] }}</span>
+          <span class="text-sm">{% if log.source == 'ai' %}🤖 AI{% elif log.source == 'user' %}👤 You{% else %}⚙️ System{% endif %}</span>
+          {% if log.chat_type == 'dm' %}<span class="text-sm text-accent">💬 DM ({{ log.other_user }})</span>{% endif %}
+          {% if not log.supervisor_approved %}<span class="text-sm text-red">🚫 BLOCKED</span>{% endif %}
+        </span>
+        <div>{{ log.message }}</div>
+        {% if log.supervisor_note %}<div class="text-sm text-dim" style="margin-top:.2rem">Note: {{ log.supervisor_note }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty">No conversation history yet. Start a session and the auto-pilot will log everything here.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function refreshHistory() {
+  window.location.reload();
+}
+</script>
+{% endblock %}

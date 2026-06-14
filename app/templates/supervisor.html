@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}FCN Auto-Pilot — Supervisor{% endblock %}
+{% block content %}
+
+<h2>Supervisor</h2>
+<p class="subtitle">Behavioral monitoring, learned rules, and ban/incident history.</p>
+
+<div class="grid-2">
+  <!-- Rules -->
+  <div class="card">
+    <div class="card-title">Active Rules</div>
+    {% if rules %}
+    <table>
+      <tr><th>Rule</th><th>Action</th><th>Severity</th><th>Triggers</th><th>Enabled</th></tr>
+      {% for r in rules %}
+      <tr>
+        <td><strong>{{ r.rule_name }}</strong><br><span class="text-sm text-dim">{{ r.description[:50] }}</span></td>
+        <td><span class="text-sm">
+          {% if r.action == 'block' %}🚫 Block{% elif r.action == 'warn' %}⚠️ Warn{% elif r.action == 'modify' %}✏️ Modify{% elif r.action == 'slow_down' %}🐢 Slow Down{% elif r.action == 'rotate_identity' %}🔄 Rotate{% else %}{{ r.action }}{% endif %}
+        </span></td>
+        <td><span class="text-sm">{{ r.severity }}/10</span></td>
+        <td><span class="text-sm">{{ r.trigger_count }}</span></td>
+        <td>{% if r.enabled %}✅{% else %}❌{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">No rules learned yet. Rules are created automatically after ban events.</p>
+    {% endif %}
+  </div>
+
+  <!-- Ban History -->
+  <div class="card">
+    <div class="card-title">Ban / Incident History</div>
+    {% if ban_events %}
+    <div style="max-height:400px;overflow-y:auto">
+      <table>
+        <tr><th>Type</th><th>Reason</th><th>Cooldown</th><th>Date</th></tr>
+        {% for b in ban_events %}
+        <tr>
+          <td><span class="text-sm">
+            {% if b.event_type == 'banned' %}🚫 Banned{% elif b.event_type == 'kicked' %}👢 Kicked{% elif b.event_type == 'warning' %}⚠️ Warning{% else %}❌ Error{% endif %}
+          </span></td>
+          <td class="text-sm text-dim">{{ b.likely_reason[:60] }}</td>
+          <td class="text-sm">{% if b.cooldown_adjustment > 0 %}+{{ b.cooldown_adjustment }}s{% else %}—{% endif %}</td>
+          <td class="text-sm text-dim">{{ b.created_at[:10] }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No ban events recorded. The supervisor learns from incidents automatically.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">How the Supervisor Works</div>
+  <div style="font-size:.85rem;line-height:1.6;color:var(--text-dim)">
+    <p><strong>Pre-flight check:</strong> Every message the auto-pilot wants to send gets reviewed first. The supervisor checks against known rules (too fast, repetitive, banned keywords) and can optionally use its own LLM to analyze the message.</p>
+    <p><strong>Post-mortem:</strong> If a ban or kick is detected, the supervisor captures the last 10 messages and analyzes why it happened. It updates the rules database so the same pattern won't trigger again.</p>
+    <p><strong>Pattern learning:</strong> Over time, the supervisor builds a profile of what gets banned and what doesn't — message frequency, time of day, keyword patterns, response style. It adjusts cooldowns and behavior automatically.</p>
+    <p><strong>Manual override:</strong> Rules can be toggled on/off or adjusted from this page. The supervisor learns from every incident.</p>
+  </div>
+</div>
+
+{% endblock %}

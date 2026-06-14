@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}FCN Auto-Pilot — Personas{% endblock %}
+{% block content %}
+
+<h2>Personas</h2>
+<p class="subtitle">Chat identities with per-profile fingerprinting (proxy, UA, timezone).</p>
+
+<div class="grid-2">
+  <!-- New/Edit Form -->
+  <div class="card">
+    <div class="card-title" id="form-title">New Persona</div>
+    <form id="persona-form" onsubmit="savePersona(event)">
+      <input type="hidden" id="p-id">
+      <div class="form-row three">
+        <div><label>Name *</label><input id="p-name" required></div>
+        <div><label>Username *</label><input id="p-username" required></div>
+        <div><label>Gender</label>
+          <select id="p-gender"><option value="m">Male</option><option value="f">Female</option><option value="o">Other</option></select>
+        </div>
+      </div>
+      <div class="mb"><label>Bio / Personality</label><textarea id="p-bio" rows="2" placeholder="Confident, playful. Loves hiking and cooking."></textarea></div>
+
+      <div class="card-title" style="margin-top:1rem">Identity & Fingerprint</div>
+      <div class="form-row three">
+        <div><label>Proxy Country</label>
+          <select id="p-proxy"><option value="us">🇺🇸 US</option><option value="gb">🇬🇧 UK</option><option value="de">🇩🇪 Germany</option><option value="jp">🇯🇵 Japan</option><option value="custom">Custom</option></select>
+        </div>
+        <div><label>Custom Proxy URL</label><input id="p-proxy-custom" placeholder="socks5://user:pass@host:port"></div>
+        <div><label>User-Agent</label>
+          <select id="p-ua"><option value="random">Random (rotate)</option><option value="chrome_win">Chrome / Windows</option><option value="chrome_mac">Chrome / macOS</option><option value="safari_mac">Safari / macOS</option><option value="safari_ios">Safari / iOS</option><option value="firefox_linux">Firefox / Linux</option></select>
+        </div>
+      </div>
+      <div class="form-row three">
+        <div><label>Timezone</label>
+          <select id="p-tz">
+            <option value="">Auto-detect</option>
+            <option value="America/New_York">US Eastern</option>
+            <option value="America/Chicago">US Central</option>
+            <option value="America/Denver">US Mountain</option>
+            <option value="America/Los_Angeles">US Pacific</option>
+            <option value="Europe/London">UK</option>
+            <option value="Europe/Berlin">Germany</option>
+            <option value="Asia/Tokyo">Japan</option>
+          </select>
+        </div>
+        <div><label>Language</label>
+          <select id="p-lang">
+            <option value="">Auto-detect</option>
+            <option value="en-US">English (US)</option>
+            <option value="en-GB">English (UK)</option>
+            <option value="de-DE">German</option>
+            <option value="ja-JP">Japanese</option>
+          </select>
+        </div>
+        <div><label>Fingerprint Rotation</label>
+          <select id="p-fp-rotate">
+            <option value="per_session">Per session</option>
+            <option value="daily">Daily</option>
+            <option value="never">Never</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card-title" style="margin-top:1rem">Auto-Pilot Settings</div>
+      <div class="form-row four">
+        <div><label>Default Tone</label>
+          <select id="p-tone">
+            <option value="casual">Casual</option>
+            <option value="flirty">Flirty</option>
+            <option value="teasing">Teasing</option>
+            <option value="deep">Deep</option>
+            <option value="funny">Funny</option>
+            <option value="direct">Direct</option>
+          </select>
+        </div>
+        <div><label>Msg Length</label>
+          <select id="p-length">
+            <option value="short">Short</option>
+            <option value="medium" selected>Medium</option>
+            <option value="long">Long</option>
+          </select>
+        </div>
+        <div><label>Cooldown Min (s)</label><input id="p-cd-min" type="number" value="60"></div>
+        <div><label>Cooldown Max (s)</label><input id="p-cd-max" type="number" value="120"></div>
+      </div>
+      <div class="form-row three">
+        <div><label>Daily Cap</label><input id="p-cap" type="number" value="100"></div>
+        <div><label>Auto-Reply DMs</label>
+          <select id="p-dm-reply"><option value="0">No</option><option value="1">Yes</option></select>
+        </div>
+        <div><label>DM Gender Filter</label><input id="p-dm-gender" placeholder="m,f"></div>
+      </div>
+
+      <div class="flex" style="margin-top:.75rem;gap:.5rem">
+        <button class="btn btn-primary" type="submit">💾 Save Persona</button>
+        <button class="btn btn-secondary" type="button" onclick="clearForm()">Clear</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Persona List -->
+  <div class="card">
+    <div class="card-title">Saved Personas</div>
+    <div id="persona-list">
+      {% if personas %}
+      {% for p in personas %}
+      <div class="persona-item" style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.4rem">
+        <div>
+          <div style="font-weight:500;font-size:.85rem">{{ p.name }}</div>
+          <div class="text-sm text-dim">{{ p.username }} · {{ p.default_tone }} · {{ p.proxy_country|upper }}</div>
+        </div>
+        <div class="flex" style="gap:.35rem">
+          <button class="btn btn-secondary btn-sm" onclick="editPersona('{{ p.id }}')">Edit</button>
+          <button class="btn btn-red btn-sm" onclick="deletePersona('{{ p.id }}')">Del</button>
+        </div>
+      </div>
+      {% endfor %}
+      {% else %}
+      <p class="empty">No personas yet. Create one!</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function savePersona(e) {
+  e.preventDefault();
+  const id = document.getElementById('p-id').value;
+  const data = {
+    name: document.getElementById('p-name').value.trim(),
+    username: document.getElementById('p-username').value.trim(),
+    gender: document.getElementById('p-gender').value,
+    bio: document.getElementById('p-bio').value.trim(),
+    default_tone: document.getElementById('p-tone').value,
+    default_length: document.getElementById('p-length').value,
+    proxy_country: document.getElementById('p-proxy').value,
+    proxy_custom: document.getElementById('p-proxy-custom').value.trim(),
+    user_agent: document.getElementById('p-ua').value,
+    timezone: document.getElementById('p-tz').value,
+    language: document.getElementById('p-lang').value,
+    fingerprint_rotation: document.getElementById('p-fp-rotate').value,
+    cooldown_min: parseInt(document.getElementById('p-cd-min').value),
+    cooldown_max: parseInt(document.getElementById('p-cd-max').value),
+    daily_cap: parseInt(document.getElementById('p-cap').value),
+    auto_reply_dms: document.getElementById('p-dm-reply').value === '1',
+    dm_gender_filter: document.getElementById('p-dm-gender').value.split(',').filter(s=>s.trim()).map(s=>s.trim())
+  };
+
+  try {
+    let r;
+    if (id) {
+      r = await fetch('/api/personas/' + id, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+    } else {
+      r = await fetch('/api/personas', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+    }
+    if (r.ok) { toast('Persona saved!'); clearForm(); location.reload(); }
+    else { toast('Error saving'); }
+  } catch(e) { toast('Error: ' + e.message); }
+}
+
+async function deletePersona(id) {
+  if (!confirm('Delete this persona?')) return;
+  await fetch('/api/personas/' + id, {method: 'DELETE'});
+  location.reload();
+}
+
+async function editPersona(id) {
+  const r = await fetch('/api/personas');
+  const personas = await r.json();
+  const p = personas.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('form-title').textContent = 'Edit Persona';
+  document.getElementById('p-id').value = p.id;
+  document.getElementById('p-name').value = p.name;
+  document.getElementById('p-username').value = p.username;
+  document.getElementById('p-gender').value = p.gender;
+  document.getElementById('p-bio').value = p.bio;
+  if (p.default_tone) document.getElementById('p-tone').value = p.default_tone;
+  if (p.default_length) document.getElementById('p-length').value = p.default_length;
+  if (p.proxy_country) document.getElementById('p-proxy').value = p.proxy_country;
+  if (p.proxy_custom) document.getElementById('p-proxy-custom').value = p.proxy_custom;
+  if (p.user_agent) document.getElementById('p-ua').value = p.user_agent;
+  if (p.timezone) document.getElementById('p-tz').value = p.timezone;
+  if (p.language) document.getElementById('p-lang').value = p.language;
+  if (p.fingerprint_rotation) document.getElementById('p-fp-rotate').value = p.fingerprint_rotation;
+  if (p.cooldown_min) document.getElementById('p-cd-min').value = p.cooldown_min;
+  if (p.cooldown_max) document.getElementById('p-cd-max').value = p.cooldown_max;
+  if (p.daily_cap) document.getElementById('p-cap').value = p.daily_cap;
+  if (p.auto_reply_dms) document.getElementById('p-dm-reply').value = p.auto_reply_dms ? '1' : '0';
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+function clearForm() {
+  document.getElementById('form-title').textContent = 'New Persona';
+  document.getElementById('p-id').value = '';
+  document.getElementById('persona-form').reset();
+}
+</script>
+{% endblock %}
