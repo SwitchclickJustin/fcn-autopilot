@@ -11,13 +11,19 @@
     <div class="card-title">Add Provider</div>
     <form onsubmit="addProvider(event)">
       <div class="form-row two">
-        <div><label>Name</label><input id="pr-name" required placeholder="e.g., Main Writer"></div>
         <div><label>Provider</label>
           <select id="pr-type" onchange="onProviderChange()">
             <option value="openrouter">OpenRouter</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
             <option value="custom">Custom (OpenAI-compatible)</option>
+          </select>
+        </div>
+        <div><label>Role</label>
+          <select id="pr-role">
+            <option value="chat">✍️ Writer (Chat)</option>
+            <option value="supervisor">🛡️ Supervisor</option>
+            <option value="fallback">🔄 Fallback</option>
           </select>
         </div>
       </div>
@@ -169,7 +175,7 @@ async function addProvider(e) {
   if (!model) { toast('Select a model first'); return; }
 
   const data = {
-    name: document.getElementById('pr-name').value.trim(),
+    name: type + '-' + model.substring(model.lastIndexOf('/') + 1),
     provider_type: type,
     model: model,
     api_key: '__use_env__',  // Signals backend to use env var

@@ -68,6 +68,25 @@ async def broadcast(msg: dict):
 async def health():
     return {"status": "ok", "auto_pilot": auto_pilot.enabled}
 
+# ─── DB Debug ───
+@app.get("/debug/db")
+async def debug_db():
+    import os
+    db_path = settings.database_path
+    exists = os.path.exists(db_path)
+    size = os.path.getsize(db_path) if exists else 0
+    providers = await get_providers()
+    personas = await get_personas()
+    return {
+        "db_path": db_path,
+        "exists": exists,
+        "size_bytes": size,
+        "providers_count": len(providers),
+        "personas_count": len(personas),
+        "providers": [{"name": p["name"], "model": p["model"], "role": p["role"]} for p in providers],
+        "personas": [{"name": p["name"], "username": p["username"]} for p in personas]
+    }
+
 # ─── WebSocket ───
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
