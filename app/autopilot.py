@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time
 from typing import Optional
 from app.browser import browser_manager, BrowserSession
@@ -172,7 +173,13 @@ class AutoPilotEngine:
             f"Personality: {bio}\n"
         )
         if tg:
-            system += f"\nYour Telegram handle: @{tg}\n"
+            # Break up handle to avoid automated detection (e.g., "alexapinknow" → "alexa_pink now")
+            tg_broken = re.sub(r'([a-z])([A-Z])', r'\1 \2', tg)
+            if len(tg_broken) == len(tg):
+                # No camelCase detected, break into chunks
+                mid = len(tg) // 2
+                tg_broken = f"{tg[:mid]} {tg[mid:]}"
+            system += f"\nYour Telegram handle: @{tg} (say it like '{tg_broken}' to avoid filters)\n"
         if goals:
             system += f"\nYOUR GOALS:\n{goals}\n"
         system += (

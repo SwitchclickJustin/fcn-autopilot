@@ -191,20 +191,27 @@ async function deletePersona(id) {
 }
 
 async function editPersona(id) {
-  const r = await fetch('/api/personas');
-  const personas = await r.json();
-  const p = personas.find(x => x.id === id);
-  if (!p) return;
-  document.getElementById('form-title').textContent = 'Edit Persona';
-  document.getElementById('p-id').value = p.id;
-  document.getElementById('p-name').value = p.name;
-  document.getElementById('p-username').value = p.username;
-  document.getElementById('p-gender').value = p.gender || 'f';
-  document.getElementById('p-bio').value = p.bio;
-  if (p.goals) document.getElementById('p-goals').value = p.goals;
-  if (p.telegram_handle) document.getElementById('p-telegram').value = p.telegram_handle;
-  if (p.default_tone) document.getElementById('p-tone').value = p.default_tone;
-  window.scrollTo({top: 0, behavior: 'smooth'});
+  try {
+    const r = await fetch('/api/personas');
+    if (!r.ok) { toast('Failed to load personas'); return; }
+    const personas = await r.json();
+    const p = personas.find(x => String(x.id) === String(id));
+    if (!p) { toast('Persona not found'); return; }
+    
+    document.getElementById('form-title').textContent = 'Edit Persona';
+    document.getElementById('p-id').value = p.id;
+    document.getElementById('p-name').value = p.name || '';
+    document.getElementById('p-username').value = p.username || '';
+    document.getElementById('p-gender').value = p.gender || 'f';
+    document.getElementById('p-bio').value = p.bio || '';
+    document.getElementById('p-goals').value = p.goals || '';
+    document.getElementById('p-telegram').value = p.telegram_handle || '';
+    if (p.default_tone) document.getElementById('p-tone').value = p.default_tone;
+    window.scrollTo({top: 0, behavior: 'smooth'});
+    toast('✏️ Editing persona');
+  } catch(e) {
+    toast('Error loading persona: ' + e.message);
+  }
 }
 
 function clearForm() {
