@@ -14,8 +14,15 @@ BROWSER_USE_BIN = os.path.expanduser("~/.browser-use-env/bin/browser-use")
 
 def _bu_path():
     """Return path to browser-use CLI."""
-    if os.path.exists(BROWSER_USE_BIN):
-        return BROWSER_USE_BIN
+    # Check multiple possible install locations
+    candidates = [
+        BROWSER_USE_BIN,
+        os.path.expanduser("~/.browser-use/bin/browser-use"),
+        "/root/.browser-use-env/bin/browser-use",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
     # Try PATH
     import shutil
     return shutil.which("browser-use") or "browser-use"
