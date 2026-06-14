@@ -293,6 +293,19 @@ async def api_provider_models(data: dict):
 
 @app.post("/api/providers")
 async def api_create_provider(data: LLMProviderCreate):
+    # If api_key is __use_env__, resolve from environment
+    if data.api_key == "__use_env__":
+        env_map = {
+            "openrouter": settings.openrouter_api_key,
+            "openai": settings.openai_api_key,
+            "anthropic": settings.anthropic_api_key,
+        }
+        resolved = env_map.get(data.provider_type, "")
+        if not resolved:
+            raise HTTPException(400, f"No API key found in environment for {data.provider_type}. "
+                                      f"Set {data.provider_type.upper()}_API_KEY in Railway Variables.")
+        data.api_key = resolved
+    
     provider = await create_provider(data.model_dump())
     providers = await get_providers()
     provider_registry.load_from_db(providers)

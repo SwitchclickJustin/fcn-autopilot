@@ -3,7 +3,7 @@
 {% block content %}
 
 <h2>LLM Providers</h2>
-<p class="subtitle">Configure the AI brains for chatting, supervision, and fallback.</p>
+<p class="subtitle">Pick models and assign them to roles. API keys come from your Railway environment variables.</p>
 
 <div class="grid-2">
   <!-- Add Provider -->
@@ -11,9 +11,9 @@
     <div class="card-title">Add Provider</div>
     <form onsubmit="addProvider(event)">
       <div class="form-row two">
-        <div><label>Name</label><input id="pr-name" required placeholder="e.g., main-gpt"></div>
+        <div><label>Name</label><input id="pr-name" required placeholder="e.g., Main Writer"></div>
         <div><label>Provider</label>
-          <select id="pr-type">
+          <select id="pr-type" onchange="onProviderChange()">
             <option value="openrouter">OpenRouter</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
@@ -21,25 +21,31 @@
           </select>
         </div>
       </div>
-      <div class="form-row three">
+      <div class="form-row two">
         <div><label>Model</label>
           <select id="pr-model" style="width:100%">
-            <option value="">Select provider type + enter API key first</option>
+            <option value="">Select a provider first → models will load automatically</option>
           </select>
         </div>
-        <div><label>API Key</label><input id="pr-key" type="password" required onchange="fetchModels()"></div>
-        <div><label>Base URL (custom only)</label><input id="pr-url" placeholder="https://api.example.com/v1"></div>
-      </div>
-      <div class="form-row three">
-        <div><label>Temperature</label><input id="pr-temp" type="number" step="0.1" value="0.8" min="0" max="2"></div>
         <div><label>Role</label>
           <select id="pr-role">
-            <option value="chat">Chat (main)</option>
-            <option value="supervisor">Supervisor</option>
-            <option value="fallback">Fallback</option>
+            <option value="chat">✍️ Writer (Chat)</option>
+            <option value="supervisor">🛡️ Supervisor</option>
+            <option value="fallback">🔄 Fallback</option>
           </select>
         </div>
-        <div><label>Priority</label><input id="pr-priority" type="number" value="0" min="0"></div>
+      </div>
+      <div class="form-row two">
+        <div><label>Temperature</label><input id="pr-temp" type="number" step="0.1" value="0.8" min="0" max="2"></div>
+        <div>
+          <label>API Key</label>
+          <div class="text-sm text-dim" style="padding:.45rem 0">
+            ✅ Uses <code id="pr-key-source">OPENROUTER_API_KEY</code> from environment
+          </div>
+        </div>
+      </div>
+      <div style="display:none" id="pr-custom-url-row" class="mb">
+        <label>Base URL (custom only)</label><input id="pr-url" placeholder="https://api.example.com/v1">
       </div>
       <button class="btn btn-primary" type="submit">➕ Add Provider</button>
     </form>
@@ -50,110 +56,132 @@
     <div class="card-title">Configured Providers</div>
     {% if providers %}
     <table>
-      <tr><th>Name</th><th>Type</th><th>Model</th><th>Role</th><th></th></tr>
+      <tr><th>Name</th><th>Model</th><th>Role</th><th>Status</th><th></th></tr>
       {% for p in providers %}
       <tr>
-        <td><strong>{{ p.name }}</strong></td>
-        <td>{{ p.provider_type }}</td>
+        <td><strong>{{ p.name }}</strong><br><span class="text-sm text-dim">{{ p.provider_type }}</span></td>
         <td class="text-sm text-dim">{{ p.model }}</td>
-        <td>{% if p.role == 'chat' %}🧠 Chat{% elif p.role == 'supervisor' %}🛡️ Supervisor{% else %}🔄 Fallback{% endif %}</td>
+        <td>
+          {% if p.role == 'chat' %}✍️ Writer{% elif p.role == 'supervisor' %}🛡️ Supervisor{% else %}🔄 Fallback{% endif %}
+        </td>
+        <td><span class="text-sm text-green">✅ Active</span></td>
         <td><button class="btn btn-red btn-sm" onclick="deleteProvider('{{ p.id }}')">Remove</button></td>
       </tr>
       {% endfor %}
     </table>
     {% else %}
-    <p class="empty">No providers configured. Add one above.</p>
+    <p class="empty">No providers configured. Add one above — just pick a model and assign a role.</p>
     {% endif %}
   </div>
 </div>
 
 <div class="card">
-  <div class="card-title">How Providers Work</div>
+  <div class="card-title">How It Works</div>
   <div style="font-size:.85rem;line-height:1.6;color:var(--text-dim)">
-    <p><strong>Chat provider</strong> — generates the actual responses the auto-pilot sends. Needs a good conversational model (GPT-4o-mini, Claude Haiku, etc.)</p>
-    <p><strong>Supervisor provider</strong> — reviews messages before sending, analyzes bans, learns patterns. Can use a cheaper/faster model since it's just classification.</p>
-    <p><strong>Fallback provider</strong> — used when the main provider fails. Keep a different provider type here (e.g., Anthropic as fallback for OpenAI).</p>
-    <p style="margin-top:.5rem">💡 <strong>Recommended:</strong> OpenRouter with one chat provider + one supervisor. Use different models for each role.</p>
+    <p><strong>API keys are already set.</strong> The app reads them from Railway environment variables:</p>
+    <ul style="margin:.5rem 0 0 1.2rem;line-height:2">
+      <li><code>OPENROUTER_API_KEY</code> — for OpenRouter models</li>
+      <li><code>OPENAI_API_KEY</code> — for OpenAI models</li>
+      <li><code>ANTHROPIC_API_KEY</code> — for Anthropic models</li>
+    </ul>
+    <p style="margin-top:.5rem"><strong>Just pick a model and assign it to a role.</strong></p>
+    <ul style="margin:.5rem 0 0 1.2rem;line-height:2">
+      <li>✍️ <strong>Writer (Chat)</strong> — generates the actual responses the auto-pilot sends</li>
+      <li>🛡️ <strong>Supervisor</strong> — reviews messages before sending, analyzes bans</li>
+      <li>🔄 <strong>Fallback</strong> — used when the main provider fails</li>
+    </ul>
+    <p style="margin-top:.5rem">💡 Use a fast/cheap model for Supervisor (e.g., <code>gpt-4o-mini</code>) and a better one for Writer (<code>claude-sonnet-4</code>, <code>gpt-4o</code>, <code>deepseek-chat</code>).</p>
   </div>
 </div>
 
 {% endblock %}
 {% block scripts %}
 <script>
-// Fetch models when provider type or API key changes
+// Map provider types to env var names
+const ENV_KEYS = {
+  openrouter: 'OPENROUTER_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  custom: 'custom'
+};
+
+async function onProviderChange() {
+  const type = document.getElementById('pr-type').value;
+  
+  // Update the key source label
+  document.getElementById('pr-key-source').textContent = ENV_KEYS[type] || 'custom';
+  
+  // Show/hide custom URL field
+  document.getElementById('pr-custom-url-row').style.display = type === 'custom' ? 'block' : 'none';
+  
+  // Fetch models using the env var key
+  await fetchModels();
+}
+
 async function fetchModels() {
   const type = document.getElementById('pr-type').value;
-  const key = document.getElementById('pr-key').value.trim();
   const sel = document.getElementById('pr-model');
-  
-  if (!key || type === 'custom') {
-    if (type === 'custom') {
-      sel.innerHTML = '<option value="">Enter model name manually</option>';
-      sel.style.width = '100%';
-      // Convert to input for custom models
-      const input = document.createElement('input');
-      input.id = 'pr-model';
-      input.placeholder = 'e.g., gpt-4o-mini';
-      input.style.width = '100%';
-      sel.parentNode.replaceChild(input, sel);
-    }
-    return;
-  }
 
   sel.innerHTML = '<option value="">Loading models...</option>';
-  
+
   try {
     const r = await fetch('/api/providers/models', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({provider_type: type, api_key: key})
+      body: JSON.stringify({provider_type: type, api_key: '__use_env__'})
     });
     const data = await r.json();
-    
+
     sel.innerHTML = '';
     if (data.models && data.models.length > 0) {
-      // Show most popular first
-      const popular = data.models.filter(m => m.includes('gpt-4o-mini') || m.includes('claude-sonnet') || m.includes('claude-3.5') || m.includes('llama-3') || m.includes('deepseek') || m.includes('mistral'));
+      const popular = data.models.filter(m =>
+        m.includes('gpt-4o-mini') || m.includes('gpt-4o') ||
+        m.includes('claude-sonnet') || m.includes('claude-3.5') ||
+        m.includes('llama-3') || m.includes('deepseek') ||
+        m.includes('mistral') || m.includes('gemini')
+      );
       const rest = data.models.filter(m => !popular.includes(m));
-      
+
       if (popular.length > 0) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = '⭐ Popular';
-        popular.forEach(m => { const o = document.createElement('option'); o.value = m; o.textContent = m; optgroup.appendChild(o); });
-        sel.appendChild(optgroup);
+        const g = document.createElement('optgroup');
+        g.label = '⭐ Popular';
+        popular.forEach(m => { const o = document.createElement('option'); o.value = m; o.textContent = m; g.appendChild(o); });
+        sel.appendChild(g);
       }
-      const optgroup2 = document.createElement('optgroup');
-      optgroup2.label = 'All Models (' + data.models.length + ')';
-      rest.forEach(m => { const o = document.createElement('option'); o.value = m; o.textContent = m; optgroup2.appendChild(o); });
-      sel.appendChild(optgroup2);
+      const g2 = document.createElement('optgroup');
+      g2.label = 'All Models (' + data.models.length + ')';
+      rest.forEach(m => { const o = document.createElement('option'); o.value = m; o.textContent = m; g2.appendChild(o); });
+      sel.appendChild(g2);
     } else {
-      sel.innerHTML = '<option value="">No models found — check your API key</option>';
+      sel.innerHTML = '<option value="">No models — check your Railway env var is set</option>';
     }
   } catch(e) {
-    sel.innerHTML = '<option value="">Error loading models: ' + e.message + '</option>';
+    sel.innerHTML = '<option value="">Error: ' + e.message + '</option>';
   }
 }
-
-// Re-fetch when provider type changes
-document.getElementById('pr-type').addEventListener('change', fetchModels);
 
 async function addProvider(e) {
   e.preventDefault();
   const modelEl = document.getElementById('pr-model');
   const model = modelEl.tagName === 'SELECT' ? modelEl.value : modelEl.value.trim();
+  const type = document.getElementById('pr-type').value;
+
+  if (!model) { toast('Select a model first'); return; }
+
   const data = {
     name: document.getElementById('pr-name').value.trim(),
-    provider_type: document.getElementById('pr-type').value,
+    provider_type: type,
     model: model,
-    api_key: document.getElementById('pr-key').value.trim(),
+    api_key: '__use_env__',  // Signals backend to use env var
     base_url: document.getElementById('pr-url').value.trim(),
     temperature: parseFloat(document.getElementById('pr-temp').value),
     role: document.getElementById('pr-role').value,
-    priority: parseInt(document.getElementById('pr-priority').value)
+    priority: document.getElementById('pr-role').value === 'chat' ? 0 : 1
   };
+
   try {
     const r = await fetch('/api/providers', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-    if (r.ok) { toast('Provider added!'); location.reload(); }
+    if (r.ok) { toast('✅ Provider added!'); location.reload(); }
     else { const err = await r.json(); toast('Error: ' + (err.detail || 'unknown')); }
   } catch(e) { toast('Error: ' + e.message); }
 }
@@ -163,5 +191,8 @@ async function deleteProvider(id) {
   await fetch('/api/providers/' + id, {method: 'DELETE'});
   location.reload();
 }
+
+// Auto-load models on page load
+document.addEventListener('DOMContentLoaded', fetchModels);
 </script>
 {% endblock %}
