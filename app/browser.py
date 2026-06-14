@@ -1,183 +1,173 @@
-"""Browser Use Cloud driver — provisions and controls remote Chromium browsers."""
+"""Browser Use Cloud driver — provisions and controls remote Chromium browsers via REST API."""
 import asyncio
 import json
 import logging
-import subprocess
-import time
 import os
+import random
+import re
+import time
 from typing import Optional
+
+import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-BROWSER_USE_BIN = os.path.expanduser("~/.browser-use-env/bin/browser-use")
-
-def _bu_path():
-    """Return path to browser-use CLI."""
-    # Check multiple possible install locations
-    candidates = [
-        BROWSER_USE_BIN,
-        os.path.expanduser("~/.browser-use/bin/browser-use"),
-        "/root/.browser-use-env/bin/browser-use",
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return p
-    # Try PATH
-    import shutil
-    return shutil.which("browser-use") or "browser-use"
-
-async def _bu(args: list, timeout: int = 30) -> str:
-    """Run a browser-use CLI command asynchronously."""
-    cmd = [_bu_path()] + args
-    env = {**os.environ, "BROWSER_USE_API_KEY": settings.browser_use_api_key}
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        if proc.returncode != 0:
-            err = (stderr or stdout).decode().strip()[:200]
-            return f"ERR:{err}"
-        return stdout.decode().strip()
-    except asyncio.TimeoutError:
-        return "ERR:timeout"
-    except FileNotFoundError:
-        return "ERR:browser-use not found"
-
+API_BASE = "https://api.browser-use.com/api/v3"
 
 class BrowserSession:
     """Represents a single Browser Use Cloud session."""
 
     def __init__(self, persona: dict):
         self.persona = persona
-        self.session_id: str = ""
+        self.box_id: str = ""
         self.live_url: str = ""
         self.cdp_url: str = ""
         self.status: str = "created"
         self._connected: bool = False
 
     async def connect(self) -> bool:
-        """Provision a cloud browser and connect. Returns True on success."""
+        """Provision a cloud browser (box) via API. Returns True on success."""
         logger.info(f"Provisioning cloud browser for {self.persona.get('username')}")
 
-        proxy = self.persona.get("proxy_country", "us")
-        custom_proxy = self.persona.get("proxy_custom", "")
+        api_key = settings.browser_use_api_key
+        if not api_key:
+            logger.error("BROWSER_USE_API_KEY not set")
+            self.status = "error"
+            return False
+
+        headers = {"X-Browser-Use-API-Key": api_key, "Content-Type": "application/json"}
+
+        # Build box config
+        box_config = {}
         
+        custom_proxy = self.persona.get("proxy_custom", "").strip()
         if custom_proxy:
-            # Custom proxy (e.g., Decodo socks5://user:pass@host:port)
-            await _bu(["config", "set", "cloud_connect_proxy", "custom"], timeout=5)
-            await _bu(["config", "set", "cloud_connect_custom_proxy", custom_proxy], timeout=5)
+            box_config["proxy"] = "custom"
+            box_config["custom_proxy"] = custom_proxy
         else:
-            # Built-in Browser Use proxy locations
-            await _bu(["config", "set", "cloud_connect_proxy", proxy], timeout=5)
+            proxy = self.persona.get("proxy_country", "us")
+            if proxy != "us":
+                box_config["proxy"] = proxy
 
-        await _bu(["config", "set", "cloud_connect_recording", "false"], timeout=5)
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                # Create a new box (cloud browser)
+                resp = await client.post(f"{API_BASE}/boxes", json=box_config, headers=headers)
+                
+                if resp.status_code == 402:
+                    logger.error("Browser Use Cloud: insufficient credits")
+                    self.status = "error"
+                    return False
+                    
+                resp.raise_for_status()
+                data = resp.json()
+                
+                self.box_id = data.get("id", "")
+                self.live_url = data.get("live_url", "")
+                self.cdp_url = data.get("cdp_url", "")
+                
+                if self.cdp_url:
+                    self._connected = True
+                    self.status = "connected"
+                    logger.info(f"Box provisioned: {self.box_id}")
+                    return True
+                else:
+                    logger.error(f"No CDP URL in response: {data}")
+                    self.status = "error"
+                    return False
 
-        # Close any existing session first
-        await _bu(["close"])
-
-        # Connect to Browser Use Cloud
-        result = await _bu(["cloud", "connect"], timeout=45)
-        if result.startswith("ERR:"):
-            logger.error(f"Cloud connect failed: {result}")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"API error creating box: {e.response.status_code} {e.response.text[:200]}")
             self.status = "error"
             return False
-
-        # Parse live URL and CDP URL from output
-        for line in result.split("\n"):
-            if "live_url" in line:
-                self.live_url = line.split("live_url:")[-1].strip()
-            elif "cdp_url" in line:
-                self.cdp_url = line.split("cdp_url:")[-1].strip()
-
-        # Set user-agent from persona config
-        ua = self.persona.get("user_agent", "random")
-        if ua and ua != "random" and self.cdp_url:
-            # Map friendly names to real UA strings
-            ua_map = {
-                "chrome_win": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
-                "chrome_mac": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
-                "safari_mac": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 Safari/604.1",
-                "safari_ios": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
-                "firefox_linux": "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
-            }
-            real_ua = ua_map.get(ua, "")
-            if real_ua:
-                await _bu(["eval", f"navigator.__defineGetter__('userAgent', () => '{real_ua}');"], timeout=5)
-
-        # Navigate to FCN
-        room = self.persona.get("selected_rooms", ["SextChat"])[0]
-        nav_result = await _bu(["open", f"https://www.freechatnow.com/chat/{room.lower()}"], timeout=20)
-        if nav_result.startswith("ERR:"):
-            logger.error(f"FCN navigate failed: {nav_result}")
+        except Exception as e:
+            logger.error(f"Failed to create box: {e}")
             self.status = "error"
             return False
-
-        await asyncio.sleep(3)
-        self._connected = True
-        self.status = "connected"
-        logger.info(f"Browser session active. Live URL: {self.live_url}")
-        return True
 
     async def login(self) -> bool:
-        """Fill the FCN login form and click Chat As Guest."""
+        """Navigate to FCN, fill login form, and click Chat As Guest."""
         if not self._connected:
             logger.error("Cannot login: browser not connected")
             return False
 
+        api_key = settings.browser_use_api_key
+        headers = {"X-Browser-Use-API-Key": api_key, "Content-Type": "application/json"}
+
         username = self.persona.get("username", "ChatBot_42")
         gender = self.persona.get("gender", "f")
         # Auto-calculate birthdate for 22-26 year old
-        import random, datetime
         age = random.randint(22, 26)
-        year = datetime.date.today().year - age
+        year = time.localtime().tm_year - age
         month = random.randint(1, 12)
         day = random.randint(1, 28)
         birthdate = f"{year}-{month:02d}-{day:02d}"
 
-        # Fill form via JS eval
-        js = f"""
-(() => {{
-    const fill = (sel, val) => {{
-        const el = document.querySelector(sel);
-        if (!el) return false;
-        el.value = val;
-        el.dispatchEvent(new Event('input', {{bubbles: true}}));
-        el.dispatchEvent(new Event('change', {{bubbles: true}}));
-        return true;
-    }};
-    fill('input[name="username"]', '{username}');
-    fill('select[name="gender"]', '{gender}');
-    fill('input[name="birthdate"]', '{birthdate}');
-    const cb = document.querySelector('input[type="checkbox"]');
-    if (cb) {{ cb.checked = true; cb.dispatchEvent(new Event('change', {{bubbles: true}})); }}
-    return 'form filled';
-}})();
-"""
-        result = await _bu(["eval", js])
-        await asyncio.sleep(1)
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                # Navigate to FCN
+                nav_resp = await client.post(f"{API_BASE}/boxes/{self.box_id}/navigate", json={
+                    "url": f"https://www.freechatnow.com/chat/sextchat"
+                }, headers=headers)
+                nav_resp.raise_for_status()
+                await asyncio.sleep(3)
 
-        # Click Chat As Guest
-        click_result = await _bu(["eval", """
-document.querySelector('button[type="submit"][value="guest"]').click();
-'submitted';
-"""])
-        await asyncio.sleep(5)
+                # Fill username
+                await client.post(f"{API_BASE}/boxes/{self.box_id}/eval", json={
+                    "code": f"document.querySelector('input[name=\"username\"]').value = '{username}';"
+                            f"document.querySelector('input[name=\"username\"]').dispatchEvent(new Event('input', {{bubbles:true}}));"
+                }, headers=headers)
+                await asyncio.sleep(0.5)
 
-        self.status = "logged_in"
-        logger.info(f"Logged in as {username}")
-        return True
+                # Select gender
+                await client.post(f"{API_BASE}/boxes/{self.box_id}/eval", json={
+                    "code": f"document.querySelector('select[name=\"gender\"]').value = '{gender}';"
+                            f"document.querySelector('select[name=\"gender\"]').dispatchEvent(new Event('change', {{bubbles:true}}));"
+                }, headers=headers)
+                await asyncio.sleep(0.5)
+
+                # Set birthdate
+                await client.post(f"{API_BASE}/boxes/{self.box_id}/eval", json={
+                    "code": f"document.querySelector('input[name=\"birthdate\"]').value = '{birthdate}';"
+                            f"document.querySelector('input[name=\"birthdate\"]').dispatchEvent(new Event('input', {{bubbles:true}}));"
+                }, headers=headers)
+                await asyncio.sleep(0.5)
+
+                # Check age checkbox
+                await client.post(f"{API_BASE}/boxes/{self.box_id}/eval", json={
+                    "code": "document.querySelector('input[type=\"checkbox\"]').checked = true;"
+                            "document.querySelector('input[type=\"checkbox\"]').dispatchEvent(new Event('change', {bubbles:true}));"
+                }, headers=headers)
+                await asyncio.sleep(0.5)
+
+                # Click Chat As Guest
+                await client.post(f"{API_BASE}/boxes/{self.box_id}/eval", json={
+                    "code": "document.querySelector('button[type=\"submit\"][value=\"guest\"]').click();"
+                }, headers=headers)
+                await asyncio.sleep(5)
+
+                self.status = "logged_in"
+                logger.info(f"Logged in as {username}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Login failed: {e}")
+            self.status = "error"
+            return False
 
     async def read_chat(self) -> list:
         """Extract visible chat messages from the page."""
         if not self._connected:
             return []
 
-        js = """
+        api_key = settings.browser_use_api_key
+        headers = {"X-Browser-Use-API-Key": api_key, "Content-Type": "application/json"}
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(f"{API_BASE}/boxes/{self.box_id}/eval", json={
+                    "code": """
 JSON.stringify((() => {
     const selectors = [
         '.chat-message', '.message', '[class*=msg]', '[class*=chatline]',
@@ -194,12 +184,15 @@ JSON.stringify((() => {
     return allText;
 })());
 """
-        result = await _bu(["eval", js])
-        if result.startswith("ERR:") or not result:
-            return []
-        try:
-            return json.loads(result)
-        except json.JSONDecodeError:
+                }, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                result = data.get("result", "[]")
+                if isinstance(result, str):
+                    return json.loads(result)
+                return result or []
+        except Exception as e:
+            logger.error(f"Read chat failed: {e}")
             return []
 
     async def send_message(self, message: str) -> bool:
@@ -207,36 +200,45 @@ JSON.stringify((() => {
         if not self._connected or not message:
             return False
 
+        api_key = settings.browser_use_api_key
+        headers = {"X-Browser-Use-API-Key": api_key, "Content-Type": "application/json"}
         escaped = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-        js = f"""
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(f"{API_BASE}/boxes/{self.box_id}/eval", json={
+                    "code": f"""
 (() => {{
-    const input = document.querySelector('textarea') || document.querySelector('[contenteditable]');
-    if (!input) return 'no input found';
+    const input = document.querySelector('textarea') || document.querySelector('[contenteditable]') || document.querySelector('input[type=text]');
+    if (!input) return 'no input';
     input.value = '{escaped}';
     input.dispatchEvent(new Event('input', {{bubbles: true}}));
     input.dispatchEvent(new Event('change', {{bubbles: true}}));
     input.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}}));
-    // Also click any send button
     const btn = document.querySelector('button[type=submit], [class*=send]');
     if (btn) btn.click();
     return 'sent';
 }})();
 """
-        result = await _bu(["eval", js])
-        await asyncio.sleep(1)
-        return not result.startswith("ERR:")
-
-    async def take_screenshot(self) -> Optional[str]:
-        """Take a screenshot, return path."""
-        path = f"/tmp/fcn_screenshot_{int(time.time())}.png"
-        result = await _bu(["screenshot", path])
-        if result.startswith("ERR:"):
-            return None
-        return path
+                }, headers=headers)
+                resp.raise_for_status()
+                await asyncio.sleep(1)
+                return True
+        except Exception as e:
+            logger.error(f"Send message failed: {e}")
+            return False
 
     async def disconnect(self):
-        """Close the browser session."""
-        await _bu(["close"])
+        """Destroy the cloud browser box."""
+        if not self.box_id:
+            return
+        api_key = settings.browser_use_api_key
+        headers = {"X-Browser-Use-API-Key": api_key}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.delete(f"{API_BASE}/boxes/{self.box_id}", headers=headers)
+        except Exception:
+            pass
         self._connected = False
         self.status = "disconnected"
 
