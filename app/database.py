@@ -7,6 +7,11 @@ from app.config import settings
 
 DB_PATH = settings.database_path
 
+# Ensure database directory exists
+_db_dir = os.path.dirname(DB_PATH)
+if _db_dir:
+    os.makedirs(_db_dir, exist_ok=True)
+
 # ─── Schema ───
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS personas (
