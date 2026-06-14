@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS personas (
     username TEXT NOT NULL,
     gender TEXT DEFAULT 'm',
     bio TEXT DEFAULT '',
+    goals TEXT DEFAULT '',
     default_tone TEXT DEFAULT 'casual',
     default_length TEXT DEFAULT 'medium',
     proxy_country TEXT DEFAULT 'us',

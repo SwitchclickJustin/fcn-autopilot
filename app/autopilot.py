@@ -162,13 +162,18 @@ class AutoPilotEngine:
         tone = persona.get("default_tone", "casual")
         length = persona.get("default_length", "medium")
         bio = persona.get("bio", "")
+        goals = persona.get("goals", "")
         username = persona.get("username", "")
 
         system = (
             f"You are chatting in an adult chat room (18+). Your username is {username}.\n"
             f"Tone: {tone}. Message length: {length}.\n"
-            f"Personality: {bio}\n\n"
-            f"Rules: Be natural and conversational. Vary your responses. "
+            f"Personality: {bio}\n"
+        )
+        if goals:
+            system += f"\nYOUR GOALS:\n{goals}\n"
+        system += (
+            f"\nRules: Be natural and conversational. Vary your responses. "
             f"Don't overuse emoji. Match the room's vibe. "
             f"Never include your username prefix. Just send the message."
         )
