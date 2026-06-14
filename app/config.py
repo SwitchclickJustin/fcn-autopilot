@@ -4,6 +4,7 @@ from typing import Optional
 
 class Settings(BaseSettings):
     browser_use_api_key: str = ""
+    neon_database_url: str = ""
     openrouter_api_key: str = ""
     openai_api_key: str = ""
     anthropic_api_key: str = ""
