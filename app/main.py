@@ -49,7 +49,12 @@ app = FastAPI(title="FCN Auto-Pilot", version="0.1.0", lifespan=lifespan)
 # Static files + templates
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
+
+# Create Jinja2 environment with cache_size=0 to fix "unhashable type: 'dict'"
+# error in Jinja2 >=3.1.6 when Starlette passes template variables
+from jinja2 import Environment, FileSystemLoader
+_cache_free_env = Environment(loader=FileSystemLoader("app/templates"), cache_size=0)
+templates = Jinja2Templates(env=_cache_free_env)
 
 # ─── WebSocket connections ───
 connected_websockets: set = set()
