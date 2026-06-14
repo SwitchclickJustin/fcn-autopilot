@@ -2,7 +2,6 @@
 import json
 import logging
 import os
-import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -10,7 +9,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPExcept
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import httpx
 
 from app.config import settings
 from app.database import (
@@ -32,10 +30,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("FCN Auto-Pilot starting up...")
-    # Ensure DB tables exist
     db = await get_db()
     await db.close()
-    # Load providers from DB
     providers = await get_providers()
     provider_registry.load_from_db(providers)
     logger.info(f"Loaded {len(providers)} LLM providers from database")
@@ -50,8 +46,7 @@ app = FastAPI(title="FCN Auto-Pilot", version="0.1.0", lifespan=lifespan)
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Create Jinja2 environment with cache_size=0 to fix "unhashable type: 'dict'"
-# error in Jinja2 >=3.1.6 when Starlette passes template variables
+# Create Jinja2 environment with cache disabled to fix Jinja2>=3.1.6 hash error
 from jinja2 import Environment, FileSystemLoader
 _cache_free_env = Environment(loader=FileSystemLoader("app/templates"), cache_size=0)
 templates = Jinja2Templates(env=_cache_free_env)
@@ -60,7 +55,6 @@ templates = Jinja2Templates(env=_cache_free_env)
 connected_websockets: set = set()
 
 async def broadcast(msg: dict):
-    """Send a message to all connected WebSocket clients."""
     dead = set()
     for ws in connected_websockets:
         try:
@@ -82,7 +76,6 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         while True:
             data = await ws.receive_json()
-            # Handle incoming commands from UI
             cmd = data.get("command", "")
             if cmd == "toggle_autopilot":
                 enabled = data.get("enabled", False)
@@ -172,41 +165,28 @@ async def start_session(data: dict):
     persona = await get_persona(persona_id)
     if not persona:
         raise HTTPException(404, "Persona not found")
-
-    # Parse JSON fields
     for field in ["selected_rooms", "dm_gender_filter", "dm_blocklist"]:
         if isinstance(persona.get(field), str):
             try:
                 persona[field] = json.loads(persona[field])
             except (json.JSONDecodeError, TypeError):
                 persona[field] = []
-
-    # Create session record
-    sess = {
+    sess = await create_session({
         "persona_id": persona_id,
         "username": persona.get("username", ""),
         "room_ids": persona.get("selected_rooms", ["SextChat"]),
         "status": "connecting"
-    }
-    sess = await create_session(sess)
-
-    # Start browser session
+    })
     browser_sess = await browser_manager.start_session(persona)
     if not browser_sess:
         await update_session(sess["id"], {"status": "error"})
         raise HTTPException(500, "Failed to start browser session")
-
     await update_session(sess["id"], {
         "status": "active",
         "browser_session_id": browser_sess.session_id,
         "browser_live_url": browser_sess.live_url
     })
-
-    return {
-        "session_id": sess["id"],
-        "status": "active",
-        "live_url": browser_sess.live_url
-    }
+    return {"session_id": sess["id"], "status": "active", "live_url": browser_sess.live_url}
 
 @app.post("/api/session/stop")
 async def stop_session():
@@ -244,12 +224,7 @@ async def session_state():
     if browser_manager.current_session:
         msgs = await browser_manager.current_session.read_chat()
         live_url = browser_manager.current_session.live_url
-    return {
-        "session": session,
-        "messages": msgs,
-        "live_url": live_url,
-        "auto_pilot": auto_pilot.enabled
-    }
+    return {"session": session, "messages": msgs, "live_url": live_url, "auto_pilot": auto_pilot.enabled}
 
 @app.post("/api/session/send")
 async def send_message(data: dict):
@@ -262,12 +237,7 @@ async def send_message(data: dict):
     if sent:
         session = await get_active_session()
         if session:
-            await log_chat({
-                "session_id": session["id"],
-                "chat_type": "group",
-                "source": "user",
-                "message": msg
-            })
+            await log_chat({"session_id": session["id"], "chat_type": "group", "source": "user", "message": msg})
     return {"sent": sent}
 
 # ─── API: Personas ───
@@ -277,8 +247,7 @@ async def api_personas():
 
 @app.post("/api/personas")
 async def api_create_persona(data: PersonaCreate):
-    persona = await create_persona(data.model_dump())
-    return persona
+    return await create_persona(data.model_dump())
 
 @app.put("/api/personas/{persona_id}")
 async def api_update_persona(persona_id: str, data: PersonaUpdate):
@@ -300,7 +269,6 @@ async def api_providers():
 @app.post("/api/providers")
 async def api_create_provider(data: LLMProviderCreate):
     provider = await create_provider(data.model_dump())
-    # Reload providers
     providers = await get_providers()
     provider_registry.load_from_db(providers)
     return provider
