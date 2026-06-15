@@ -124,7 +124,9 @@ class BrowserSession:
         try:
             from playwright.async_api import async_playwright
             self._playwright = await async_playwright().start()
-            self._cdp = await self._playwright.chromium.connect_over_cdp(cdp_url)
+            # CDP URL from API is HTTPS — Playwright needs WebSocket URL
+            wss_url = cdp_url.replace("https://", "wss://")
+            self._cdp = await self._playwright.chromium.connect_over_cdp(wss_url, timeout=30000)
 
             # Use the first default context/page or create one
             contexts = self._cdp.contexts
