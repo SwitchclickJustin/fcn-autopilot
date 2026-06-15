@@ -169,6 +169,27 @@ async def debug_browser():
     
     return results
 
+@app.get("/debug/page-content")
+async def debug_page_content():
+    """Get the current page HTML content (for debugging redirect issues)."""
+    if browser_manager.current_session and browser_manager.current_session._page:
+        try:
+            html = await browser_manager.current_session._page.content()
+            url = browser_manager.current_session._page.url
+            title = await browser_manager.current_session._page.title()
+            # Snapshot the page
+            snapshot = await browser_manager.current_session._page.evaluate("""(() => {
+                const links = Array.from(document.querySelectorAll('a[href]')).slice(0,20).map(a => a.href + ' [' + (a.textContent||'').trim() + ']');
+                const buttons = Array.from(document.querySelectorAll('button, input[type=submit], input[type=button]')).slice(0,20).map(b => (b.textContent||b.value||'').trim());
+                const meta = Array.from(document.querySelectorAll('meta')).map(m => (m.getAttribute('http-equiv')||'') + '=' + (m.getAttribute('content')||'')).filter(Boolean);
+                const scripts = Array.from(document.querySelectorAll('script')).slice(0,5).map(s => (s.textContent||'').slice(0,200)).filter(Boolean);
+                return {links, buttons, meta, scripts, bodyText: document.body.innerText.slice(0,1000)};
+            })()""")
+            return {"url": url, "title": title, "snapshot": snapshot, "html_length": len(html)}
+        except Exception as e:
+            return {"error": str(e)}
+    return {"status": "no_session"}
+
 @app.get("/debug/cleanup-browsers")
 async def cleanup_browsers():
     """List and optionally delete stale Browser Use Cloud sessions."""
