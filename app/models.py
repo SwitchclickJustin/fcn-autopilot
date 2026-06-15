@@ -96,6 +96,7 @@ class LLMProvider(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 class LLMProviderCreate(BaseModel):
+    id: str = Field(default_factory=new_id)
     name: str
     provider_type: str
     model: str = "gpt-4o-mini"
