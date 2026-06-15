@@ -57,8 +57,8 @@ class PersonaCreate(BaseModel):
     auto_reply_dms: bool = False
     dm_gender_filter: List[str] = []
     dm_blocklist: List[str] = []
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class PersonaUpdate(BaseModel):
     name: Optional[str] = None
