@@ -83,13 +83,12 @@ class BrowserSession:
             "enableRecording": False,
         }
 
-        # Always use a random Decoda residential proxy for IP rotation
-        decoda = random.choice(DECODA_PROXIES)
-        browser_config["customProxy"] = decoda
-        logger.info(f"Using Decoda proxy port {decoda['port']} for this session")
+        # Browser Use Cloud's built-in US residential proxy (free plan supported)
+        browser_config["proxyCountryCode"] = "us"
+        logger.info("Using Browser Use Cloud US residential proxy")
 
         # Create the cloud browser
-        logger.info(f"POST browsers with customProxy port {decoda['port']}")
+        logger.info("POST browsers with US residential proxy")
         result = await self._api("POST", "browsers", browser_config)
         if not result:
             logger.error(f"Browser API returned None — check BROWSER_USE_API_KEY or proxy config")
