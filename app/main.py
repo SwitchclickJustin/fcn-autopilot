@@ -120,14 +120,55 @@ async def debug_browser():
         results["api_error"] = str(e)
         results["api_traceback"] = traceback.format_exc()
     
-    # Test 3: Try importing playwright
+    # Test 3: Try importing playwright and connecting via CDP
     try:
         import playwright
         results["playwright_installed"] = True
-        results["playwright_version"] = playwright.__version__
+        # Can't easily check version without __version__
     except Exception as e:
         results["playwright_installed"] = False
         results["playwright_error"] = str(e)
+    
+    # Test 4: If we got a browser created, try CDP connection
+    if results.get("api_status") == 201:
+        try:
+            import json
+            data = json.loads(results.get("api_response", "{}"))
+            cdp_url = data.get("cdpUrl", "")
+            live_url = data.get("liveUrl", "")
+            box_id = data.get("id", "")
+            results["cdp_url_raw"] = cdp_url
+            results["live_url_raw"] = live_url
+            
+            # Try connecting via CDP with wss://
+            wss_url = cdp_url.replace("https://", "wss://")
+            results["cdp_wss_url"] = wss_url
+            
+            from playwright.async_api import async_playwright
+            p = await async_playwright().start()
+            try:
+                browser = await p.chromium.connect_over_cdp(wss_url, timeout=15000)
+                results["cdp_connected"] = True
+                results["cdp_version"] = browser.version
+                # Clean up
+                contexts = browser.contexts
+                if contexts:
+                    pages = contexts[0].pages
+                    results["cdp_pages"] = len(pages)
+                await browser.close()
+            except Exception as e:
+                results["cdp_connected"] = False
+                results["cdp_error"] = str(e)[:200]
+            await p.stop()
+            
+            # Clean up the test browser
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.delete(
+                    f"https://api.browser-use.com/api/v3/browsers/{box_id}",
+                    headers={"X-Browser-Use-API-Key": settings.browser_use_api_key}
+                )
+        except Exception as e:
+            results["cdp_test_error"] = str(e)[:300]
     
     return results
 
