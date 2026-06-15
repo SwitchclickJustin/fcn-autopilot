@@ -99,7 +99,13 @@ async def debug_db():
         "providers_count": len(providers),
         "personas_count": len(personas),
         "providers": [{"name": p["name"], "model": p["model"], "role": p["role"]} for p in providers],
-        "personas": [{"name": p["name"], "username": p["username"]} for p in personas]
+        "personas": [{"name": p["name"], "username": p["username"]} for p in personas],
+        "env": {
+            "browser_use_key_set": bool(settings.browser_use_api_key),
+            "browser_use_key_prefix": settings.browser_use_api_key[:7] + "..." if settings.browser_use_api_key else "",
+            "neon_set": bool(settings.neon_database_url),
+            "openrouter_set": bool(settings.openrouter_api_key),
+        }
     }
 
 # ─── WebSocket ───
