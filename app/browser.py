@@ -270,6 +270,13 @@ class BrowserSession:
             ]
 
             landed = False
+
+            # Block ad-redirect domains at the network level
+            await self._page.route("**12chats.com**", lambda route: route.abort("blockedbyclient"))
+            await self._page.route("**traffic*.com**", lambda route: route.abort("blockedbyclient"))
+            await self._page.route("**exoclick.com**", lambda route: route.abort("blockedbyclient"))
+            await self._page.route("**popads.net**", lambda route: route.abort("blockedbyclient"))
+
             for url in entry_urls:
                 logger.info(f"Trying entry: {url}")
                 try:
