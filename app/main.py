@@ -223,13 +223,17 @@ async def start_session(data: dict):
     })
     try:
         browser_sess = await browser_manager.start_session(persona)
+        if not browser_sess:
+            # The error was already logged server-side, return a helpful message
+            # Check if it was an API error vs API key missing
+            await update_session(sess["id"], {"status": "error"})
+            raise HTTPException(500, detail="Browser session failed — check Railway logs for details. Common issues: invalid API key, expired credits, or network error.")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"BROWSER START ERROR: {e}\n{traceback.format_exc()}")
         await update_session(sess["id"], {"status": "error"})
         raise HTTPException(500, detail=f"Browser session failed: {e}")
-    if not browser_sess:
-        await update_session(sess["id"], {"status": "error"})
-        raise HTTPException(500, detail="Failed to start browser session — check BROWSER_USE_API_KEY is set in Railway")
     await update_session(sess["id"], {
         "status": "active",
         "browser_session_id": browser_sess.box_id,

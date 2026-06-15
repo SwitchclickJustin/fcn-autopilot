@@ -97,9 +97,15 @@ class BrowserSession:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(f"{API_BASE}/browsers", json=body, headers=headers)
+                logger.info(f"BU Cloud API response: {resp.status_code}")
 
                 if resp.status_code == 402:
                     logger.error("Browser Use Cloud: insufficient credits")
+                    self.status = "error"
+                    return False
+                
+                if resp.status_code == 422:
+                    logger.error(f"BU Cloud validation error: {resp.text[:500]}")
                     self.status = "error"
                     return False
 
