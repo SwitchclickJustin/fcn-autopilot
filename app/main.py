@@ -21,7 +21,7 @@ from app.database import (
 )
 from app.models import PersonaCreate, PersonaUpdate, LLMProviderCreate, new_id
 from app.providers import provider_registry
-from app.browser import browser_manager, API_BASE
+from app.browser import browser_manager
 from app.autopilot import auto_pilot
 from app.supervisor import supervisor_engine
 
@@ -85,25 +85,22 @@ async def health():
 # ─── DB Debug ───
 @app.get("/debug/browser-test")
 async def debug_browser():
-    """Test Browser Use Cloud connection and return the raw error."""
+    """Test that Playwright/Chromium is available locally."""
     import traceback
-    api_key = settings.browser_use_api_key
-    if not api_key:
-        return {"error": "BROWSER_USE_API_KEY not set"}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{API_BASE}/browsers",
-                json={"timeout": 5, "enableRecording": False, "proxyCountryCode": None},
-                headers={"X-Browser-Use-API-Key": api_key, "Content-Type": "application/json"}
-            )
-            return {
-                "status_code": resp.status_code,
-                "body": resp.text[:500] if resp.status_code >= 400 else "OK",
-                "key_prefix": api_key[:7] + "..."
-            }
+        import playwright
+        # Try importing and launching
+        from playwright.async_api import async_playwright
+        p = await async_playwright().start()
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+        version = await browser.version()
+        await browser.close()
+        await p.stop()
+        return {"status": "ok", "chromium_version": version, "mode": "local"}
+    except ImportError as e:
+        return {"status": "error", "error": f"Playwright not installed: {e}"}
     except Exception as e:
-        return {"error": str(e), "traceback": traceback.format_exc()}
+        return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
 
 @app.get("/debug/db")
 async def debug_db():
