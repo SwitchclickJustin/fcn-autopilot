@@ -261,15 +261,30 @@ class BrowserSession:
         room = (self.persona.get("selected_rooms") or ["SextChat"])[0]
 
         try:
-            # Navigate to FCN room
+            # Navigate to FCN room with redirect handling
             logger.info(f"Navigating to FCN/{room} as {username}...")
-            await self._page.goto(
-                f"https://www.freechatnow.com/chat/{room.lower()}",
-                wait_until="domcontentloaded"
-            )
-            await asyncio.sleep(3)
-            await self._close_overlays()
-            await asyncio.sleep(1)
+            
+            for attempt in range(3):
+                await self._page.goto(
+                    f"https://www.freechatnow.com/chat/{room.lower()}",
+                    wait_until="domcontentloaded"
+                )
+                await asyncio.sleep(3)
+                
+                # Check if we actually landed on FCN (ad redirect may have hijacked us)
+                current_url = self._page.url.lower()
+                if "freechatnow.com" in current_url or "fcnchat.com" in current_url:
+                    break  # On the right page
+                
+                # Hit an ad redirect — stop and retry
+                logger.warning(f"Ad redirect to {current_url[:80]} — retrying ({attempt+1}/3)")
+                await self._page.evaluate("window.stop()")
+                await self._close_overlays()
+                await asyncio.sleep(2)
+            else:
+                logger.error("Could not reach freechatnow.com after 3 attempts")
+                self.status = "error"
+                return False
 
             # Fill username
             await self._page.evaluate(f"""document.querySelector('input[name="username"]').value = '{username}';
