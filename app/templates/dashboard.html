@@ -49,16 +49,24 @@
   <div>
     <div class="card" style="margin-bottom:0">
       <div class="card-title">Live Browser</div>
-      {% if browser_live_url %}
+      {% if browser_live_url and browser_live_url != "local" %}
       <div class="browser-frame">
         <iframe src="{{ browser_live_url }}" allow="clipboard-read; clipboard-write"></iframe>
+      </div>
+      {% elif browser_live_url == "local" %}
+      <div class="browser-frame" id="browser-placeholder">
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);flex-direction:column;gap:.5rem;font-size:.9rem">
+          <span style="font-size:2rem">🟢</span>
+          <span>Browser is active on Railway.</span>
+          <span class="text-sm">Local Chromium — no live stream available.</span>
+        </div>
       </div>
       {% else %}
       <div class="browser-frame" id="browser-placeholder">
         <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);flex-direction:column;gap:.5rem;font-size:.9rem">
           <span style="font-size:2rem">🌐</span>
           <span>Start a session to see the live browser.</span>
-          <span class="text-sm">Browser Use Cloud will provision a remote Chromium.</span>
+          <span class="text-sm">Click Start Session to launch a local Chromium browser.</span>
         </div>
       </div>
       {% endif %}
@@ -162,7 +170,7 @@ function startPolling() {
       const r = await fetch('/api/session/state');
       const data = await r.json();
       if (data.messages) updateChatFeed(data.messages);
-      if (data.live_url) {
+      if (data.live_url && data.live_url !== 'local') {
         const ph = document.getElementById('browser-placeholder');
         if (ph) {
           ph.innerHTML = `<iframe src="${data.live_url}" allow="clipboard-read; clipboard-write" style="width:100%;height:100%;border:none"></iframe>`;
@@ -195,7 +203,7 @@ async function startSession() {
     document.getElementById('btn-start').style.display = 'none';
     document.getElementById('btn-stop').style.display = 'inline-flex';
 
-    if (data.live_url) {
+    if (data.live_url && data.live_url !== 'local') {
       const ph = document.getElementById('browser-placeholder');
       if (ph) {
         ph.innerHTML = `<iframe src="${data.live_url}" allow="clipboard-read; clipboard-write" style="width:100%;height:100%;border:none"></iframe>`;
