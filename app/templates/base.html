@@ -57,7 +57,7 @@ textarea{resize:vertical}
 .mb{margin-bottom:.6rem}
 label{display:block;font-size:.8rem;color:var(--text-dim);margin-bottom:.3rem}
 /* Grid */
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.grid-2{display:grid;grid-template-columns:3fr 2fr;gap:1rem;min-height:0}
 .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem}
 /* Toggle switch */
 .toggle{position:relative;display:inline-block;width:48px;height:26px}
@@ -77,8 +77,8 @@ label{display:block;font-size:.8rem;color:var(--text-dim);margin-bottom:.3rem}
 .suggestion-card .num{font-size:.75rem;font-weight:700;color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,transparent);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .suggestion-card .text{flex:1;font-size:.9rem;line-height:1.4}
 /* Inline browser */
-.browser-frame{width:100%;height:500px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--surface-2)}
-.browser-frame iframe{width:100%;height:100%;border:none}
+.browser-frame{width:100%;min-height:65vh;max-height:80vh;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--surface-2);display:flex;flex-direction:column}
+.browser-frame iframe{width:100%;height:100%;min-height:65vh;border:none;flex:1}
 /* Table */
 table{width:100%;border-collapse:collapse;font-size:.82rem}
 th,td{padding:.5rem .6rem;text-align:left;border-bottom:1px solid var(--border)}
