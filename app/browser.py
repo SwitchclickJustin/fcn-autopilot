@@ -271,11 +271,23 @@ class BrowserSession:
 
             landed = False
 
-            # Block ad-redirect domains at the network level
-            await self._page.route("**12chats.com**", lambda route: route.abort("blockedbyclient"))
-            await self._page.route("**traffic*.com**", lambda route: route.abort("blockedbyclient"))
-            await self._page.route("**exoclick.com**", lambda route: route.abort("blockedbyclient"))
-            await self._page.route("**popads.net**", lambda route: route.abort("blockedbyclient"))
+            # Block ad-redirect domains using CDP protocol (works in remote browser mode)
+            try:
+                cdp = await self._page.context.new_cdp_session(self._page)
+                await cdp.send("Network.enable")
+                await cdp.send("Network.setBlockedURLs", {
+                    "urls": [
+                        "*12chats.com*",
+                        "*exoclick.com*",
+                        "*traffic*center.com*",
+                        "*popads.net*",
+                        "*juicyads.com*",
+                        "*adsterra.com*"
+                    ]
+                })
+                logger.info("CDP ad-block enabled")
+            except Exception as e:
+                logger.warning(f"CDP ad-block setup failed: {e}")
 
             for url in entry_urls:
                 logger.info(f"Trying entry: {url}")
