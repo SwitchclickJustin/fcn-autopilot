@@ -284,7 +284,12 @@ async def api_personas():
 
 @app.post("/api/personas")
 async def api_create_persona(data: PersonaCreate):
-    return await create_persona(data.model_dump())
+    import traceback
+    try:
+        return await create_persona(data.model_dump())
+    except Exception as e:
+        logger.error(f"PERSONA CREATE ERROR: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, detail=f"Persona create failed: {e}")
 
 @app.put("/api/personas/{persona_id}")
 async def api_update_persona(persona_id: str, data: PersonaUpdate):

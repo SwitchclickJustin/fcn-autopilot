@@ -1,8 +1,11 @@
 """PostgreSQL (Neon) database schema and async queries."""
 import json
+import logging
 import os
 from datetime import datetime
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 USE_NEON = bool(settings.neon_database_url)
 
@@ -178,8 +181,15 @@ async def create_persona(data: dict):
     cols = ", ".join(data.keys())
     placeholders = ", ".join([f"${i+1}" for i in range(len(data))]) if USE_NEON else ", ".join(["?"] * len(data))
     db = await get_db()
-    await _execute(db, f"INSERT INTO personas ({cols}) VALUES ({placeholders})", list(data.values()))
-    await close_db(db)
+    try:
+        await _execute(db, f"INSERT INTO personas ({cols}) VALUES ({placeholders})", list(data.values()))
+    except Exception as e:
+        logger.error(f"PERSONA INSERT ERROR: {e}")
+        logger.error(f"Columns: {cols}")
+        logger.error(f"Values types: {[type(v).__name__ for v in data.values()]}")
+        raise
+    finally:
+        await close_db(db)
     return data
 
 async def update_persona(persona_id: str, data: dict):
