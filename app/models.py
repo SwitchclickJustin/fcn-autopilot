@@ -65,6 +65,8 @@ class PersonaUpdate(BaseModel):
     username: Optional[str] = None
     gender: Optional[str] = None
     bio: Optional[str] = None
+    goals: Optional[str] = None
+    telegram_handle: Optional[str] = None
     default_tone: Optional[str] = None
     default_length: Optional[str] = None
     proxy_country: Optional[str] = None
