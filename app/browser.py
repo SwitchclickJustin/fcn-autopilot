@@ -140,8 +140,27 @@ class BrowserSession:
             # Auto-dismiss dialogs & close popup windows
             self._page.on("dialog", lambda dialog: asyncio.ensure_future(self._handle_dialog(dialog)))
             self._page.on("popup", lambda popup: asyncio.ensure_future(self._close_popup(popup)))
-            # Also handle pages created in new tabs
-            self._cdp.on("disconnected", lambda: None)  # noop to suppress warnings
+
+            # Block popups at the JS source — override window.open before any page scripts run
+            await self._page.add_init_script("""
+                (() => {
+                    const origOpen = window.open;
+                    window.open = function(url, ...args) {
+                        if (url && (url.includes('freechatnow') || url.includes('fcnchat'))) {
+                            return origOpen.call(window, url, ...args);
+                        }
+                        return null;
+                    };
+                    // Kill any ad layer that appears
+                    setInterval(() => {
+                        document.querySelectorAll('iframe').forEach(f => {
+                            if (f.src && !f.src.includes('freechatnow') && !f.src.includes('fcnchat')) {
+                                f.remove();
+                            }
+                        });
+                    }, 2000);
+                })();
+            """)
 
             self._connected = True
             self.status = "connected"
@@ -172,19 +191,30 @@ class BrowserSession:
             pass
 
     async def _close_ad_windows(self):
-        """Close all pages except the FCN chat page."""
-        if not self._cdp:
+        """Close all tabs/windows except the FCN chat page, using CDP protocol directly."""
+        if not self._page:
             return
         try:
-            for ctx in self._cdp.contexts:
-                for page in ctx.pages:
-                    url = page.url.lower()
-                    if "freechatnow.com" not in url and "chat" not in url:
-                        try:
-                            await page.close()
-                            logger.info(f"Closed ad window: {url[:60]}")
-                        except Exception:
-                            pass
+            # Use CDP protocol to list ALL targets in the remote browser
+            cdp = await self._page.context.new_cdp_session(self._page)
+            result = await cdp.send("Target.getTargets")
+            targets = result.get("targetInfos", [])
+            closed = 0
+            for t in targets:
+                url = t.get("url", "").lower()
+                target_id = t.get("targetId", "")
+                if not url or target_id == self._page.context._target_id:
+                    continue  # skip our own page
+                # Close anything that isn't freechatnow
+                if url and "freechatnow.com" not in url and "about:blank" not in url:
+                    try:
+                        await cdp.send("Target.closeTarget", {"targetId": target_id})
+                        closed += 1
+                        logger.info(f"CDP closed target: {url[:60]}")
+                    except Exception:
+                        pass
+            if closed:
+                logger.info(f"Closed {closed} popup/ad windows via CDP")
         except Exception:
             pass
 
