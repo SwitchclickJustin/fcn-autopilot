@@ -93,7 +93,7 @@ async def debug_browser():
         from playwright.async_api import async_playwright
         p = await async_playwright().start()
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        version = await browser.version()
+        version = browser.version
         await browser.close()
         await p.stop()
         return {"status": "ok", "chromium_version": version, "mode": "local"}
