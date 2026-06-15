@@ -2,9 +2,7 @@
 import asyncio
 import json
 import logging
-import os
 import random
-import re
 import time
 from typing import Optional
 
@@ -14,6 +12,21 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.browser-use.com/api/v3"
+
+# Decoda residential proxy pool — each entry: host:port:username:password
+# Picks a random one each session for IP rotation
+DECODA_PROXIES = [
+    {"host": "gate.decodo.com", "port": 10001, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10002, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10003, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10004, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10005, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10006, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10007, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10008, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10009, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": 10010, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+]
 
 
 class BrowserSession:
@@ -70,39 +83,10 @@ class BrowserSession:
             "enableRecording": False,
         }
 
-        # Proxy config — custom proxy or residential proxy (always set one)
-        custom_proxy = self.persona.get("proxy_custom", "").strip()
-        if custom_proxy:
-            # Parse socks5://user:pass@host:port or http://user:pass@host:port or user:pass@host:port
-            proxy_match = re.match(
-                r"(?:socks5|http|https)://(.+?):(.+?)@(.+?):(\d+)|(.+?):(.+?)@(.+?):(\d+)",
-                custom_proxy,
-            )
-            if proxy_match:
-                groups = proxy_match.groups()
-                if groups[0] and groups[1] and groups[2] and groups[3]:
-                    browser_config["customProxy"] = {
-                        "host": groups[2],
-                        "port": int(groups[3]),
-                        "username": groups[0],
-                        "password": groups[1],
-                    }
-                elif groups[4] and groups[5] and groups[6] and groups[7]:
-                    browser_config["customProxy"] = {
-                        "host": groups[6],
-                        "port": int(groups[7]),
-                        "username": groups[4],
-                        "password": groups[5],
-                    }
-                else:
-                    # Fallback to US residential proxy
-                    browser_config["proxyCountryCode"] = "us"
-            else:
-                # Fallback to US residential proxy
-                browser_config["proxyCountryCode"] = "us"
-        else:
-            # Always use a residential proxy (prevents FCN ad redirects on datacenter IPs)
-            browser_config["proxyCountryCode"] = "us"
+        # Always use a random Decoda residential proxy for IP rotation
+        decoda = random.choice(DECODA_PROXIES)
+        browser_config["customProxy"] = decoda
+        logger.info(f"Using Decoda proxy port {decoda['port']} for this session")
 
         # Create the cloud browser
         result = await self._api("POST", "browsers", browser_config)
