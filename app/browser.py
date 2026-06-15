@@ -271,24 +271,96 @@ class BrowserSession:
                 logger.info(f"Trying entry: {url}")
                 try:
                     await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
                     current_url = self._page.url.lower()
                     if "freechatnow.com" in current_url or "fcnchat" in current_url:
                         if "chat" in current_url or url == "https://www.freechatnow.com/":
                             landed = True
                             logger.info(f"Landed on: {current_url}")
                             break
-                    logger.warning(f"Redirected to: {current_url[:80]}")
                     
-                    # Try going back — the redirect may have set a cookie so back lands on FCN
-                    if "12chats" in current_url or "redirect" in current_url:
-                        logger.info("Hit ad redirect — trying browser back")
-                        await self._page.go_back()
-                        await asyncio.sleep(3)
+                    # Not on FCN — probably hit a redirect ad (12chats, etc.)
+                    logger.warning(f"Hit redirect to: {current_url[:80]}")
+                    
+                    # Look for a way to proceed: click "Continue", "Skip", or follow redirect
+                    proceed = await self._page.evaluate("""(() => {
+                        // Find any clickable element that leads to freechatnow
+                        const buttons = document.querySelectorAll('a, button, [onclick], [href]');
+                        for (const el of buttons) {
+                            const txt = (el.textContent || '').toLowerCase().trim();
+                            const href = (el.getAttribute('href') || '').toLowerCase();
+                            const onclick = (el.getAttribute('onclick') || '').toLowerCase();
+                            if (
+                                txt.includes('continue') || txt.includes('skip') ||
+                                txt.includes('proceed') || txt.includes('enter') ||
+                                txt.includes('freechatnow') || txt.includes('fcn') ||
+                                href.includes('freechatnow') || href.includes('fcn') ||
+                                onclick.includes('freechatnow') || onclick.includes('fcn')
+                            ) {
+                                return href || 'click';
+                            }
+                        }
+                        // Check if there's a meta refresh or redirect
+                        const meta = document.querySelector('meta[http-equiv=refresh]');
+                        if (meta) return meta.getAttribute('content') || '';
+                        // Check for countdown-then-redirect script
+                        const scripts = document.querySelectorAll('script');
+                        for (const s of scripts) {
+                            const text = (s.textContent || '').toLowerCase();
+                            if (text.includes('freechatnow') || text.includes('location')) {
+                                return 'js_redirect';
+                            }
+                        }
+                        return '';
+                    })()""")
+                    
+                    if proceed == 'click':
+                        logger.info("Found proceed button — clicking it")
+                        await self._page.evaluate("""(() => {
+                            const buttons = document.querySelectorAll('a, button, [onclick]');
+                            for (const el of buttons) {
+                                const txt = (el.textContent || '').toLowerCase().trim();
+                                if (txt.includes('continue') || txt.includes('skip') ||
+                                    txt.includes('proceed') || txt.includes('enter')) {
+                                    el.click();
+                                    return;
+                                }
+                            }
+                        })()""")
+                        await asyncio.sleep(4)
                         current_url = self._page.url.lower()
                         if "freechatnow.com" in current_url:
                             landed = True
-                            logger.info(f"Back navigation worked: {current_url}")
+                            logger.info(f"Proceed button took us to: {current_url}")
+                            break
+                    elif proceed:
+                        logger.info(f"Found redirect target: {proceed[:60]}")
+                        if proceed.startswith('http'):
+                            await self._page.goto(proceed, wait_until="domcontentloaded")
+                        else:
+                            await self._page.evaluate(f"window.location.href = '{proceed}'")
+                        await asyncio.sleep(4)
+                        current_url = self._page.url.lower()
+                        if "freechatnow.com" in current_url:
+                            landed = True
+                            logger.info(f"Redirect link took us to: {current_url}")
+                            break
+                    elif not self._page.is_closed():
+                        # Try clicking any prominent link/button on the page
+                        await self._page.evaluate("""(() => {
+                            const els = document.querySelectorAll('a, button');
+                            for (const el of els) {
+                                const txt = (el.textContent || '').trim();
+                                if (txt && txt.length < 30) {
+                                    el.click();
+                                    return;
+                                }
+                            }
+                        })()""")
+                        await asyncio.sleep(4)
+                        current_url = self._page.url.lower()
+                        if "freechatnow.com" in current_url:
+                            landed = True
                             break
                 except Exception as e:
                     logger.warning(f"Entry {url} failed: {e}")
