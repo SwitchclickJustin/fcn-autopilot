@@ -195,6 +195,7 @@ async def history_page(request: Request):
 # ─── API: Session ───
 @app.post("/api/session/start")
 async def start_session(data: dict):
+    import traceback
     persona_id = data.get("persona_id", "")
     if not persona_id:
         raise HTTPException(400, "persona_id required")
@@ -214,13 +215,18 @@ async def start_session(data: dict):
         "room_ids": persona.get("selected_rooms", ["SextChat"]),
         "status": "connecting"
     })
-    browser_sess = await browser_manager.start_session(persona)
+    try:
+        browser_sess = await browser_manager.start_session(persona)
+    except Exception as e:
+        logger.error(f"BROWSER START ERROR: {e}\n{traceback.format_exc()}")
+        await update_session(sess["id"], {"status": "error"})
+        raise HTTPException(500, detail=f"Browser session failed: {e}")
     if not browser_sess:
         await update_session(sess["id"], {"status": "error"})
-        raise HTTPException(500, "Failed to start browser session")
+        raise HTTPException(500, detail="Failed to start browser session — check BROWSER_USE_API_KEY is set in Railway")
     await update_session(sess["id"], {
         "status": "active",
-        "browser_session_id": browser_sess.session_id,
+        "browser_session_id": browser_sess.box_id,
         "browser_live_url": browser_sess.live_url
     })
     return {"session_id": sess["id"], "status": "active", "live_url": browser_sess.live_url}
