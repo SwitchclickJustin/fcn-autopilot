@@ -135,12 +135,10 @@ async def debug_browser():
             import json
             data = json.loads(results.get("api_response", "{}"))
             cdp_url = data.get("cdpUrl", "")
-            live_url = data.get("liveUrl", "")
             box_id = data.get("id", "")
             results["cdp_url_raw"] = cdp_url
-            results["live_url_raw"] = live_url
             
-            # Try connecting via CDP with wss://
+            # CDP URL is HTTPS — Playwright needs wss://
             wss_url = cdp_url.replace("https://", "wss://")
             results["cdp_wss_url"] = wss_url
             
@@ -150,7 +148,6 @@ async def debug_browser():
                 browser = await p.chromium.connect_over_cdp(wss_url, timeout=15000)
                 results["cdp_connected"] = True
                 results["cdp_version"] = browser.version
-                # Clean up
                 contexts = browser.contexts
                 if contexts:
                     pages = contexts[0].pages
@@ -161,7 +158,7 @@ async def debug_browser():
                 results["cdp_error"] = str(e)[:200]
             await p.stop()
             
-            # Clean up the test browser
+            # Clean up test browser
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.delete(
                     f"https://api.browser-use.com/api/v3/browsers/{box_id}",
@@ -169,6 +166,54 @@ async def debug_browser():
                 )
         except Exception as e:
             results["cdp_test_error"] = str(e)[:300]
+    
+    return results
+
+@app.get("/debug/cleanup-browsers")
+async def cleanup_browsers():
+    """List and optionally delete stale Browser Use Cloud sessions."""
+    import httpx
+    results = {"stale": [], "deleted": 0, "errors": []}
+    
+    async with httpx.AsyncClient(timeout=30) as client:
+        # List all active browsers
+        try:
+            resp = await client.get(
+                "https://api.browser-use.com/api/v3/browsers?page=1&page_size=10",
+                headers={"X-Browser-Use-API-Key": settings.browser_use_api_key}
+            )
+            if resp.status_code != 200:
+                return {"error": f"List failed: {resp.status_code}", "detail": resp.text[:200]}
+            data = resp.json()
+            browsers = data.get("browsers", [])
+            results["total_browsers"] = len(browsers)
+            
+            for b in browsers:
+                info = {
+                    "id": b["id"],
+                    "status": b.get("status", "?"),
+                    "started": b.get("startedAt", "?")[:19],
+                }
+                results["stale"].append(info)
+                
+                # Delete it
+                try:
+                    del_resp = await client.delete(
+                        f"https://api.browser-use.com/api/v3/browsers/{b['id']}",
+                        headers={"X-Browser-Use-API-Key": settings.browser_use_api_key}
+                    )
+                    if del_resp.status_code in (200, 204):
+                        results["deleted"] += 1
+                    else:
+                        results["errors"].append(f"{b['id']}: {del_resp.status_code}")
+                except Exception as e:
+                    results["errors"].append(f"{b['id']}: {e}")
+        except Exception as e:
+            return {"error": str(e)}
+    
+    # Also stop any local session
+    if browser_manager.current_session:
+        await browser_manager.stop_session()
     
     return results
 
