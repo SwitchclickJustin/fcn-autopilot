@@ -217,6 +217,19 @@ async def cleanup_browsers():
     
     return results
 
+@app.get("/debug/browser-status")
+async def debug_browser_status():
+    """Check the in-memory browser session status."""
+    if browser_manager.current_session:
+        return {
+            "status": browser_manager.current_session.status,
+            "box_id": browser_manager.current_session.box_id,
+            "live_url": browser_manager.current_session.live_url[:80] if browser_manager.current_session.live_url else "",
+            "connected": browser_manager.current_session._connected,
+            "has_page": browser_manager.current_session._page is not None,
+        }
+    return {"status": "no_session"}
+
 @app.get("/debug/db")
 async def debug_db():
     import os
