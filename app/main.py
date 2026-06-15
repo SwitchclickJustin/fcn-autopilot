@@ -264,7 +264,7 @@ async def start_session(data: dict):
     
     await update_session(sess["id"], {
         "status": "active",
-        "browser_session_id": "local",
+        "browser_session_id": browser_sess.box_id,
         "browser_live_url": browser_sess.live_url
     })
     
