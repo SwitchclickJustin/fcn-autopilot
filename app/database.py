@@ -196,7 +196,7 @@ async def update_persona(persona_id: str, data: dict):
     for field in ["selected_rooms", "dm_gender_filter", "dm_blocklist"]:
         if isinstance(data.get(field), list):
             data[field] = json.dumps(data[field])
-    data["updated_at"] = datetime.utcnow().isoformat()
+    data["updated_at"] = datetime.utcnow()
     sets = ", ".join(f"{k} = ${i+1}" if USE_NEON else f"{k} = ?" for i, k in enumerate(data))
     vals = list(data.values()) + [persona_id]
     db = await get_db()
