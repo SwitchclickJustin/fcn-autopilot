@@ -70,7 +70,7 @@ class BrowserSession:
             "enableRecording": False,
         }
 
-        # Proxy config — custom proxy or country code
+        # Proxy config — custom proxy or residential proxy (always set one)
         custom_proxy = self.persona.get("proxy_custom", "").strip()
         if custom_proxy:
             # Parse socks5://user:pass@host:port or http://user:pass@host:port or user:pass@host:port
@@ -95,18 +95,14 @@ class BrowserSession:
                         "password": groups[5],
                     }
                 else:
-                    proxy_country = self.persona.get("proxy_country", "us")
-                    if proxy_country != "us":
-                        browser_config["proxyCountryCode"] = proxy_country
+                    # Fallback to US residential proxy
+                    browser_config["proxyCountryCode"] = "us"
             else:
-                # Fallback to country proxy
-                proxy_country = self.persona.get("proxy_country", "us")
-                if proxy_country != "us":
-                    browser_config["proxyCountryCode"] = proxy_country
+                # Fallback to US residential proxy
+                browser_config["proxyCountryCode"] = "us"
         else:
-            proxy_country = self.persona.get("proxy_country", "us")
-            if proxy_country != "us":
-                browser_config["proxyCountryCode"] = proxy_country
+            # Always use a residential proxy (prevents FCN ad redirects on datacenter IPs)
+            browser_config["proxyCountryCode"] = "us"
 
         # Create the cloud browser
         result = await self._api("POST", "browsers", browser_config)
