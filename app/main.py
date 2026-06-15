@@ -169,6 +169,64 @@ async def debug_browser():
     
     return results
 
+@app.get("/debug/test-decoda")
+async def debug_test_decoda():
+    """Test creating a cloud browser with Decoda proxy."""
+    import httpx, random
+    
+    decoda_proxies = [
+        {"host": "gate.decodo.com", "port": 10001, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    ]
+    proxy = random.choice(decoda_proxies)
+    
+    results = {}
+    
+    # Test 1: Create browser WITHOUT proxy
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.browser-use.com/api/v3/browsers",
+                headers={"X-Browser-Use-API-Key": settings.browser_use_api_key, "Content-Type": "application/json"},
+                json={"timeout": 5, "browserScreenWidth": 1280, "browserScreenHeight": 720}
+            )
+            results["no_proxy_status"] = resp.status_code
+            results["no_proxy_body"] = resp.text[:300]
+            if resp.status_code == 201:
+                data = resp.json()
+                bid = data["id"]
+                # Clean up
+                await client.delete(f"https://api.browser-use.com/api/v3/browsers/{bid}",
+                    headers={"X-Browser-Use-API-Key": settings.browser_use_api_key})
+    except Exception as e:
+        results["no_proxy_error"] = str(e)
+    
+    # Test 2: Create browser WITH Decoda proxy
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.browser-use.com/api/v3/browsers",
+                headers={"X-Browser-Use-API-Key": settings.browser_use_api_key, "Content-Type": "application/json"},
+                json={
+                    "timeout": 5,
+                    "browserScreenWidth": 1280,
+                    "browserScreenHeight": 720,
+                    "customProxy": proxy
+                }
+            )
+            results["with_proxy_status"] = resp.status_code
+            results["with_proxy_body"] = resp.text[:500]
+            if resp.status_code == 201:
+                data = resp.json()
+                bid = data["id"]
+                # Clean up
+                await client.delete(f"https://api.browser-use.com/api/v3/browsers/{bid}",
+                    headers={"X-Browser-Use-API-Key": settings.browser_use_api_key})
+    except Exception as e:
+        results["with_proxy_error"] = str(e)
+    
+    results["used_proxy"] = proxy
+    return results
+
 @app.get("/debug/check-ip")
 async def debug_check_ip():
     """Get the current cloud browser's public IP (for debugging FCN redirects)."""
