@@ -201,8 +201,14 @@ async def update_persona(persona_id: str, data: dict):
     vals = list(data.values()) + [persona_id]
     db = await get_db()
     where = "WHERE id = $"+str(len(data)+1) if USE_NEON else "WHERE id = ?"
-    await _execute(db, f"UPDATE personas SET {sets} {where}", vals)
-    await close_db(db)
+    try:
+        await _execute(db, f"UPDATE personas SET {sets} {where}", vals)
+    except Exception as e:
+        logger.error(f"UPDATE PERSONA ERROR: {e}")
+        logger.error(f"Values types: {[type(v).__name__ for v in vals]}")
+        raise
+    finally:
+        await close_db(db)
 
 async def delete_persona(persona_id: str):
     db = await get_db()

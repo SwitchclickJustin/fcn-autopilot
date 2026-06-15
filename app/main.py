@@ -293,10 +293,15 @@ async def api_create_persona(data: PersonaCreate):
 
 @app.put("/api/personas/{persona_id}")
 async def api_update_persona(persona_id: str, data: PersonaUpdate):
-    updates = {k: v for k, v in data.model_dump().items() if v is not None}
-    if updates:
-        await update_persona(persona_id, updates)
-    return {"updated": True}
+    import traceback
+    try:
+        updates = {k: v for k, v in data.model_dump().items() if v is not None}
+        if updates:
+            await update_persona(persona_id, updates)
+        return {"updated": True}
+    except Exception as e:
+        logger.error(f"PERSONA UPDATE ERROR: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, detail=f"Persona update failed: {e}")
 
 @app.delete("/api/personas/{persona_id}")
 async def api_delete_persona(persona_id: str):
