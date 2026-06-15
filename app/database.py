@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     browser_live_url TEXT DEFAULT '',
     messages_sent_today INTEGER DEFAULT 0,
     cooldown_until REAL DEFAULT 0,
-    last_message_at TIMESTAMP DEFAULT '',
+    last_message_at TIMESTAMP DEFAULT NULL,
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS supervisor_rules (
     severity INTEGER DEFAULT 5,
     enabled INTEGER DEFAULT 1,
     trigger_count INTEGER DEFAULT 0,
-    last_triggered TIMESTAMP DEFAULT '',
+    last_triggered TIMESTAMP DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
