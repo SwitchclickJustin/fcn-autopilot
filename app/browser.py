@@ -129,7 +129,15 @@ class BrowserSession:
                 return True
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"API error creating browser: {e.response.status_code} {e.response.text[:300]}")
+            logger.error(f"API error creating browser: {e.response.status_code} {e.response.text[:500]}")
+            self.status = "error"
+            return False
+        except httpx.RequestError as e:
+            logger.error(f"Network error creating browser: {e}")
+            self.status = "error"
+            return False
+        except websockets.exceptions.WebSocketException as e:
+            logger.error(f"CDP WebSocket error: {e}")
             self.status = "error"
             return False
         except Exception as e:
