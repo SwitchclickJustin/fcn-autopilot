@@ -245,22 +245,26 @@ async def start_session(data: dict):
     try:
         browser_sess = await browser_manager.start_session(persona)
         if not browser_sess:
-            # The error was already logged server-side, return a helpful message
-            # Check if it was an API error vs API key missing
             await update_session(sess["id"], {"status": "error"})
-            raise HTTPException(500, detail="Browser session failed — check Railway logs for details. Common issues: invalid API key, expired credits, or network error.")
+            raise HTTPException(500, detail="Browser session failed — check Railway logs for details.")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"BROWSER START ERROR: {e}\n{traceback.format_exc()}")
         await update_session(sess["id"], {"status": "error"})
         raise HTTPException(500, detail=f"Browser session failed: {e}")
+    
     await update_session(sess["id"], {
         "status": "active",
         "browser_session_id": "local",
         "browser_live_url": browser_sess.live_url
     })
-    return {"session_id": sess["id"], "status": "active", "live_url": browser_sess.live_url}
+    
+    # Auto-enable auto-pilot
+    await auto_pilot.start(sess["id"], persona)
+    await update_session(sess["id"], {"auto_pilot": True})
+    
+    return {"session_id": sess["id"], "status": "active", "live_url": browser_sess.live_url, "auto_pilot": True}
 
 @app.post("/api/session/stop")
 async def stop_session():
@@ -268,7 +272,7 @@ async def stop_session():
     await browser_manager.stop_session()
     session = await get_active_session()
     if session:
-        await update_session(session["id"], {"status": "idle"})
+        await update_session(session["id"], {"status": "idle", "auto_pilot": False})
     return {"status": "stopped"}
 
 @app.post("/api/session/toggle-autopilot")
