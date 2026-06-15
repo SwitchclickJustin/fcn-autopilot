@@ -83,6 +83,14 @@ async def health():
     return {"status": "ok", "auto_pilot": auto_pilot.enabled}
 
 # ─── DB Debug ───
+@app.get("/debug/persona-update-model")
+async def debug_persona_model():
+    """Check which fields PersonaUpdate accepts."""
+    import inspect
+    from app.models import PersonaUpdate
+    fields = list(PersonaUpdate.model_fields.keys())
+    return {"fields": fields, "count": len(fields)}
+
 @app.get("/debug/browser-test")
 async def debug_browser():
     """Test that Playwright/Chromium is available locally."""
