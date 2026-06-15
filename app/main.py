@@ -93,22 +93,43 @@ async def debug_persona_model():
 
 @app.get("/debug/browser-test")
 async def debug_browser():
-    """Test that Playwright/Chromium is available locally."""
+    """Test Browser Use Cloud v3 API."""
     import traceback
+    import httpx
+    
+    results = {}
+    
+    # Test 1: Check API key
+    results["api_key_set"] = bool(settings.browser_use_api_key)
+    results["api_key_prefix"] = settings.browser_use_api_key[:10] + "..." if settings.browser_use_api_key else ""
+    
+    # Test 2: Try creating a browser via v3 API
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.browser-use.com/api/v3/browsers",
+                headers={
+                    "X-Browser-Use-API-Key": settings.browser_use_api_key,
+                    "Content-Type": "application/json"
+                },
+                json={"timeout": 10, "browserScreenWidth": 1280, "browserScreenHeight": 720}
+            )
+            results["api_status"] = resp.status_code
+            results["api_response"] = resp.text[:500]
+    except Exception as e:
+        results["api_error"] = str(e)
+        results["api_traceback"] = traceback.format_exc()
+    
+    # Test 3: Try importing playwright
     try:
         import playwright
-        # Try importing and launching
-        from playwright.async_api import async_playwright
-        p = await async_playwright().start()
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        version = browser.version
-        await browser.close()
-        await p.stop()
-        return {"status": "ok", "chromium_version": version, "mode": "local"}
-    except ImportError as e:
-        return {"status": "error", "error": f"Playwright not installed: {e}"}
+        results["playwright_installed"] = True
+        results["playwright_version"] = playwright.__version__
     except Exception as e:
-        return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
+        results["playwright_installed"] = False
+        results["playwright_error"] = str(e)
+    
+    return results
 
 @app.get("/debug/db")
 async def debug_db():
