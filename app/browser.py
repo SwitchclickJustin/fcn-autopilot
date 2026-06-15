@@ -261,35 +261,47 @@ class BrowserSession:
         room = (self.persona.get("selected_rooms") or ["SextChat"])[0]
 
         try:
-            # Navigate to FCN room — FCN uses server-side ad redirects on direct chat URLs,
-            # so we go to the homepage first, then navigate internally
+            room_lower = room.lower()
             logger.info(f"Navigating to FCN/{room} as {username}...")
-            
-            # Step 1: Go to FCN homepage
-            await self._page.goto("https://www.freechatnow.com/", wait_until="domcontentloaded")
-            await asyncio.sleep(3)
-            
-            # Step 2: Navigate to the specific chat room via JS (bypasses ad redirect)
-            for attempt in range(3):
-                await self._page.evaluate(f"window.location.href = '/chat/{room.lower()}'")
-                await asyncio.sleep(4)
-                
-                current_url = self._page.url.lower()
-                if "freechatnow.com" in current_url or "fcnchat.com" in current_url:
-                    if "/chat/" in current_url:
-                        break  # We're in the chat room
-                
-                logger.warning(f"Redirected to {current_url[:80]} on attempt {attempt+1}")
-                # Go back to homepage and retry
-                await self._page.goto("https://www.freechatnow.com/", wait_until="domcontentloaded")
+            entry_urls = [
+                f"https://www.freechatnow.com/chat/{room_lower}",  # direct (may redirect)
+                f"https://m.freechatnow.com/chat/{room_lower}",    # mobile
+                "https://www.freechatnow.com/",                    # homepage
+            ]
+
+            landed = False
+            for url in entry_urls:
+                logger.info(f"Trying entry: {url}")
+                try:
+                    await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                    await asyncio.sleep(3)
+                    current_url = self._page.url.lower()
+                    if "freechatnow.com" in current_url or "fcnchat" in current_url:
+                        if "chat" in current_url or url == "https://www.freechatnow.com/":
+                            landed = True
+                            logger.info(f"Landed on: {current_url}")
+                            break
+                    logger.warning(f"Redirected to: {current_url[:80]}")
+                except Exception as e:
+                    logger.warning(f"Entry {url} failed: {e}")
+
+            # If still not on FCN, try JS navigation from homepage
+            if not landed:
+                await self._page.goto("https://www.freechatnow.com/", wait_until="domcontentloaded", timeout=15000)
                 await asyncio.sleep(2)
-            else:
-                logger.error("Could not reach FCN chat room")
+                current_url = self._page.url.lower()
+                if "freechatnow.com" in current_url:
+                    # We're on FCN homepage — navigate to room via click or JS
+                    await self._page.evaluate(f"window.location.href = '/chat/{room_lower}'")
+                    await asyncio.sleep(4)
+                    current_url = self._page.url.lower()
+                    if "freechatnow.com" in current_url and ("chat" in current_url or room_lower in current_url):
+                        landed = True
+
+            if not landed:
+                logger.error(f"Could not reach FCN. Current URL: {self._page.url}")
                 self.status = "error"
                 return False
-
-            await self._close_overlays()
-            await asyncio.sleep(1)
 
             # Fill username
             await self._page.evaluate(f"""document.querySelector('input[name="username"]').value = '{username}';
