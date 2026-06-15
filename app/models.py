@@ -35,12 +35,30 @@ class Persona(BaseModel):
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 class PersonaCreate(BaseModel):
+    id: str = Field(default_factory=new_id)
     name: str
     username: str
-    gender: str = "m"
+    gender: str = "f"
     bio: str = ""
-    default_tone: str = "casual"
-    default_length: str = "medium"
+    goals: str = ""
+    telegram_handle: str = ""
+    default_tone: str = "flirty"
+    default_length: str = "short"
+    proxy_country: str = "us"
+    proxy_custom: str = ""
+    user_agent: str = "random"
+    timezone: str = ""
+    language: str = ""
+    fingerprint_rotation: str = "per_session"
+    cooldown_min: int = 90
+    cooldown_max: int = 180
+    daily_cap: int = 150
+    selected_rooms: List[str] = ["SextChat"]
+    auto_reply_dms: bool = False
+    dm_gender_filter: List[str] = []
+    dm_blocklist: List[str] = []
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 class PersonaUpdate(BaseModel):
     name: Optional[str] = None

@@ -17,7 +17,7 @@ from app.database import (
     create_session, update_session, get_active_session, get_session,
     log_chat, get_chat_log, get_ban_events, get_rules
 )
-from app.models import PersonaCreate, PersonaUpdate, LLMProviderCreate
+from app.models import PersonaCreate, PersonaUpdate, LLMProviderCreate, new_id
 from app.providers import provider_registry
 from app.browser import browser_manager
 from app.autopilot import auto_pilot
@@ -208,6 +208,7 @@ async def start_session(data: dict):
             except (json.JSONDecodeError, TypeError):
                 persona[field] = []
     sess = await create_session({
+        "id": new_id(),
         "persona_id": persona_id,
         "username": persona.get("username", ""),
         "room_ids": persona.get("selected_rooms", ["SextChat"]),
