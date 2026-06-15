@@ -169,6 +169,27 @@ async def debug_browser():
     
     return results
 
+@app.get("/debug/check-ip")
+async def debug_check_ip():
+    """Get the current cloud browser's public IP (for debugging FCN redirects)."""
+    if not browser_manager.current_session or not browser_manager.current_session._page:
+        return {"error": "no session"}
+    try:
+        page = browser_manager.current_session._page
+        # Fetch IP from a simple service
+        ip = await page.evaluate("""fetch('https://api.ipify.org?format=json')
+            .then(r => r.json())
+            .then(d => d.ip)
+            .catch(() => 'fetch_failed')""")
+        # Also get the country
+        country = await page.evaluate("""fetch('https://ipapi.co/json/')
+            .then(r => r.json())
+            .then(d => d.country_name + ' / ' + d.city)
+            .catch(() => 'unknown')""")
+        return {"ip": ip, "location": country, "browser_url": page.url}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/debug/page-content")
 async def debug_page_content():
     """Get the current page HTML content (for debugging redirect issues)."""
