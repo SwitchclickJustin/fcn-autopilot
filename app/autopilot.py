@@ -77,7 +77,8 @@ class AutoPilotEngine:
         if not session or session.status != "logged_in":
             return
 
-        # Close any popups/overlays that appeared
+        # Close popup windows (ads, etc.) and modal overlays
+        await session._close_ad_windows()
         await session._close_overlays()
 
         # 1. Read group chat

@@ -137,8 +137,11 @@ class BrowserSession:
                 ctx = await self._cdp.new_context()
                 self._page = await ctx.new_page()
 
-            # Auto-dismiss dialogs
+            # Auto-dismiss dialogs & close popup windows
             self._page.on("dialog", lambda dialog: asyncio.ensure_future(self._handle_dialog(dialog)))
+            self._page.on("popup", lambda popup: asyncio.ensure_future(self._close_popup(popup)))
+            # Also handle pages created in new tabs
+            self._cdp.on("disconnected", lambda: None)  # noop to suppress warnings
 
             self._connected = True
             self.status = "connected"
@@ -158,6 +161,30 @@ class BrowserSession:
         """Auto-dismiss any dialog."""
         try:
             await dialog.dismiss()
+        except Exception:
+            pass
+
+    async def _close_popup(self, popup):
+        """Close any popup window immediately."""
+        try:
+            await popup.close()
+        except Exception:
+            pass
+
+    async def _close_ad_windows(self):
+        """Close all pages except the FCN chat page."""
+        if not self._cdp:
+            return
+        try:
+            for ctx in self._cdp.contexts:
+                for page in ctx.pages:
+                    url = page.url.lower()
+                    if "freechatnow.com" not in url and "chat" not in url:
+                        try:
+                            await page.close()
+                            logger.info(f"Closed ad window: {url[:60]}")
+                        except Exception:
+                            pass
         except Exception:
             pass
 

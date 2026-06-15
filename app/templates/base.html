@@ -57,8 +57,11 @@ textarea{resize:vertical}
 .mb{margin-bottom:.6rem}
 label{display:block;font-size:.8rem;color:var(--text-dim);margin-bottom:.3rem}
 /* Grid */
-.grid-2{display:grid;grid-template-columns:3fr 2fr;gap:1rem;min-height:0}
-.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem}
+.grid-2{display:grid;grid-template-columns:3fr 2fr;gap:1rem;min-height:0;align-items:start}
+/* The left column (browser) should expand to fill height */
+.grid-2 > :first-child{display:flex;flex-direction:column;min-height:0}
+.grid-2 > :first-child .card{flex:1;display:flex;flex-direction:column;margin-bottom:0}
+.grid-2 > :first-child .card > .browser-frame{flex:1;min-height:70vh;max-height:85vh}
 /* Toggle switch */
 .toggle{position:relative;display:inline-block;width:48px;height:26px}
 .toggle input{opacity:0;width:0;height:0}
