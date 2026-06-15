@@ -77,6 +77,9 @@ class AutoPilotEngine:
         if not session or session.status != "logged_in":
             return
 
+        # Close any popups/overlays that appeared
+        await session._close_overlays()
+
         # 1. Read group chat
         messages = await session.read_chat()
         if not messages or messages == self._last_messages:

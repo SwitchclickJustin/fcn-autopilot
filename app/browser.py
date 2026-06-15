@@ -93,6 +93,13 @@ class BrowserSession:
             """)
 
             self._page = await self._context.new_page()
+
+            # Auto-dismiss dialogs (alerts, confirms, prompts)
+            self._page.on("dialog", lambda dialog: asyncio.ensure_future(self._handle_dialog(dialog)))
+
+            # Close popup windows immediately
+            self._page.on("popup", lambda popup: asyncio.ensure_future(self._close_popup(popup)))
+
             self.status = "connected"
             self.live_url = "local"  # No live URL for local Playwright
             logger.info("Local browser launched successfully")
@@ -102,6 +109,53 @@ class BrowserSession:
             logger.error(f"Failed to launch browser: {e}")
             self.status = "error"
             return False
+
+    async def _handle_dialog(self, dialog):
+        """Auto-dismiss any dialog (alert/confirm/prompt)."""
+        try:
+            await dialog.dismiss()
+        except Exception:
+            pass
+
+    async def _close_popup(self, popup):
+        """Close any popup window immediately."""
+        try:
+            await popup.close()
+        except Exception:
+            pass
+
+    async def _close_overlays(self):
+        """Close any modal overlays or popup ads on the page."""
+        if not self._page:
+            return
+        try:
+            await self._page.evaluate("""
+                (() => {
+                    // Close any modal overlay by clicking X buttons or close links
+                    const closeSelectors = [
+                        '.close', '.modal-close', '[class*=close]', '[class*=dismiss]',
+                        'button[class*=close]', 'a[class*=close]', '[aria-label*=close]',
+                        '[aria-label*=Close]', '.popup-close', '.ad-close',
+                        '.overlay-close', '.modal .close', 'button:has-text("X")',
+                        'button:has-text("Close")', 'button:has-text("No thanks")',
+                        'button:has-text("Continue")', 'a:has-text("Skip")'
+                    ];
+                    for (const sel of closeSelectors) {
+                        const el = document.querySelector(sel);
+                        if (el) el.click();
+                    }
+                    // Remove any overlay divs that block the page
+                    const overlays = document.querySelectorAll('.modal, .overlay, .popup, [class*=modal], [class*=overlay], [class*=popup]');
+                    overlays.forEach(el => {
+                        if (el.style && el.style.display !== 'none') {
+                            el.style.display = 'none';
+                        }
+                    });
+                    return overlays.length;
+                })();
+            """)
+        except Exception:
+            pass
 
     async def login(self) -> bool:
         """Navigate to FCN, fill login form, and click Chat As Guest."""
@@ -123,6 +177,8 @@ class BrowserSession:
             logger.info(f"Navigating to FCN as {username}...")
             await self._page.goto("https://www.freechatnow.com/chat/sextchat", wait_until="domcontentloaded")
             await asyncio.sleep(3)
+            await self._close_overlays()
+            await asyncio.sleep(1)
 
             # Fill username
             await self._page.evaluate(f"""
@@ -156,7 +212,9 @@ class BrowserSession:
             await self._page.evaluate("""
                 document.querySelector('button[type="submit"][value="guest"]').click();
             """)
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
+            await self._close_overlays()
+            await asyncio.sleep(2)
 
             self.status = "logged_in"
             logger.info(f"Logged in as {username}")
