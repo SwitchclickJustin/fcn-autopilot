@@ -89,9 +89,14 @@ class BrowserSession:
         logger.info(f"Using Decoda proxy port {decoda['port']} for this session")
 
         # Create the cloud browser
+        logger.info(f"POST browsers with customProxy port {decoda['port']}")
         result = await self._api("POST", "browsers", browser_config)
-        if not result or not result.get("cdpUrl"):
-            logger.error(f"Failed to create cloud browser: {result}")
+        if not result:
+            logger.error(f"Browser API returned None — check BROWSER_USE_API_KEY or proxy config")
+            self.status = "error"
+            return False
+        if not result.get("cdpUrl"):
+            logger.error(f"Browser API response missing cdpUrl: {json.dumps(result)[:200]}")
             self.status = "error"
             return False
 
