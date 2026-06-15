@@ -10,6 +10,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import httpx
+
 from app.config import settings
 from app.database import (
     get_db, get_personas, get_persona, create_persona, update_persona, delete_persona,
