@@ -64,12 +64,21 @@ class BrowserSession:
             "enableRecording": False,
         }
 
-        # Handle proxy
+        # Handle proxy — supports socks5:// and http:// formats
         custom_proxy = self.persona.get("proxy_custom", "").strip()
         if custom_proxy:
-            # Parse socks5://user:pass@host:port
-            try:
-                proxy_match = re.match(r"socks5://(.+?):(.+?)@(.+?):(\d+)", custom_proxy)
+            # Try socks5://user:pass@host:port format
+            proxy_match = re.match(r"(socks5|http|https)://(.+?):(.+?)@(.+?):(\d+)", custom_proxy)
+            if proxy_match:
+                body["customProxy"] = {
+                    "host": proxy_match.group(4),
+                    "port": int(proxy_match.group(5)),
+                    "username": proxy_match.group(2),
+                    "password": proxy_match.group(3),
+                }
+            else:
+                # Try user:pass@host:port format (no scheme)
+                proxy_match = re.match(r"(.+?):(.+?)@(.+?):(\d+)", custom_proxy)
                 if proxy_match:
                     body["customProxy"] = {
                         "host": proxy_match.group(3),
@@ -80,9 +89,6 @@ class BrowserSession:
                 else:
                     logger.warning(f"Could not parse custom proxy: {custom_proxy}, using default")
                     body["proxyCountryCode"] = "us"
-            except Exception as e:
-                logger.warning(f"Proxy parse error: {e}, using default")
-                body["proxyCountryCode"] = "us"
         else:
             proxy = self.persona.get("proxy_country", "us")
             if proxy and proxy != "none":
