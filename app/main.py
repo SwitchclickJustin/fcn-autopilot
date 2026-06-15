@@ -257,7 +257,7 @@ async def start_session(data: dict):
         raise HTTPException(500, detail=f"Browser session failed: {e}")
     await update_session(sess["id"], {
         "status": "active",
-        "browser_session_id": browser_sess.box_id,
+        "browser_session_id": "local",
         "browser_live_url": browser_sess.live_url
     })
     return {"session_id": sess["id"], "status": "active", "live_url": browser_sess.live_url}
