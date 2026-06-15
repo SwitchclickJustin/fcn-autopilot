@@ -271,29 +271,11 @@ class BrowserSession:
 
             landed = False
 
-            # Block ad-redirect domains using CDP protocol (works in remote browser mode)
-            try:
-                cdp = await self._page.context.new_cdp_session(self._page)
-                await cdp.send("Network.enable")
-                await cdp.send("Network.setBlockedURLs", {
-                    "urls": [
-                        "*12chats.com*",
-                        "*exoclick.com*",
-                        "*traffic*center.com*",
-                        "*popads.net*",
-                        "*juicyads.com*",
-                        "*adsterra.com*"
-                    ]
-                })
-                logger.info("CDP ad-block enabled")
-            except Exception as e:
-                logger.warning(f"CDP ad-block setup failed: {e}")
-
             for url in entry_urls:
                 logger.info(f"Trying entry: {url}")
                 try:
                     await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
                     current_url = self._page.url.lower()
                     if "freechatnow.com" in current_url or "fcnchat" in current_url:
                         if "chat" in current_url or url == "https://www.freechatnow.com/":
@@ -301,6 +283,17 @@ class BrowserSession:
                             logger.info(f"Landed on: {current_url}")
                             break
                     logger.warning(f"Redirected to: {current_url[:80]}")
+                    
+                    # Try going back — the redirect may have set a cookie so back lands on FCN
+                    if "12chats" in current_url or "redirect" in current_url:
+                        logger.info("Hit ad redirect — trying browser back")
+                        await self._page.go_back()
+                        await asyncio.sleep(3)
+                        current_url = self._page.url.lower()
+                        if "freechatnow.com" in current_url:
+                            landed = True
+                            logger.info(f"Back navigation worked: {current_url}")
+                            break
                 except Exception as e:
                     logger.warning(f"Entry {url} failed: {e}")
 
