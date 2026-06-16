@@ -83,10 +83,9 @@ class BrowserSession:
             "enableRecording": False,
         }
 
-        # Always use a random Decoda residential proxy for IP rotation
-        decoda = random.choice(DECODA_PROXIES)
-        browser_config["customProxy"] = decoda
-        logger.info(f"Using Decoda proxy port {decoda['port']} for this session")
+        # Use BU Cloud's built-in US residential proxy (works on current plan)
+        # Switch to Decoda proxies once BU plan supports customProxy
+        browser_config["proxyCountryCode"] = "us"
 
         # Create the cloud browser
         logger.info("POST browsers with US residential proxy")
