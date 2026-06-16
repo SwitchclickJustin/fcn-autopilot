@@ -78,16 +78,21 @@ class BrowserSession:
         # Pick a random Decoda proxy from the pool for IP rotation
         decoda = random.choice(DECODA_PROXIES)
 
-        # Create browser via REST API with Decoda custom proxy
+        # Create browser — try with Decoda proxy first, fall back to BU residential
         browser_config = {
             "timeout": 60,
             "browserScreenWidth": 1280,
             "browserScreenHeight": 720,
             "enableRecording": False,
-            "customProxy": decoda,  # REST API uses camelCase
         }
-
+        # Try with Decoda proxy
+        browser_config["customProxy"] = decoda
         result = await self._api("POST", "browsers", browser_config)
+        if not result:
+            logger.warning("Decoda proxy rejected — falling back to BU residential proxy")
+            browser_config.pop("customProxy")
+            browser_config["proxyCountryCode"] = "us"
+            result = await self._api("POST", "browsers", browser_config)
         if not result:
             logger.error("Browser API returned None — SDK/proxy setup failed")
             self.status = "error"
