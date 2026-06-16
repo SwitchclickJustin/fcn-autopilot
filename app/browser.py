@@ -146,10 +146,11 @@ class BotOrchestrator:
             logger.info(f"Profile: {worker.profile_id}")
 
             # Step 2 — Provision browser with optional custom proxy
+            # Select a random Decoda proxy for IP rotation
             decoda = random.choice(DECODA_PROXIES)
-            proxy_kwargs = {}
-            # Uncomment when on a paid plan that allows custom_proxy:
-            # proxy_kwargs["custom_proxy"] = decoda
+            proxy_kwargs = {
+                "custom_proxy": decoda,  # paid plan: proxy baked in at API level
+            }
 
             browser = await client.browsers.create(
                 profile_id=worker.profile_id,
