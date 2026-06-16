@@ -435,6 +435,16 @@ class BotOrchestrator:
 
     # ── Legacy compatibility: BrowserManager-like interface ─────────────────
 
+    async def start_session(self, persona: dict) -> Optional[BotWorker]:
+        """Legacy alias — maps to start_bot for compatibility with main.py."""
+        return await self.start_bot(persona)
+
+    async def stop_session(self):
+        """Legacy alias — stops the first running bot."""
+        for username in list(self._workers.keys()):
+            await self.stop_bot(username)
+            break
+
     @property
     def current_session(self):
         """Return the first-running bot's worker (legacy compatibility)."""
