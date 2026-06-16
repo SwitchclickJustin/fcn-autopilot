@@ -109,8 +109,10 @@ class BotWorker:
         try:
             await self._page.evaluate(f"""
                 (() => {{
-                    const input = document.querySelector('textarea')
+                    const input = document.querySelector('input[placeholder="Type to chat"]')
+                        || document.querySelector('textarea')
                         || document.querySelector('[contenteditable]')
+                        || document.querySelector('input[type=search]')
                         || document.querySelector('input[type=text]');
                     if (!input) return 'no input';
                     input.value = '{escaped}';
@@ -303,8 +305,16 @@ class BotOrchestrator:
     _GENDER_MAP = {"f": "female", "female": "female", "m": "male", "male": "male",
                    "other": "other", "couple": "other", "x": "other"}
 
-    async def _cdp_guest_login(self, worker: BotWorker) -> bool:
-        """Navigate to the room page and submit FCN's guest-login form via CDP."""
+    async def _cdp_guest_login(self, worker: BotWorker, _attempt: int = 0) -> bool:
+        """Navigate to the room page and submit FCN's guest-login form via CDP.
+
+        Verified flow (2026-06-16): fill the form, then submit via NATIVE
+        form.submit() — NOT a button click. The "Chat As Guest" button's onclick
+        fires an ad redirect (12chats -> stripchat) that hijacks the tab; the
+        native submit posts straight to /api/chat/login and the browser follows
+        the redirect chain into schat.freechatnow.com/room/<Room>. On a username
+        collision FCN bounces to /?alert=<base64> — we retry with a suffix.
+        """
         page = worker._page
         persona = worker.persona
 
@@ -324,61 +334,68 @@ class BotOrchestrator:
             logger.warning(f"goto {url} failed for {worker.username}: {e}")
         await page.wait_for_timeout(2500)
 
-        form = "form[action*='chat/login']"
-
-        # Username (required — bail if the form isn't there)
-        try:
-            await page.fill(f"{form} input[name=username]", worker.username, timeout=12000)
-        except Exception as e:
-            logger.warning(f"username fill failed ({worker.username}) @ {page.url}: {e}")
-            return False
-
-        # Gender
         gval = self._GENDER_MAP.get((persona.get("gender") or "f").lower(), "female")
-        try:
-            await page.select_option(f"{form} select[name=gender]", gval)
-        except Exception as e:
-            logger.warning(f"gender select failed: {e}")
-
-        # Birthdate — adult, ISO YYYY-MM-DD for the native date input
         age = random.randint(23, 30)
         birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
-        try:
-            await page.fill(f"{form} input[name=birthdate]", birthdate, timeout=6000)
-        except Exception:
-            try:
-                await page.evaluate(
-                    "(v)=>{const i=document.querySelector(\"input[name=birthdate]\");"
-                    "if(i){i.value=v;i.dispatchEvent(new Event('change',{bubbles:true}));}}",
-                    birthdate)
-            except Exception:
-                pass
 
-        # Agree-to-terms checkbox
         try:
-            await page.check(f"{form} input[type=checkbox]", timeout=6000)
-        except Exception:
-            try:
-                await page.evaluate(
-                    "()=>{const c=document.querySelector(\"form[action*='chat/login'] input[type=checkbox]\");"
-                    "if(c&&!c.checked)c.click();}")
-            except Exception:
-                pass
-
-        # Submit — "Chat As Guest"
-        try:
-            await page.click(f"{form} button[type=submit]", timeout=12000)
+            res = await page.evaluate(
+                """(a)=>{
+                    const f=document.querySelector("form[action*='chat/login']");
+                    if(!f) return 'no-form';
+                    const u=f.querySelector("input[name=username]"); if(u)u.value=a.username;
+                    const g=f.querySelector("select[name=gender]"); if(g)g.value=a.gender;
+                    const b=f.querySelector("input[name=birthdate]"); if(b)b.value=a.birthdate;
+                    const c=f.querySelector("input[type=checkbox]"); if(c)c.checked=true;
+                    f.submit();
+                    return 'submitted';
+                }""",
+                {"username": worker.username, "gender": gval, "birthdate": birthdate},
+            )
         except Exception as e:
-            logger.warning(f"submit click failed: {e}")
+            logger.warning(f"guest-form submit failed ({worker.username}): {e}")
+            return False
+        if res == "no-form":
+            logger.warning(f"guest form not found for {worker.username} @ {page.url}")
+            return False
+
+        # Wait for the room SPA to sign in and load
+        for _ in range(12):
+            await page.wait_for_timeout(2000)
+            if "schat." in page.url or "/room/" in page.url or "alert=" in page.url:
+                break
+        await page.wait_for_timeout(2500)
+        url_now = page.url
+
+        # Username-collision bounce → retry with a random suffix
+        if "alert=" in url_now:
+            import base64
+            from urllib.parse import urlparse, parse_qs
+            msg = ""
             try:
-                await page.evaluate(
-                    "()=>{const f=document.querySelector(\"form[action*='chat/login']\");if(f)f.submit();}")
+                a = parse_qs(urlparse(url_now).query).get("alert", [""])[0]
+                msg = base64.b64decode(a).decode(errors="ignore")
+            except Exception:
+                pass
+            logger.warning(f"login bounced for {worker.username}: {msg or url_now}")
+            if "taken" in msg.lower() and _attempt < 2:
+                worker.username = f"{worker.username}{random.randint(1, 99)}"
+                logger.info(f"retrying guest login as {worker.username}")
+                return await self._cdp_guest_login(worker, _attempt + 1)
+            return False
+
+        # Dismiss the first-run tip popup if present
+        for sel in ["button.action.dismiss", "text=I'm already familiar"]:
+            try:
+                await page.click(sel, timeout=2500)
+                break
             except Exception:
                 pass
 
-        await page.wait_for_timeout(4500)
-        logger.info(f"Guest login submitted for {worker.username} (room={room}) — now at {page.url}")
-        return True
+        in_room = "schat." in url_now or "/room/" in url_now
+        logger.info(f"Guest login {'OK' if in_room else 'UNCERTAIN'} for "
+                    f"{worker.username} (room={room}) @ {url_now}")
+        return in_room
 
     async def _run_auto_pilot(self, worker: BotWorker):
         """Fast JS-based auto-pilot loop for a single bot.
