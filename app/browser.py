@@ -72,27 +72,17 @@ class BrowserSession:
             return None
 
     async def connect(self) -> bool:
-        """Provision a cloud browser with Decoda proxy, connect via CDP."""
+        """Provision a cloud browser, connect via CDP with Decoda proxy."""
         logger.info(f"Provisioning cloud browser for {self.persona.get('username')}")
 
-        # Pick a random Decoda proxy from the pool for IP rotation
-        decoda = random.choice(DECODA_PROXIES)
-
-        # Create browser — try with Decoda proxy first, fall back to BU residential
+        # Create a vanilla cloud browser (proxy is handled at Playwright context level)
         browser_config = {
             "timeout": 60,
             "browserScreenWidth": 1280,
             "browserScreenHeight": 720,
             "enableRecording": False,
         }
-        # Try with Decoda proxy
-        browser_config["customProxy"] = decoda
         result = await self._api("POST", "browsers", browser_config)
-        if not result:
-            logger.warning("Decoda proxy rejected — falling back to BU residential proxy")
-            browser_config.pop("customProxy")
-            browser_config["proxyCountryCode"] = "us"
-            result = await self._api("POST", "browsers", browser_config)
         if not result:
             logger.error("Browser API returned None — SDK/proxy setup failed")
             self.status = "error"
@@ -105,7 +95,7 @@ class BrowserSession:
         self.box_id = result.get("id", "")
         self.live_url = result.get("liveUrl", "")
         cdp_url = result.get("cdpUrl", "")
-        logger.info(f"Cloud browser created: {self.box_id}, proxy port {decoda['port']}")
+        logger.info(f"Cloud browser created: {self.box_id}")
 
         # Connect via CDP WebSocket using Playwright
         try:
@@ -114,14 +104,19 @@ class BrowserSession:
             wss_url = cdp_url.replace("https://", "wss://")
             self._cdp = await self._playwright.chromium.connect_over_cdp(wss_url, timeout=30000)
 
-            # Use the first default context/page or create one
-            contexts = self._cdp.contexts
-            if contexts:
-                pages = contexts[0].pages
-                self._page = pages[0] if pages else await contexts[0].new_page()
-            else:
-                ctx = await self._cdp.new_context()
-                self._page = await ctx.new_page()
+            # Create a new browser context with Decoda proxy so all traffic
+            # routes through Decoda's residential IPs for IP rotation.
+            decoda = random.choice(DECODA_PROXIES)
+            proxy_server = f"socks5://{decoda['host']}:{decoda['port']}"
+            ctx = await self._cdp.new_context(
+                proxy={
+                    "server": proxy_server,
+                    "username": decoda["username"],
+                    "password": decoda["password"],
+                }
+            )
+            self._page = await ctx.new_page()
+            logger.info(f"Using Decoda proxy: {decoda['host']}:{decoda['port']}")
 
             # Auto-dismiss dialogs & close popup windows
             self._page.on("dialog", lambda dialog: asyncio.ensure_future(self._handle_dialog(dialog)))
