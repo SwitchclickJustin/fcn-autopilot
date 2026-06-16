@@ -249,7 +249,10 @@ _SNAP_JS = """
     id: e.id, name: e.name, action: e.getAttribute('action'), method: e.getAttribute('method')
   }));
   const iframes = q('iframe').slice(0,10).map(e => ({id: e.id, src: e.src, name: e.name}));
-  return {inputs, selects, buttons, forms, iframes,
+  const links = q('a[href]').slice(0,80).map(e => ({
+    href: e.href, text: (e.textContent || '').trim().slice(0,40)
+  })).filter(l => l.text);
+  return {inputs, selects, buttons, forms, iframes, links,
           bodyText: (document.body ? document.body.innerText : '').slice(0,1800)};
 })()
 """
