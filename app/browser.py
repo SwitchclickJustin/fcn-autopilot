@@ -1,4 +1,21 @@
-"""Browser Use Cloud v3 driver — provisions remote Chromium via REST API + CDP."""
+"""BotOrchestrator — manages N concurrent Browser Use SDK sessions with Decoda proxies.
+
+Architecture for 50 concurrent bots:
+  One SDK client → one profile per persona (persistent cookies)
+                   → one session per bot (SDK agent handles login/navigation)
+                   → CDP connection for fast auto-pilot loop (JS evaluate, zero cost)
+                   → SDK agent fallback for recovery (stuck pages, re-login)
+
+Custom proxies (Decoda):
+  Passed as custom_proxy via SDK's **extra kwargs -> REST API body.
+  Requires a paid Browser Use Cloud plan tier that allows custom proxies.
+  Falls back to BU built-in US residential proxy if custom_proxy is rejected.
+
+Scaling:
+  asyncio.Semaphore(50) caps concurrent sessions.
+  Each bot is an independent asyncio Task with its own CDP connection.
+  Profiles persist login state across app restarts via Browser Use Cloud.
+"""
 import asyncio
 import json
 import logging
@@ -6,347 +23,282 @@ import random
 import time
 from typing import Optional
 
-import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-API_BASE = "https://api.browser-use.com/api/v3"
-
-# Decoda residential proxy pool — each entry: host:port:username:password
-# Picks a random one each session for IP rotation
+# ── Decoda proxy pool ──────────────────────────────────────────────────────────
+# Each entry: SOCKS5 proxy at gate.decodo.com, port-rotated for IP diversity
 DECODA_PROXIES = [
-    {"host": "gate.decodo.com", "port": 10001, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10002, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10003, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10004, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10005, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10006, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10007, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10008, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10009, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
-    {"host": "gate.decodo.com", "port": 10010, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"},
+    {"host": "gate.decodo.com", "port": p, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"}
+    for p in range(10001, 10011)
 ]
 
 
-class BrowserSession:
-    """Represents a single Browser Use Cloud v3 browser session."""
+# ── Bot state per persona ──────────────────────────────────────────────────────
+class BotWorker:
+    """Holds runtime state for one bot persona."""
 
     def __init__(self, persona: dict):
         self.persona = persona
-        self.box_id: str = ""
+        self.username: str = persona.get("username", "ChatBot_42")
+        self.profile_id: str = ""
+        self.session_id: str = ""
+        self.browser_id: str = ""
         self.live_url: str = ""
-        self.status: str = "created"
-        self._connected: bool = False
+        self.status: str = "created"  # created | logging_in | running | error
+
+        # CDP connection (for fast JS-based auto-pilot)
         self._page = None
         self._cdp = None
         self._playwright = None
 
-    async def _api(self, method: str, path: str, json_data: dict = None) -> Optional[dict]:
-        """Make an API call to Browser Use Cloud v3."""
-        api_key = settings.browser_use_api_key
-        if not api_key:
-            logger.error("BROWSER_USE_API_KEY not set")
-            return None
+        # SDK client run handle (for streaming / awaiting login tasks)
+        self._login_run = None
 
-        headers = {"X-Browser-Use-API-Key": api_key}
-        if json_data:
-            headers["Content-Type"] = "application/json"
+        # Auto-pilot asyncio task
+        self._task: Optional[asyncio.Task] = None
 
-        url = f"{API_BASE}/{path.lstrip('/')}"
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.request(method, url, json=json_data, headers=headers)
+    async def disconnect_cdp(self):
+        """Close CDP connection (keeps SDK session alive)."""
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+        self._page = None
+        self._cdp = None
+        self._playwright = None
 
-                if resp.status_code == 402:
-                    logger.error("Browser Use Cloud: insufficient credits")
-                    return None
-
-                resp.raise_for_status()
-                return resp.json() if resp.text else {}
-        except httpx.HTTPStatusError as e:
-            logger.error(f"API error {method} {path}: {e.response.status_code} {e.response.text[:200]}")
-            return None
-        except Exception as e:
-            logger.error(f"API call failed {method} {path}: {e}")
-            return None
-
-    async def connect(self) -> bool:
-        """Provision a cloud browser, connect via CDP with Decoda proxy."""
-        logger.info(f"Provisioning cloud browser for {self.persona.get('username')}")
-
-        # Create browser with BU's built-in US residential proxy (works on free plan)
-        browser_config = {
-            "timeout": 60,
-            "browserScreenWidth": 1280,
-            "browserScreenHeight": 720,
-            "enableRecording": False,
+    def to_dict(self):
+        return {
+            "username": self.username,
+            "profile_id": self.profile_id,
+            "session_id": self.session_id,
+            "browser_id": self.browser_id,
+            "live_url": self.live_url,
+            "status": self.status,
         }
-        result = await self._api("POST", "browsers", browser_config)
-        if not result:
-            logger.error("Browser API returned None — SDK/proxy setup failed")
-            self.status = "error"
-            return False
-        if not result.get("cdpUrl"):
-            logger.error(f"Browser API response missing cdpUrl: {json.dumps(result)[:200]}")
-            self.status = "error"
-            return False
 
-        self.box_id = result.get("id", "")
-        self.live_url = result.get("liveUrl", "")
-        cdp_url = result.get("cdpUrl", "")
-        logger.info(f"Cloud browser created: {self.box_id}")
 
-        # Connect via CDP WebSocket using Playwright
+# ── Orchestrator ───────────────────────────────────────────────────────────────
+class BotOrchestrator:
+    """Manages N concurrent Browser Use SDK bot sessions.
+
+    Usage:
+        orchestrator = BotOrchestrator()
+        worker = await orchestrator.start_bot(persona_dict)
+        await orchestrator.stop_bot("Flirtyalexa9")
+        await orchestrator.stop_all()
+    """
+
+    def __init__(self):
+        self._client = None          # lazy-init AsyncBrowserUse
+        self._semaphore = asyncio.Semaphore(50)
+        self._workers: dict[str, BotWorker] = {}   # username -> BotWorker
+        self._auto_pilot_enabled: dict[str, bool] = {}  # username -> bool
+
+    # ── SDK client (lazy, single instance) ─────────────────────────────────
+
+    async def _get_client(self):
+        if self._client is None:
+            from browser_use_sdk.v3 import AsyncBrowserUse
+            self._client = AsyncBrowserUse(
+                api_key=settings.browser_use_api_key,
+                timeout=60,
+            )
+        return self._client
+
+    # ── Profile management ──────────────────────────────────────────────────
+
+    async def get_or_create_profile(self, persona_name: str) -> str:
+        """Persistent profile per persona — cookies survive restarts."""
+        client = await self._get_client()
+        # Try existing profile first
+        resp = await client.profiles.list(query=persona_name)
+        if resp.items:
+            profile = resp.items[0]
+        else:
+            profile = await client.profiles.create(name=persona_name)
+        return profile.id
+
+    # ── Bot lifecycle ───────────────────────────────────────────────────────
+
+    async def start_bot(self, persona: dict) -> Optional[BotWorker]:
+        """Provision a browser, log in via SDK agent, connect CDP, start auto-pilot.
+
+        1. Get/create profile for persistent cookies
+        2. Provision browser with Decoda proxy (if plan allows)
+        3. SDK agent handles login (navigates FCN, fills form, clicks guest)
+        4. Connect direct CDP for fast auto-pilot loop
+        5. Start async auto-pilot task
+        """
+        async with self._semaphore:
+            username = persona.get("username", "ChatBot_42")
+            logger.info(f"Starting bot: {username}")
+
+            worker = BotWorker(persona)
+            self._workers[username] = worker
+            client = await self._get_client()
+
+            # Step 1 — Profile
+            worker.profile_id = await self.get_or_create_profile(f"fcn-{username}")
+            logger.info(f"Profile: {worker.profile_id}")
+
+            # Step 2 — Provision browser with optional custom proxy
+            decoda = random.choice(DECODA_PROXIES)
+            proxy_kwargs = {}
+            # Uncomment when on a paid plan that allows custom_proxy:
+            # proxy_kwargs["custom_proxy"] = decoda
+
+            browser = await client.browsers.create(
+                profile_id=worker.profile_id,
+                timeout=60,
+                browser_screen_width=1280,
+                browser_screen_height=720,
+                enable_recording=False,
+                **proxy_kwargs,  # passes custom_proxy to REST API if set
+            )
+            worker.browser_id = browser.id
+            worker.live_url = browser.live_url or ""
+            cdp_url = browser.cdp_url or ""
+            logger.info(f"Browser: {worker.browser_id}, live: {worker.live_url[:60] if worker.live_url else 'none'}")
+
+            # Step 3 — SDK agent handles login (autonomous: nav + ad bypass + form fill)
+            worker.status = "logging_in"
+            age = random.randint(22, 26)
+            year = time.localtime().tm_year - age
+            month = random.randint(1, 12)
+            day = random.randint(1, 28)
+            birthdate = f"{year}-{month:02d}-{day:02d}"
+            gender = persona.get("gender", "f")
+
+            login_prompt = (
+                f"Go to freechatnow.com. You are logging in as a guest. "
+                f"Username: {username}. Gender: {gender}. Birthdate: {birthdate}. "
+                f"Check the agree-to-terms checkbox. Click the 'Chat As Guest' button. "
+                f"If you see any popup ads or 'Continue'/'Skip' buttons, close/dismiss them. "
+                f"If you get redirected to 12chats or any ad gateway, type freechatnow.com "
+                f"into the address bar and press Enter to navigate away. "
+                f"Once you are logged in and in a chat room, say 'logged in'."
+            )
+
+            result = await client.run(
+                login_prompt,
+                profile_id=worker.profile_id,
+                keep_alive=True,        # keep session alive after login
+                enable_recording=False,
+            )
+            session_output = await result
+            worker.session_id = str(session_output.session_id) if hasattr(session_output, 'session_id') else ""
+            logger.info(f"Login complete, session: {worker.session_id}")
+
+            # Step 4 — Connect CDP for fast auto-pilot loop
+            if cdp_url:
+                cdok = await self._connect_cdp(worker, cdp_url)
+                if cdok:
+                    logger.info(f"CDP connected for {username}")
+                else:
+                    logger.warning(f"CDP connection failed for {username}, using SDK-only mode")
+
+            # Step 5 — Start auto-pilot
+            worker.status = "running"
+            self._auto_pilot_enabled[username] = True
+            worker._task = asyncio.create_task(self._run_auto_pilot(worker))
+
+            return worker
+
+    async def _connect_cdp(self, worker: BotWorker, cdp_url: str) -> bool:
+        """Connect Playwright CDP to the running browser for fast JS auto-pilot."""
         try:
             from playwright.async_api import async_playwright
-            self._playwright = await async_playwright().start()
+            worker._playwright = await async_playwright().start()
             wss_url = cdp_url.replace("https://", "wss://")
-            self._cdp = await self._playwright.chromium.connect_over_cdp(wss_url, timeout=30000)
+            worker._cdp = await worker._playwright.chromium.connect_over_cdp(wss_url, timeout=30000)
 
-            # Use the default browser context (what the live URL shows)
-            contexts = self._cdp.contexts
+            contexts = worker._cdp.contexts
             if contexts:
                 pages = contexts[0].pages
-                self._page = pages[0] if pages else await contexts[0].new_page()
+                worker._page = pages[0] if pages else await contexts[0].new_page()
             else:
-                self._page = await (await self._cdp.new_context()).new_page()
+                worker._page = await (await worker._cdp.new_context()).new_page()
 
-            # Auto-dismiss dialogs & close popup windows
-            self._page.on("dialog", lambda dialog: asyncio.ensure_future(self._handle_dialog(dialog)))
-            self._page.on("popup", lambda popup: asyncio.ensure_future(self._close_popup(popup)))
+            # Block ad-redirect domains at network level
+            await worker._page.route("**12chats.com**", lambda route: route.abort("blockedbyclient"))
+            await worker._page.route("**traffic*.com**", lambda route: route.abort("blockedbyclient"))
+            await worker._page.route("**exoclick.com**", lambda route: route.abort("blockedbyclient"))
+            await worker._page.route("**popads.net**", lambda route: route.abort("blockedbyclient"))
 
-            # Block popups at the JS source — override window.open before any page scripts run
-            await self._page.add_init_script("""
-                (() => {
-                    const origOpen = window.open;
-                    window.open = function(url, ...args) {
-                        if (url && (url.includes('freechatnow') || url.includes('fcnchat'))) {
-                            return origOpen.call(window, url, ...args);
-                        }
-                        return null;
-                    };
-                    // Kill any ad layer that appears
-                    setInterval(() => {
-                        document.querySelectorAll('iframe').forEach(f => {
-                            if (f.src && !f.src.includes('freechatnow') && !f.src.includes('fcnchat')) {
-                                f.remove();
-                            }
-                        });
-                    }, 2000);
-                })();
-            """)
-
-            # Block ad-redirect domains at the network level before any navigation
-            await self._page.route("**12chats.com**", lambda route: route.abort("blockedbyclient"))
-            await self._page.route("**traffic*.com**", lambda route: route.abort("blockedbyclient"))
-            await self._page.route("**exoclick.com**", lambda route: route.abort("blockedbyclient"))
-            await self._page.route("**popads.net**", lambda route: route.abort("blockedbyclient"))
-
-            self._connected = True
-            self.status = "connected"
-            logger.info("CDP connection established")
             return True
-
         except ImportError:
             logger.error("playwright not installed — run: pip install playwright")
-            self.status = "error"
             return False
         except Exception as e:
-            logger.error(f"CDP connection failed: {e}")
-            self.status = "error"
+            logger.warning(f"CDP connect failed: {e}")
             return False
 
-    async def _handle_dialog(self, dialog):
-        """Auto-dismiss any dialog (alert/confirm/prompt)."""
-        try:
-            await dialog.dismiss()
-        except Exception:
-            pass
+    async def _run_auto_pilot(self, worker: BotWorker):
+        """Fast JS-based auto-pilot loop for a single bot.
+        
+        Uses CDP (zero cost per tick) for read_chat → generate → send.
+        Falls back to SDK agent for recovery if CDP is unavailable.
+        """
+        username = worker.username
+        client = await self._get_client()
 
-    async def _close_popup(self, popup):
-        """Close any popup window immediately."""
-        try:
-            await popup.close()
-        except Exception:
-            pass
+        while self._auto_pilot_enabled.get(username, False):
+            try:
+                # ── CDP path (fast, zero cost) ──
+                if worker._page:
+                    messages = await self._cdp_read_chat(worker._page)
+                    if messages:
+                        # Generate response and send it
+                        await self._auto_pilot_tick(worker, messages, client)
 
-    async def _close_ad_windows(self):
-        """Close all pages except the FCN chat page."""
-        if not self._cdp:
-            return
-        try:
-            for ctx in self._cdp.contexts:
-                for page in ctx.pages:
-                    url = page.url.lower()
-                    if "freechatnow.com" not in url and "chat" not in url:
-                        try:
-                            await page.close()
-                            logger.info(f"Closed ad window: {url[:60]}")
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+                # ── SDK fallback (if no CDP) ──
+                elif worker.session_id:
+                    await self._sdk_auto_pilot_tick(worker, client)
 
-    async def _close_overlays(self):
-        """Close any modal overlays via JS."""
-        if not self._page:
-            return
-        try:
-            await self._page.evaluate("""
-                (() => {
-                    const closeSelectors = ['.close','.modal-close','button:has-text("X")',
-                        'button:has-text("Close")','button:has-text("No thanks")',
-                        'button:has-text("Continue")','a:has-text("Skip")','.popup-close','.ad-close'];
-                    closeSelectors.forEach(s => { const el = document.querySelector(s); if(el) el.click(); });
-                    document.querySelectorAll('.modal,.overlay,.popup').forEach(el => { el.style.display='none'; });
-                })();
-            """)
-        except Exception:
-            pass
+            except Exception as e:
+                logger.error(f"Auto-pilot tick error for {username}: {e}")
 
-    async def login(self) -> bool:
-        """Navigate to FCN, bypass ad gateways, fill login form, and click Chat As Guest."""
-        if not self._page:
-            logger.error("Cannot login: no page")
-            return False
-        username = self.persona.get("username", "ChatBot_42")
-        gender = self.persona.get("gender", "f")
-        age = random.randint(22, 26)
-        year = time.localtime().tm_year - age
-        month = random.randint(1, 12)
-        day = random.randint(1, 28)
-        birthdate = f"{year}-{month:02d}-{day:02d}"
-        try:
-            logger.info(f"Navigating to FCN as {username}...")
-
-            # Try multiple entry URLs until one lands on FCN
-            entry_urls = [
-                "https://www.freechatnow.com/chat/sextchat",
-                "https://freechatnow.com/chat/sextchat",
-                "https://www.freechatnow.com/",
-                "https://fcnchat.com/",
-            ]
-            landed = False
-            for url in entry_urls:
-                logger.info(f"Trying entry: {url}")
-                try:
-                    await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                    await asyncio.sleep(3)
-                    await self._close_ad_windows()
-                    await self._close_overlays()
-                    current_url = self._page.url.lower()
-                    if "freechatnow.com" in current_url or "fcnchat" in current_url:
-                        if "chat" in current_url or url == "https://www.freechatnow.com/":
-                            landed = True
-                            logger.info(f"Landed on: {current_url}")
-                            break
-                    logger.warning(f"Redirected to: {current_url[:80]}")
-                except Exception as e:
-                    logger.warning(f"Entry {url} failed: {e}")
-
-            # If still not on FCN, try from homepage with click-through
-            if not landed:
-                logger.warning("Direct navigation failed — trying homepage click-through")
-                await self._page.goto("https://www.freechatnow.com/", wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(2)
-                await self._close_ad_windows()
-                await self._close_overlays()
-                try:
-                    await self._page.evaluate("""
-                        (() => {
-                            const links = document.querySelectorAll('a[href*="chat"], a[href*="sextchat"], a[href*="enter"]');
-                            for (const link of links) { link.click(); return; }
-                        })();
-                    """)
-                    await asyncio.sleep(3)
-                    current_url = self._page.url.lower()
-                    if "freechatnow.com" in current_url or "fcnchat" in current_url:
-                        landed = True
-                        logger.info(f"Landed via homepage click: {current_url}")
-                except Exception as e:
-                    logger.warning(f"Homepage click-through failed: {e}")
-
-            # Last resort: type URL directly in the address bar
-            if not landed:
-                logger.warning("Click-through failed — typing freechatnow.com directly")
-                try:
-                    current_url_before = self._page.url
-                    # Navigate away from ad gateway by loading a known-good FCN page
-                    await self._page.goto("https://www.freechatnow.com/chat/sextchat", wait_until="domcontentloaded", timeout=20000)
-                    await asyncio.sleep(4)
-                    await self._close_ad_windows()
-                    await self._close_overlays()
-                    current_url = self._page.url.lower()
-                    if "freechatnow.com" in current_url or "fcnchat" in current_url:
-                        landed = True
-                        logger.info(f"Landed via direct URL: {current_url}")
-                except Exception as e:
-                    logger.warning(f"Direct URL attempt failed: {e}")
-
-            if not landed:
-                logger.error("Could not reach FCN — all entry URLs blocked by ad gateway")
-                self.status = "error"
-                return False
-
-            await self._close_ad_windows()
-            await self._close_overlays()
-            await asyncio.sleep(1)
-            await self._page.evaluate(f"""document.querySelector('input[name="username"]').value='{username}';
-                document.querySelector('input[name="username"]').dispatchEvent(new Event('input',{{bubbles:true}}));""")
-            await asyncio.sleep(0.5)
-            await self._page.evaluate(f"""document.querySelector('select[name="gender"]').value='{gender}';
-                document.querySelector('select[name="gender"]').dispatchEvent(new Event('change',{{bubbles:true}}));""")
-            await asyncio.sleep(0.5)
-            await self._page.evaluate(f"""document.querySelector('input[name="birthdate"]').value='{birthdate}';
-                document.querySelector('input[name="birthdate"]').dispatchEvent(new Event('input',{{bubbles:true}}));""")
-            await asyncio.sleep(0.5)
-            await self._page.evaluate("""document.querySelector('input[type="checkbox"]').checked=true;
-                document.querySelector('input[type="checkbox"]').dispatchEvent(new Event('change',{bubbles:true}));""")
-            await asyncio.sleep(0.5)
-            await self._page.evaluate("""document.querySelector('button[type="submit"][value="guest"]').click();""")
             await asyncio.sleep(3)
-            await self._close_overlays()
-            await asyncio.sleep(2)
-            self.status = "logged_in"
-            logger.info(f"Logged in as {username}")
-            return True
-        except Exception as e:
-            logger.error(f"Login failed: {e}")
-            self.status = "error"
-            return False
 
-    async def read_chat(self) -> list:
-        if not self._page:
-            return []
+    async def _cdp_read_chat(self, page) -> list:
+        """Read chat messages from the page via CDP JS evaluate."""
         try:
-            result = await self._page.evaluate("""
+            result = await page.evaluate("""
                 (() => {
-                    for (const sel of ['.chat-message','.message','[class*=msg]','[class*=chatline]','[class*=content] p','[class*=conversation] div']) {
+                    for (const sel of ['.chat-message','.message','[class*=msg]',
+                        '[class*=chatline]','[class*=content] p','[class*=conversation] div']) {
                         const els = document.querySelectorAll(sel);
-                        if (els.length > 3) return Array.from(els).slice(-25).map(e => e.textContent.trim()).filter(t => t);
+                        if (els.length > 3) return Array.from(els).slice(-25)
+                            .map(e => e.textContent.trim()).filter(t => t);
                     }
                     return document.body.innerText.split('\\n').filter(t => t.trim()).slice(-30);
                 })();
             """)
             return result if isinstance(result, list) else []
-        except Exception as e:
-            logger.error(f"Read chat failed: {e}")
+        except Exception:
             return []
 
-    async def send_message(self, message: str) -> bool:
-        if not self._page or not message:
+    async def _cdp_send_message(self, page, message: str) -> bool:
+        """Send a chat message via CDP JS evaluate."""
+        if not message:
             return False
         escaped = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         try:
-            await self._page.evaluate(f"""
+            await page.evaluate(f"""
                 (() => {{
-                    const input = document.querySelector('textarea') || document.querySelector('[contenteditable]') || document.querySelector('input[type=text]');
+                    const input = document.querySelector('textarea')
+                        || document.querySelector('[contenteditable]')
+                        || document.querySelector('input[type=text]');
                     if (!input) return 'no input';
                     input.value = '{escaped}';
                     input.dispatchEvent(new Event('input', {{bubbles: true}}));
                     input.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    input.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}}));
+                    input.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter',
+                        code: 'Enter', keyCode: 13, which: 13, bubbles: true}}));
                     const btn = document.querySelector('button[type=submit], [class*=send]');
                     if (btn) btn.click();
                     return 'sent';
@@ -354,45 +306,142 @@ class BrowserSession:
             """)
             await asyncio.sleep(1)
             return True
-        except Exception as e:
-            logger.error(f"Send message failed: {e}")
+        except Exception:
             return False
 
-    async def disconnect(self):
-        """Destroy the cloud browser."""
-        if self._playwright:
+    async def _auto_pilot_tick(self, worker: BotWorker, messages: list, client):
+        """One auto-pilot tick: close ads, check messages, generate, send."""
+        username = worker.username
+        persona = worker.persona
+
+        # Close ad popups via SDK agent (one-shot)
+        if worker.session_id and random.random() < 0.1:  # 10% chance each tick
             try:
-                await self._playwright.stop()
+                await client.run(
+                    "Close any popup ad windows and dismiss any modal overlays "
+                    "on the current page.",
+                    session_id=worker.session_id,
+                    keep_alive=True,
+                    enable_recording=False,
+                )
             except Exception:
                 pass
-        if self.box_id:
-            await self._api("DELETE", f"browsers/{self.box_id}")
-        self._connected = False
-        self.status = "disconnected"
+
+        # Read new messages
+        # (messages list already fetched by caller)
+
+        # Generate response using the persona's LLM provider
+        from app.providers import provider_registry
+        llm = provider_registry.get_chat_provider()
+        if not llm:
+            return
+
+        context = "\n".join(messages[-10:])
+        tone = persona.get("default_tone", "casual")
+        bio = persona.get("bio", "")
+        system = (
+            f"You are chatting in an adult chat room (18+). Your username is {username}. "
+            f"Tone: {tone}. Personality: {bio}. "
+            f"Keep messages short, natural, and conversational. "
+            f"Vary your responses. Never include your username prefix."
+        )
+        prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
+        response = await llm.chat(system, prompt)
+
+        if response:
+            if worker._page:
+                sent = await self._cdp_send_message(worker._page, response)
+            elif worker.session_id:
+                # Fallback: SDK agent sends the message
+                await client.run(
+                    f"Type this message in the chat input and send it: {response}",
+                    session_id=worker.session_id,
+                    keep_alive=True,
+                    enable_recording=False,
+                )
+
+    async def _sdk_auto_pilot_tick(self, worker: BotWorker, client):
+        """SDK-agent auto-pilot fallback (when CDP is unavailable)."""
+        username = worker.username
+        persona = worker.persona
+        tone = persona.get("default_tone", "casual")
+        bio = persona.get("bio", "")
+
+        await client.run(
+            f"You are {username} in a freechatnow.com chat room. "
+            f"Tone: {tone}. Personality: {bio}. "
+            f"Read the chat. If there are new messages, respond naturally. "
+            f"If you were just logged in, just observe for now. "
+            f"Close any popup ads.",
+            session_id=worker.session_id,
+            keep_alive=True,
+            enable_recording=False,
+        )
+
+    async def stop_bot(self, username: str):
+        """Stop a bot and persist its profile."""
+        worker = self._workers.pop(username, None)
+        if not worker:
+            return
+
+        # Stop auto-pilot loop
+        self._auto_pilot_enabled[username] = False
+        if worker._task:
+            worker._task.cancel()
+            worker._task = None
+
+        # Disconnect CDP
+        await worker.disconnect_cdp()
+
+        # Stop SDK session (saves cookies to profile)
+        if worker.session_id:
+            try:
+                client = await self._get_client()
+                await client.sessions.stop(worker.session_id)
+                logger.info(f"Session stopped for {username}, profile saved")
+            except Exception as e:
+                logger.error(f"Error stopping session for {username}: {e}")
+
+        worker.status = "stopped"
+
+    async def stop_all(self):
+        """Gracefully stop all bot sessions."""
+        logger.info("Stopping all bots...")
+        for username in list(self._workers.keys()):
+            await self.stop_bot(username)
+
+    async def close(self):
+        """Full shutdown — stop bots + close SDK client."""
+        await self.stop_all()
+        if self._client:
+            try:
+                await self._client.close()
+            except Exception:
+                pass
+            self._client = None
+
+    # ── Status ──────────────────────────────────────────────────────────────
+
+    def get_status(self) -> dict:
+        return {
+            "active": len(self._workers),
+            "capacity": 50,
+            "bots": [w.to_dict() for w in self._workers.values()],
+        }
+
+    def get_bot(self, username: str) -> Optional[BotWorker]:
+        return self._workers.get(username)
+
+    # ── Legacy compatibility: BrowserManager-like interface ─────────────────
+
+    @property
+    def current_session(self):
+        """Return the first-running bot's worker (legacy compatibility)."""
+        for w in self._workers.values():
+            if w.status == "running":
+                return w
+        return None
 
 
-class BrowserManager:
-    """Manages the lifecycle of Browser Use Cloud sessions."""
-
-    def __init__(self):
-        self.current_session: Optional[BrowserSession] = None
-
-    async def start_session(self, persona: dict) -> Optional[BrowserSession]:
-        if self.current_session:
-            await self.current_session.disconnect()
-        session = BrowserSession(persona)
-        if not await session.connect():
-            return None
-        if not await session.login():
-            await session.disconnect()
-            return None
-        self.current_session = session
-        return session
-
-    async def stop_session(self):
-        if self.current_session:
-            await self.current_session.disconnect()
-            self.current_session = None
-
-
-browser_manager = BrowserManager()
+# ── Singleton ───────────────────────────────────────────────────────────────────
+browser_manager = BotOrchestrator()

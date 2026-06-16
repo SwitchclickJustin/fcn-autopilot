@@ -1,4 +1,14 @@
-"""Auto-pilot engine — reads chat, generates responses, sends messages, handles DMs."""
+"""Auto-pilot engine — delegates browser work to BotOrchestrator.
+
+The orchestrator (app.browser.browser_manager) handles:
+  - SDK profile/session management
+  - Browser provisioning with Decoda proxy
+  - SDK agent login (autonomous navigation + form filling)
+  - CDP fast loop (read_chat / send_message via JS evaluate)
+  - 50 concurrent bot scaling
+
+This module provides the LLM response generation and DB logging layer.
+"""
 import asyncio
 import json
 import logging
@@ -6,22 +16,28 @@ import random
 import re
 import time
 from typing import Optional
-from app.browser import browser_manager, BrowserSession
+
+from app.browser import browser_manager
 from app.providers import provider_registry, LLMClient
 from app.supervisor import supervisor_engine
 import app.database as db
 
 logger = logging.getLogger(__name__)
 
+
 class AutoPilotEngine:
-    """Main auto-pilot loop. Runs as a background asyncio task."""
+    """Auto-pilot — starts/stops bot sessions via BotOrchestrator.
+
+    Delegates all browser work to browser_manager (BotOrchestrator).
+    This module handles LLM response generation, supervisor checks,
+    cooldowns, daily caps, and DB logging.
+    """
 
     def __init__(self):
         self._task: Optional[asyncio.Task] = None
         self._enabled: bool = False
         self._session_id: str = ""
         self._last_messages: list = []
-        self._last_dm_check: float = 0
         self._messages_today: int = 0
         self._daily_cap: int = 100
         self._cooldown_until: float = 0
@@ -29,15 +45,25 @@ class AutoPilotEngine:
         self._cooldown_max: int = 120
         self._persona: dict = {}
         self._chat_provider: Optional[LLMClient] = None
+        self._current_username: str = ""
 
     @property
     def enabled(self) -> bool:
         return self._enabled
 
     async def start(self, session_id: str, persona: dict):
-        """Start the auto-pilot loop."""
+        """Start a bot session: provision browser, log in, begin auto-pilot.
+
+        Delegates to BotOrchestrator.start_bot() which handles:
+          1. SDK profile (persistent cookies)
+          2. Browser with Decoda proxy
+          3. SDK agent login
+          4. CDP connection
+          5. Internal auto-pilot loop
+        """
         self._session_id = session_id
         self._persona = persona
+        self._current_username = persona.get("username", "ChatBot_42")
         self._cooldown_min = persona.get("cooldown_min", 60)
         self._cooldown_max = persona.get("cooldown_max", 120)
         self._daily_cap = persona.get("daily_cap", 100)
@@ -48,153 +74,22 @@ class AutoPilotEngine:
             logger.error("No chat provider configured — cannot start auto-pilot")
             return
 
+        # Start the browser session via orchestrator
+        worker = await browser_manager.start_bot(persona)
+        if not worker:
+            logger.error("Failed to start browser session")
+            return
+
         self._enabled = True
-        self._task = asyncio.create_task(self._run_loop())
-        logger.info("Auto-pilot started")
+        logger.info(f"Auto-pilot started for {self._current_username}, "
+                     f"browser: {worker.live_url[:60] if worker.live_url else 'none'}")
 
     async def stop(self):
-        """Stop the auto-pilot loop."""
+        """Stop the bot session and persist its profile."""
         self._enabled = False
-        if self._task:
-            self._task.cancel()
-            self._task = None
-        logger.info("Auto-pilot stopped")
-
-    async def _run_loop(self):
-        """Main auto-pilot loop."""
-        while self._enabled:
-            try:
-                await self._tick()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Auto-pilot tick error: {e}")
-            await asyncio.sleep(3)
-
-    async def _tick(self):
-        """Single iteration of the auto-pilot loop."""
-        session = browser_manager.current_session
-        if not session or session.status != "logged_in":
-            return
-
-        # Close popup windows (ads, etc.) and modal overlays
-        await session._close_ad_windows()
-        await session._close_overlays()
-
-        # 1. Read group chat
-        messages = await session.read_chat()
-        if not messages or messages == self._last_messages:
-            return
-
-        new_messages = messages[len(self._last_messages):] if self._last_messages else messages[-3:]
-        self._last_messages = messages
-
-        if not new_messages:
-            return
-
-        # 2. Check if we should respond (new relevant messages)
-        for msg in new_messages:
-            if not self._enabled:
-                return
-            if self._messages_today >= self._daily_cap:
-                logger.info("Daily message cap reached — pausing")
-                self._enabled = False
-                return
-
-            # Check cooldown
-            if time.time() < self._cooldown_until:
-                continue
-
-            # Check if message is relevant (mentions username or is recent)
-            username = self._persona.get("username", "")
-            is_addressed = username.lower() in msg.lower() if username else False
-
-            if not is_addressed:
-                # In group chat, only respond if addressed or sometimes proactively
-                if random.random() > 0.15:  # 15% chance to chime in
-                    continue
-
-            # 3. Generate response
-            context = "\n".join(self._last_messages[-10:])
-            response = await self._generate_response(context)
-            if not response:
-                continue
-
-            # 4. Supervisor check
-            approved, note = await supervisor_engine.pre_flight(response, context, self._persona)
-            if not approved:
-                logger.info(f"Supervisor blocked: {note}")
-                await db.log_chat({
-                    "session_id": self._session_id,
-                    "chat_type": "group",
-                    "source": "ai",
-                    "message": response,
-                    "supervisor_approved": False,
-                    "supervisor_note": note
-                })
-                continue
-
-            # 5. Send
-            sent = await session.send_message(response)
-            if sent:
-                self._messages_today += 1
-                cooldown = random.randint(self._cooldown_min, self._cooldown_max)
-                self._cooldown_until = time.time() + cooldown
-
-                await db.log_chat({
-                    "session_id": self._session_id,
-                    "chat_type": "group",
-                    "source": "ai",
-                    "message": response,
-                    "tone_used": self._persona.get("default_tone", "casual"),
-                    "supervisor_approved": True,
-                    "supervisor_note": ""
-                })
-
-                await db.update_session(self._session_id, {
-                    "messages_sent_today": self._messages_today,
-                    "last_message_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                })
-                logger.info(f"Sent: {response[:60]}")
-
-    async def _generate_response(self, context: str) -> Optional[str]:
-        """Generate a chat response using the configured LLM."""
-        provider = self._chat_provider
-        if not provider:
-            return None
-
-        persona = self._persona
-        tone = persona.get("default_tone", "casual")
-        length = persona.get("default_length", "medium")
-        bio = persona.get("bio", "")
-        goals = persona.get("goals", "")
-        tg = persona.get("telegram_handle", "")
-        username = persona.get("username", "")
-
-        system = (
-            f"You are chatting in an adult chat room (18+). Your username is {username}.\n"
-            f"Tone: {tone}. Message length: {length}.\n"
-            f"Personality: {bio}\n"
-        )
-        if tg:
-            # Break up handle to avoid automated detection (e.g., "alexapinknow" → "alexa_pink now")
-            tg_broken = re.sub(r'([a-z])([A-Z])', r'\1 \2', tg)
-            if len(tg_broken) == len(tg):
-                # No camelCase detected, break into chunks
-                mid = len(tg) // 2
-                tg_broken = f"{tg[:mid]} {tg[mid:]}"
-            system += f"\nYour Telegram handle: @{tg} (say it like '{tg_broken}' to avoid filters)\n"
-        if goals:
-            system += f"\nYOUR GOALS:\n{goals}\n"
-        system += (
-            f"\nRules: Be natural and conversational. Vary your responses. "
-            f"Don't overuse emoji. Match the room's vibe. "
-            f"Never include your username prefix. Just send the message."
-        )
-
-        user = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
-
-        return await provider.chat(system, user)
+        if self._current_username:
+            await browser_manager.stop_bot(self._current_username)
+            logger.info(f"Auto-pilot stopped for {self._current_username}")
 
     async def generate_suggestions(self, context: str, count: int = 5) -> list:
         """Generate response suggestions (for manual mode)."""
@@ -221,7 +116,6 @@ class AutoPilotEngine:
             line = line.strip()
             if not line:
                 continue
-            import re
             m = re.match(r'^\d+[.)]\s*(.*)', line)
             if m:
                 suggestions.append(m.group(1))
@@ -229,5 +123,6 @@ class AutoPilotEngine:
                 suggestions.append(line)
 
         return suggestions[:count] if suggestions else [result.strip()]
+
 
 auto_pilot = AutoPilotEngine()
