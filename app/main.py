@@ -260,7 +260,7 @@ _SNAP_JS = """
 @app.get("/debug/inspect-fcn")
 async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0,
                             username: str = "TestAlexa99", room: str = "SextChat",
-                            gender: str = "f"):
+                            gender: str = "f", block: int = 1):
     """Provision a Decoda-proxied browser, navigate to the target, and dump the DOM.
 
     Diagnostic for building the CDP-driven guest-login flow. Captures the main
@@ -300,12 +300,13 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
         ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-        # Block ad-redirect domains so we land on FCN, not a gateway
-        for pat in ["**12chats.com**", "**exoclick.com**", "**popads.net**", "**traffic*.com**", "**doubleclick.net**"]:
-            try:
-                await page.route(pat, lambda r: r.abort())
-            except Exception:
-                pass
+        # Block ad-redirect domains so we land on FCN, not a gateway (block=0 to disable)
+        if block:
+            for pat in ["**12chats.com**", "**exoclick.com**", "**popads.net**", "**traffic*.com**", "**doubleclick.net**"]:
+                try:
+                    await page.route(pat, lambda r: r.abort())
+                except Exception:
+                    pass
 
         # 3. Navigate + let JS settle
         try:
