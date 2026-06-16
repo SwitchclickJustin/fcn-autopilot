@@ -128,10 +128,10 @@ class BotOrchestrator:
         """Provision a browser, log in via SDK agent, connect CDP, start auto-pilot.
 
         1. Get/create profile for persistent cookies
-        2. Provision browser with Decoda proxy (if plan allows)
-        3. SDK agent handles login (navigates FCN, fills form, clicks guest)
-        4. Connect direct CDP for fast auto-pilot loop
-        5. Start async auto-pilot task
+        2. Provision browser with Decoda proxy — returns immediately with live_url
+        3. Background: SDK agent handles login (autonomous navigation + form fill)
+        4. Background: Connect CDP for fast auto-pilot loop
+        5. Background: Start auto-pilot loop
         """
         async with self._semaphore:
             username = persona.get("username", "ChatBot_42")
@@ -141,15 +141,15 @@ class BotOrchestrator:
             self._workers[username] = worker
             client = await self._get_client()
 
-            # Step 1 — Profile
+            # Step 1 — Profile (fast)
             worker.profile_id = await self.get_or_create_profile(f"fcn-{username}")
             logger.info(f"Profile: {worker.profile_id}")
 
-            # Step 2 — Provision browser with optional custom proxy
-            # Select a random Decoda proxy for IP rotation
+            # Step 2 — Provision browser with Decoda proxy (fast, ~3s)
+            # Returns browser with live_url immediately — login happens in bg
             decoda = random.choice(DECODA_PROXIES)
             proxy_kwargs = {
-                "customProxy": decoda,  # camelCase — REST API field, not SDK
+                "customProxy": decoda,
             }
 
             browser = await client.browsers.create(
@@ -158,15 +158,27 @@ class BotOrchestrator:
                 browser_screen_width=1280,
                 browser_screen_height=720,
                 enable_recording=False,
-                **proxy_kwargs,  # passes custom_proxy to REST API if set
+                **proxy_kwargs,
             )
             worker.browser_id = browser.id
             worker.live_url = browser.live_url or ""
             cdp_url = browser.cdp_url or ""
             logger.info(f"Browser: {worker.browser_id}, live: {worker.live_url[:60] if worker.live_url else 'none'}")
 
-            # Step 3 — SDK agent handles login (autonomous: nav + ad bypass + form fill)
+            # Steps 3-5 run in background — return worker with live_url immediately
+            worker._task = asyncio.create_task(
+                self._finish_bot_setup(worker, username, cdp_url, client)
+            )
+            worker.status = "running"
+            return worker
+
+    async def _finish_bot_setup(self, worker: BotWorker, username: str,
+                                 cdp_url: str, client):
+        """Background: SDK login → CDP connect → auto-pilot start."""
+        try:
+            # Step 3 — SDK agent login (can take 30-60s)
             worker.status = "logging_in"
+            persona = worker.persona
             age = random.randint(22, 26)
             year = time.localtime().tm_year - age
             month = random.randint(1, 12)
@@ -187,12 +199,12 @@ class BotOrchestrator:
             result = await client.run(
                 login_prompt,
                 profile_id=worker.profile_id,
-                keep_alive=True,        # keep session alive after login
+                keep_alive=True,
                 enable_recording=False,
             )
             session_output = await result
             worker.session_id = str(session_output.session_id) if hasattr(session_output, 'session_id') else ""
-            logger.info(f"Login complete, session: {worker.session_id}")
+            logger.info(f"Login complete for {username}, session: {worker.session_id}")
 
             # Step 4 — Connect CDP for fast auto-pilot loop
             if cdp_url:
@@ -200,14 +212,15 @@ class BotOrchestrator:
                 if cdok:
                     logger.info(f"CDP connected for {username}")
                 else:
-                    logger.warning(f"CDP connection failed for {username}, using SDK-only mode")
+                    logger.warning(f"CDP connection failed for {username}")
 
             # Step 5 — Start auto-pilot
-            worker.status = "running"
             self._auto_pilot_enabled[username] = True
             worker._task = asyncio.create_task(self._run_auto_pilot(worker))
 
-            return worker
+        except Exception as e:
+            logger.error(f"Bot setup failed for {username}: {e}")
+            worker.status = "error"
 
     async def _connect_cdp(self, worker: BotWorker, cdp_url: str) -> bool:
         """Connect Playwright CDP to the running browser for fast JS auto-pilot."""
