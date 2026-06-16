@@ -320,8 +320,42 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
         except Exception:
             results["title"] = ""
 
+        # 3c. Discovery: fill + direct fetch-POST to /api/chat/login (bypass the
+        # button's ad onclick), report where it redirects = the real room URL.
+        if login == 2:
+            slug = room.lower().replace("chat", "").strip() or "sext"
+            try:
+                await page.goto(f"https://www.freechatnow.com/chat/{slug}/",
+                                wait_until="domcontentloaded", timeout=45000)
+                await page.wait_for_timeout(2000)
+                js = """
+                async (u) => {
+                  const form = document.querySelector("form[action*='chat/login']");
+                  if (!form) return {error: 'no form'};
+                  const uIn = form.querySelector("input[name=username]"); if(uIn) uIn.value = u;
+                  const g = form.querySelector("select[name=gender]"); if(g) g.value = "female";
+                  const b = form.querySelector("input[name=birthdate]"); if(b) b.value = "2000-06-15";
+                  const c = form.querySelector("input[type=checkbox]"); if(c) c.checked = true;
+                  const fd = new FormData(form);
+                  const entries = [...fd.entries()].map(e => e[0] + '=' + e[1]);
+                  try {
+                    const resp = await fetch(form.action, {method: (form.method||'POST'),
+                        body: fd, credentials: 'include', redirect: 'follow'});
+                    const text = await resp.text();
+                    return {action: form.action, entries, status: resp.status,
+                            final_url: resp.url, redirected: resp.redirected,
+                            looks_like_chat: /textarea|contenteditable|send|room/i.test(text),
+                            body: text.slice(0, 900)};
+                  } catch(e) { return {action: form.action, entries, fetch_error: String(e)}; }
+                }
+                """
+                results["fetch_login"] = await page.evaluate(js, username)
+                results["fetch_login_page_url"] = page.url
+            except Exception as e:
+                results["fetch_login_error"] = str(e)[:250]
+
         # 3b. Optionally run the REAL guest-login code on this page
-        if login:
+        if login == 1:
             from app.browser import browser_manager as _bm, BotWorker as _BW
             w = _BW({"username": username, "gender": gender, "selected_rooms": [room]})
             w._page = page
