@@ -72,35 +72,35 @@ class BrowserSession:
             return None
 
     async def connect(self) -> bool:
-        """Provision a cloud browser via Browser Use SDK, connect via CDP."""
+        """Provision a cloud browser with Decoda proxy, connect via CDP."""
         logger.info(f"Provisioning cloud browser for {self.persona.get('username')}")
 
         # Pick a random Decoda proxy from the pool for IP rotation
         decoda = random.choice(DECODA_PROXIES)
 
-        try:
-            from browser_use_sdk.v3 import AsyncBrowserUse
-            client = AsyncBrowserUse()
-            bu_browser = await client.browsers.create(
-                timeout=60,
-                browser_screen_width=1280,
-                browser_screen_height=720,
-                enable_recording=False,
-                custom_proxy=decoda,
-            )
-        except ImportError:
-            logger.error("browser-use-sdk not installed — run: pip install browser-use-sdk")
+        # Create browser via REST API with Decoda custom proxy
+        browser_config = {
+            "timeout": 60,
+            "browserScreenWidth": 1280,
+            "browserScreenHeight": 720,
+            "enableRecording": False,
+            "customProxy": decoda,  # REST API uses camelCase
+        }
+
+        result = await self._api("POST", "browsers", browser_config)
+        if not result:
+            logger.error("Browser API returned None — SDK/proxy setup failed")
             self.status = "error"
             return False
-        except Exception as e:
-            logger.error(f"SDK create browser failed: {e}")
+        if not result.get("cdpUrl"):
+            logger.error(f"Browser API response missing cdpUrl: {json.dumps(result)[:200]}")
             self.status = "error"
             return False
 
-        self.box_id = bu_browser.id
-        self.live_url = bu_browser.live_url
-        cdp_url = bu_browser.cdp_url
-        logger.info(f"Cloud browser created via SDK: {self.box_id}, proxy port {decoda['port']}")
+        self.box_id = result.get("id", "")
+        self.live_url = result.get("liveUrl", "")
+        cdp_url = result.get("cdpUrl", "")
+        logger.info(f"Cloud browser created: {self.box_id}, proxy port {decoda['port']}")
 
         # Connect via CDP WebSocket using Playwright
         try:
