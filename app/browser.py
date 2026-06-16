@@ -176,6 +176,23 @@ class BrowserSession:
         except Exception:
             pass
 
+    async def _close_ad_windows(self):
+        """Close all pages except the FCN chat page."""
+        if not self._cdp:
+            return
+        try:
+            for ctx in self._cdp.contexts:
+                for page in ctx.pages:
+                    url = page.url.lower()
+                    if "freechatnow.com" not in url and "chat" not in url:
+                        try:
+                            await page.close()
+                            logger.info(f"Closed ad window: {url[:60]}")
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
     async def _close_overlays(self):
         """Close any modal overlays via JS."""
         if not self._page:
