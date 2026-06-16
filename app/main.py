@@ -329,12 +329,33 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 results["login_ok"] = await _bm._cdp_guest_login(w)
             except Exception as e:
                 results["login_error"] = str(e)[:250]
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(4000)
             results["post_login_url"] = page.url
             try:
                 results["post_login_title"] = await page.title()
             except Exception:
                 pass
+
+            # Enumerate ALL pages/popups in the browser — the real FCN room may
+            # have opened in a popup while the main tab got hijacked to an ad.
+            all_pages = []
+            try:
+                for ctx2 in browser.contexts:
+                    for pg in ctx2.pages:
+                        info = {"url": pg.url}
+                        try:
+                            info["title"] = await pg.title()
+                        except Exception:
+                            pass
+                        if "freechatnow" in (pg.url or ""):
+                            try:
+                                info["dom"] = await pg.evaluate(_SNAP_JS)
+                            except Exception as e:
+                                info["dom_error"] = str(e)[:100]
+                        all_pages.append(info)
+            except Exception as e:
+                results["all_pages_error"] = str(e)[:150]
+            results["all_pages"] = all_pages
 
         # 4. Snapshot main page + same-origin iframes
         results["dom"] = await page.evaluate(_SNAP_JS)
