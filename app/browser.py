@@ -148,6 +148,12 @@ class BrowserSession:
                 })();
             """)
 
+            # Block ad-redirect domains at the network level before any navigation
+            await self._page.route("**12chats.com**", lambda route: route.abort("blockedbyclient"))
+            await self._page.route("**traffic*.com**", lambda route: route.abort("blockedbyclient"))
+            await self._page.route("**exoclick.com**", lambda route: route.abort("blockedbyclient"))
+            await self._page.route("**popads.net**", lambda route: route.abort("blockedbyclient"))
+
             self._connected = True
             self.status = "connected"
             logger.info("CDP connection established")
@@ -211,7 +217,7 @@ class BrowserSession:
             pass
 
     async def login(self) -> bool:
-        """Navigate to FCN, fill login form, and click Chat As Guest."""
+        """Navigate to FCN, bypass ad gateways, fill login form, and click Chat As Guest."""
         if not self._page:
             logger.error("Cannot login: no page")
             return False
@@ -224,9 +230,62 @@ class BrowserSession:
         birthdate = f"{year}-{month:02d}-{day:02d}"
         try:
             logger.info(f"Navigating to FCN as {username}...")
-            await self._page.goto("https://www.freechatnow.com/chat/sextchat", wait_until="domcontentloaded")
-            await asyncio.sleep(3)
+
+            # Try multiple entry URLs until one lands on FCN
+            entry_urls = [
+                "https://www.freechatnow.com/chat/sextchat",
+                "https://freechatnow.com/chat/sextchat",
+                "https://www.freechatnow.com/",
+                "https://fcnchat.com/",
+            ]
+            landed = False
+            for url in entry_urls:
+                logger.info(f"Trying entry: {url}")
+                try:
+                    await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                    await asyncio.sleep(3)
+                    await self._close_ad_windows()
+                    await self._close_overlays()
+                    current_url = self._page.url.lower()
+                    if "freechatnow.com" in current_url or "fcnchat" in current_url:
+                        if "chat" in current_url or url == "https://www.freechatnow.com/":
+                            landed = True
+                            logger.info(f"Landed on: {current_url}")
+                            break
+                    logger.warning(f"Redirected to: {current_url[:80]}")
+                except Exception as e:
+                    logger.warning(f"Entry {url} failed: {e}")
+
+            # If still not on FCN, try from homepage with click-through
+            if not landed:
+                logger.warning("Direct navigation failed — trying homepage click-through")
+                await self._page.goto("https://www.freechatnow.com/", wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(2)
+                await self._close_ad_windows()
+                await self._close_overlays()
+                try:
+                    await self._page.evaluate("""
+                        (() => {
+                            const links = document.querySelectorAll('a[href*="chat"], a[href*="sextchat"], a[href*="enter"]');
+                            for (const link of links) { link.click(); return; }
+                        })();
+                    """)
+                    await asyncio.sleep(3)
+                    current_url = self._page.url.lower()
+                    if "freechatnow.com" in current_url or "fcnchat" in current_url:
+                        landed = True
+                        logger.info(f"Landed via homepage click: {current_url}")
+                except Exception as e:
+                    logger.warning(f"Homepage click-through failed: {e}")
+
+            if not landed:
+                logger.error("Could not reach FCN — all entry URLs blocked by ad gateway")
+                self.status = "error"
+                return False
+
+            await self._close_ad_windows()
             await self._close_overlays()
+            await asyncio.sleep(1)
             await self._page.evaluate(f"""document.querySelector('input[name="username"]').value='{username}';
                 document.querySelector('input[name="username"]').dispatchEvent(new Event('input',{{bubbles:true}}));""")
             await asyncio.sleep(0.5)
