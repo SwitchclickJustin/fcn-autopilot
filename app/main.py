@@ -337,7 +337,7 @@ async def debug_browser_status():
     if browser_manager.current_session:
         info = {
             "status": browser_manager.current_session.status,
-            "box_id": browser_manager.current_session.box_id,
+            "browser_id": browser_manager.current_session.browser_id,
             "live_url": browser_manager.current_session.live_url[:80] if browser_manager.current_session.live_url else "",
             "connected": browser_manager.current_session._connected,
             "has_page": browser_manager.current_session._page is not None,
@@ -491,9 +491,12 @@ async def start_session(data: dict):
         "room_ids": persona.get("selected_rooms", ["SextChat"]),
         "status": "connecting"
     })
+    # Single start path: auto_pilot.start() provisions the browser via the
+    # orchestrator AND begins the auto-pilot loop. Calling start_bot() a second
+    # time here would provision a duplicate cloud browser and orphan the first.
     try:
-        browser_sess = await browser_manager.start_session(persona)
-        if not browser_sess:
+        worker = await auto_pilot.start(sess["id"], persona)
+        if not worker:
             await update_session(sess["id"], {"status": "error"})
             raise HTTPException(500, detail="Browser session failed — check Railway logs for details.")
     except HTTPException:
@@ -502,18 +505,15 @@ async def start_session(data: dict):
         logger.error(f"BROWSER START ERROR: {e}\n{traceback.format_exc()}")
         await update_session(sess["id"], {"status": "error"})
         raise HTTPException(500, detail=f"Browser session failed: {e}")
-    
+
     await update_session(sess["id"], {
         "status": "active",
-        "browser_session_id": browser_sess.browser_id,
-        "browser_live_url": browser_sess.live_url
+        "browser_session_id": worker.browser_id,
+        "browser_live_url": worker.live_url,
+        "auto_pilot": True,
     })
-    
-    # Auto-enable auto-pilot
-    await auto_pilot.start(sess["id"], persona)
-    await update_session(sess["id"], {"auto_pilot": True})
-    
-    return {"session_id": sess["id"], "status": "active", "live_url": browser_sess.live_url, "auto_pilot": True}
+
+    return {"session_id": sess["id"], "status": "active", "live_url": worker.live_url, "auto_pilot": True}
 
 @app.post("/api/session/stop")
 async def stop_session():

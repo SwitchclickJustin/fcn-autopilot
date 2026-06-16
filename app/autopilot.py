@@ -17,7 +17,7 @@ import re
 import time
 from typing import Optional
 
-from app.browser import browser_manager
+from app.browser import browser_manager, BotWorker
 from app.providers import provider_registry, LLMClient
 from app.supervisor import supervisor_engine
 import app.database as db
@@ -51,7 +51,7 @@ class AutoPilotEngine:
     def enabled(self) -> bool:
         return self._enabled
 
-    async def start(self, session_id: str, persona: dict):
+    async def start(self, session_id: str, persona: dict) -> Optional[BotWorker]:
         """Start a bot session: provision browser, log in, begin auto-pilot.
 
         Delegates to BotOrchestrator.start_bot() which handles:
@@ -60,6 +60,9 @@ class AutoPilotEngine:
           3. SDK agent login
           4. CDP connection
           5. Internal auto-pilot loop
+
+        Returns the provisioned BotWorker, or None if start failed (no chat
+        provider configured, or the browser session could not be provisioned).
         """
         self._session_id = session_id
         self._persona = persona
@@ -72,17 +75,18 @@ class AutoPilotEngine:
 
         if not self._chat_provider:
             logger.error("No chat provider configured — cannot start auto-pilot")
-            return
+            return None
 
         # Start the browser session via orchestrator
         worker = await browser_manager.start_bot(persona)
         if not worker:
             logger.error("Failed to start browser session")
-            return
+            return None
 
         self._enabled = True
         logger.info(f"Auto-pilot started for {self._current_username}, "
                      f"browser: {worker.live_url[:60] if worker.live_url else 'none'}")
+        return worker
 
     async def stop(self):
         """Stop the bot session and persist its profile."""

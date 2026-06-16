@@ -134,9 +134,21 @@ async def get_db():
         return db
 
 async def close_db(db):
-    """Close database connection."""
-    if db and not db.is_closed():
-        await db.close()
+    """Close database connection (works for both asyncpg and aiosqlite).
+
+    asyncpg exposes is_closed(); aiosqlite does not — so only guard on the
+    Neon path and let SQLite close unconditionally (it is opened per-query).
+    """
+    if not db:
+        return
+    try:
+        if USE_NEON:
+            if not db.is_closed():
+                await db.close()
+        else:
+            await db.close()
+    except Exception:
+        pass
 
 async def _fetchall(db, query, params=None):
     """Execute query and return list of dicts."""

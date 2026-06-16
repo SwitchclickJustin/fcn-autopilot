@@ -59,6 +59,11 @@ class BotWorker:
         # Auto-pilot asyncio task
         self._task: Optional[asyncio.Task] = None
 
+    @property
+    def _connected(self) -> bool:
+        """True when a live CDP page is attached (for status reporting)."""
+        return self._page is not None
+
     async def disconnect_cdp(self):
         """Close CDP connection (keeps SDK session alive)."""
         if self._playwright:
@@ -69,6 +74,59 @@ class BotWorker:
         self._page = None
         self._cdp = None
         self._playwright = None
+
+    async def read_chat(self) -> list:
+        """Read recent chat messages from this bot's page via CDP JS evaluate.
+
+        Returns [] if no CDP page is attached (e.g. login still in progress).
+        """
+        if not self._page:
+            return []
+        try:
+            result = await self._page.evaluate("""
+                (() => {
+                    for (const sel of ['.chat-message','.message','[class*=msg]',
+                        '[class*=chatline]','[class*=content] p','[class*=conversation] div']) {
+                        const els = document.querySelectorAll(sel);
+                        if (els.length > 3) return Array.from(els).slice(-25)
+                            .map(e => e.textContent.trim()).filter(t => t);
+                    }
+                    return document.body.innerText.split('\\n').filter(t => t.trim()).slice(-30);
+                })();
+            """)
+            return result if isinstance(result, list) else []
+        except Exception:
+            return []
+
+    async def send_message(self, message: str) -> bool:
+        """Type + send a chat message on this bot's page via CDP JS evaluate.
+
+        Returns False if there is no message or no CDP page attached.
+        """
+        if not message or not self._page:
+            return False
+        escaped = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        try:
+            await self._page.evaluate(f"""
+                (() => {{
+                    const input = document.querySelector('textarea')
+                        || document.querySelector('[contenteditable]')
+                        || document.querySelector('input[type=text]');
+                    if (!input) return 'no input';
+                    input.value = '{escaped}';
+                    input.dispatchEvent(new Event('input', {{bubbles: true}}));
+                    input.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    input.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter',
+                        code: 'Enter', keyCode: 13, which: 13, bubbles: true}}));
+                    const btn = document.querySelector('button[type=submit], [class*=send]');
+                    if (btn) btn.click();
+                    return 'sent';
+                }})();
+            """)
+            await asyncio.sleep(1)
+            return True
+        except Exception:
+            return False
 
     def to_dict(self):
         return {
@@ -196,14 +254,19 @@ class BotOrchestrator:
                 f"Once you are logged in and in a chat room, say 'logged in'."
             )
 
-            result = await client.run(
+            # client.run() returns an AsyncSessionRun handle synchronously (it is NOT
+            # a coroutine). Awaiting it ONCE runs the agent task to completion, sets
+            # run.session_id, and returns a SessionResult. Awaiting the result again
+            # would raise (SessionResult is not awaitable) — that was the old bug that
+            # silently forced every bot into status="error".
+            run = client.run(
                 login_prompt,
                 profile_id=worker.profile_id,
                 keep_alive=True,
                 enable_recording=False,
             )
-            session_output = await result
-            worker.session_id = str(session_output.session_id) if hasattr(session_output, 'session_id') else ""
+            await run
+            worker.session_id = run.session_id or ""
             logger.info(f"Login complete for {username}, session: {worker.session_id}")
 
             # Step 4 — Connect CDP for fast auto-pilot loop
@@ -264,7 +327,7 @@ class BotOrchestrator:
             try:
                 # ── CDP path (fast, zero cost) ──
                 if worker._page:
-                    messages = await self._cdp_read_chat(worker._page)
+                    messages = await worker.read_chat()
                     if messages:
                         # Generate response and send it
                         await self._auto_pilot_tick(worker, messages, client)
@@ -277,51 +340,6 @@ class BotOrchestrator:
                 logger.error(f"Auto-pilot tick error for {username}: {e}")
 
             await asyncio.sleep(3)
-
-    async def _cdp_read_chat(self, page) -> list:
-        """Read chat messages from the page via CDP JS evaluate."""
-        try:
-            result = await page.evaluate("""
-                (() => {
-                    for (const sel of ['.chat-message','.message','[class*=msg]',
-                        '[class*=chatline]','[class*=content] p','[class*=conversation] div']) {
-                        const els = document.querySelectorAll(sel);
-                        if (els.length > 3) return Array.from(els).slice(-25)
-                            .map(e => e.textContent.trim()).filter(t => t);
-                    }
-                    return document.body.innerText.split('\\n').filter(t => t.trim()).slice(-30);
-                })();
-            """)
-            return result if isinstance(result, list) else []
-        except Exception:
-            return []
-
-    async def _cdp_send_message(self, page, message: str) -> bool:
-        """Send a chat message via CDP JS evaluate."""
-        if not message:
-            return False
-        escaped = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-        try:
-            await page.evaluate(f"""
-                (() => {{
-                    const input = document.querySelector('textarea')
-                        || document.querySelector('[contenteditable]')
-                        || document.querySelector('input[type=text]');
-                    if (!input) return 'no input';
-                    input.value = '{escaped}';
-                    input.dispatchEvent(new Event('input', {{bubbles: true}}));
-                    input.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    input.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter',
-                        code: 'Enter', keyCode: 13, which: 13, bubbles: true}}));
-                    const btn = document.querySelector('button[type=submit], [class*=send]');
-                    if (btn) btn.click();
-                    return 'sent';
-                }})();
-            """)
-            await asyncio.sleep(1)
-            return True
-        except Exception:
-            return False
 
     async def _auto_pilot_tick(self, worker: BotWorker, messages: list, client):
         """One auto-pilot tick: close ads, check messages, generate, send."""
@@ -364,7 +382,7 @@ class BotOrchestrator:
 
         if response:
             if worker._page:
-                sent = await self._cdp_send_message(worker._page, response)
+                sent = await worker.send_message(response)
             elif worker.session_id:
                 # Fallback: SDK agent sends the message
                 await client.run(
