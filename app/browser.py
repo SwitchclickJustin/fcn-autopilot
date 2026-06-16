@@ -278,6 +278,23 @@ class BrowserSession:
                 except Exception as e:
                     logger.warning(f"Homepage click-through failed: {e}")
 
+            # Last resort: type URL directly in the address bar
+            if not landed:
+                logger.warning("Click-through failed — typing freechatnow.com directly")
+                try:
+                    current_url_before = self._page.url
+                    # Navigate away from ad gateway by loading a known-good FCN page
+                    await self._page.goto("https://www.freechatnow.com/chat/sextchat", wait_until="domcontentloaded", timeout=20000)
+                    await asyncio.sleep(4)
+                    await self._close_ad_windows()
+                    await self._close_overlays()
+                    current_url = self._page.url.lower()
+                    if "freechatnow.com" in current_url or "fcnchat" in current_url:
+                        landed = True
+                        logger.info(f"Landed via direct URL: {current_url}")
+                except Exception as e:
+                    logger.warning(f"Direct URL attempt failed: {e}")
+
             if not landed:
                 logger.error("Could not reach FCN — all entry URLs blocked by ad gateway")
                 self.status = "error"
