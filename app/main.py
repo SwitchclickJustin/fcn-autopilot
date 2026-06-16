@@ -354,16 +354,35 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
             except Exception as e:
                 results["fetch_login_error"] = str(e)[:250]
 
-        # 3b. Optionally run the REAL guest-login code on this page
-        if login == 1:
-            from app.browser import browser_manager as _bm, BotWorker as _BW
-            w = _BW({"username": username, "gender": gender, "selected_rooms": [room]})
-            w._page = page
-            try:
-                results["login_ok"] = await _bm._cdp_guest_login(w)
-            except Exception as e:
-                results["login_error"] = str(e)[:250]
-            await page.wait_for_timeout(4000)
+        # 3b. Optionally run login: 1 = real _cdp_guest_login (button click),
+        #     3 = native form.submit() (bypasses the button's ad onclick).
+        if login in (1, 3):
+            if login == 3:
+                slug = room.lower().replace("chat", "").strip() or "sext"
+                try:
+                    await page.goto(f"https://www.freechatnow.com/chat/{slug}/",
+                                    wait_until="domcontentloaded", timeout=45000)
+                    await page.wait_for_timeout(2500)
+                    await page.evaluate("""(u)=>{
+                        const f=document.querySelector("form[action*='chat/login']"); if(!f)return;
+                        const x=f.querySelector("input[name=username]"); if(x)x.value=u;
+                        const g=f.querySelector("select[name=gender]"); if(g)g.value="female";
+                        const b=f.querySelector("input[name=birthdate]"); if(b)b.value="2000-06-15";
+                        const c=f.querySelector("input[type=checkbox]"); if(c)c.checked=true;
+                        f.submit();
+                    }""", username)
+                    results["login_ok"] = True
+                except Exception as e:
+                    results["login_error"] = str(e)[:250]
+            else:
+                from app.browser import browser_manager as _bm, BotWorker as _BW
+                w = _BW({"username": username, "gender": gender, "selected_rooms": [room]})
+                w._page = page
+                try:
+                    results["login_ok"] = await _bm._cdp_guest_login(w)
+                except Exception as e:
+                    results["login_error"] = str(e)[:250]
+            await page.wait_for_timeout(5000)
             results["post_login_url"] = page.url
             try:
                 results["post_login_title"] = await page.title()
