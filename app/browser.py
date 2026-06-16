@@ -281,11 +281,25 @@ class BotOrchestrator:
             else:
                 worker._page = await (await worker._cdp.new_context()).new_page()
 
-            # Block ad-redirect domains at network level
-            await worker._page.route("**12chats.com**", lambda route: route.abort("blockedbyclient"))
-            await worker._page.route("**traffic*.com**", lambda route: route.abort("blockedbyclient"))
-            await worker._page.route("**exoclick.com**", lambda route: route.abort("blockedbyclient"))
-            await worker._page.route("**popads.net**", lambda route: route.abort("blockedbyclient"))
+            # Ad guard: ALLOW top-level document navigations (FCN's guest login
+            # redirects THROUGH 12chats before landing in the room — blocking it
+            # breaks login), but block ad sub-resources / iframes / popunders to
+            # save proxy bandwidth and reduce clutter.
+            async def _ad_guard(route):
+                try:
+                    if route.request.resource_type == "document":
+                        await route.continue_()
+                    else:
+                        await route.abort()
+                except Exception:
+                    pass
+
+            for host in ("12chats.com", "exoclick.com", "popads.net",
+                         "doubleclick.net", "traffic"):
+                try:
+                    await worker._page.route(f"**{host}**", _ad_guard)
+                except Exception:
+                    pass
 
             return True
         except ImportError:
