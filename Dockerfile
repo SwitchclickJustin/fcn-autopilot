@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install PostgreSQL client library for asyncpg only
+# Install build deps + PostgreSQL client + Playwright CDP dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
