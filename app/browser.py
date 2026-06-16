@@ -149,7 +149,7 @@ class BotOrchestrator:
             # Select a random Decoda proxy for IP rotation
             decoda = random.choice(DECODA_PROXIES)
             proxy_kwargs = {
-                "custom_proxy": decoda,  # paid plan: proxy baked in at API level
+                "customProxy": decoda,  # camelCase — REST API field, not SDK
             }
 
             browser = await client.browsers.create(
