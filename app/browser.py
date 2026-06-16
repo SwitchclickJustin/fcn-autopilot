@@ -75,18 +75,13 @@ class BrowserSession:
         """Provision a cloud browser, connect via CDP with Decoda proxy."""
         logger.info(f"Provisioning cloud browser for {self.persona.get('username')}")
 
-        # Create browser — proxy is handled at Playwright context level
+        # Create browser with BU's built-in US residential proxy (works on free plan)
         browser_config = {
             "timeout": 60,
             "browserScreenWidth": 1280,
             "browserScreenHeight": 720,
             "enableRecording": False,
-            # Disable BU's built-in proxy so we control routing via Decoda
-            "proxyCountryCode": "none",
         }
-        # Option A: API-level custom proxy (works on paid plans, most reliable)
-        # Uncomment and set BROWSER_USE_PLAN=paid when on a tier that allows it:
-        # browser_config["custom_proxy"] = decoda
         result = await self._api("POST", "browsers", browser_config)
         if not result:
             logger.error("Browser API returned None — SDK/proxy setup failed")
@@ -109,19 +104,13 @@ class BrowserSession:
             wss_url = cdp_url.replace("https://", "wss://")
             self._cdp = await self._playwright.chromium.connect_over_cdp(wss_url, timeout=30000)
 
-            # Create a new browser context with Decoda proxy so all traffic
-            # routes through Decoda's residential IPs for IP rotation.
-            decoda = random.choice(DECODA_PROXIES)
-            proxy_server = f"socks5://{decoda['host']}:{decoda['port']}"
-            ctx = await self._cdp.new_context(
-                proxy={
-                    "server": proxy_server,
-                    "username": decoda["username"],
-                    "password": decoda["password"],
-                }
-            )
-            self._page = await ctx.new_page()
-            logger.info(f"Using Decoda proxy: {decoda['host']}:{decoda['port']}")
+            # Use the default browser context (what the live URL shows)
+            contexts = self._cdp.contexts
+            if contexts:
+                pages = contexts[0].pages
+                self._page = pages[0] if pages else await contexts[0].new_page()
+            else:
+                self._page = await (await self._cdp.new_context()).new_page()
 
             # Auto-dismiss dialogs & close popup windows
             self._page.on("dialog", lambda dialog: asyncio.ensure_future(self._handle_dialog(dialog)))
