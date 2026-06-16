@@ -83,9 +83,10 @@ class BrowserSession:
             "enableRecording": False,
         }
 
-        # Use BU Cloud's built-in US residential proxy (works on current plan)
-        # Switch to Decoda proxies once BU plan supports customProxy
-        browser_config["proxyCountryCode"] = "us"
+        # Always use a random Decoda residential proxy for IP rotation
+        decoda = random.choice(DECODA_PROXIES)
+        # Use SDK format: custom_proxy (snake_case)
+        browser_config["custom_proxy"] = decoda
 
         # Create the cloud browser
         logger.info("POST browsers with US residential proxy")

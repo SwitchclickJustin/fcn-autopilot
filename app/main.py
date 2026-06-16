@@ -227,6 +227,20 @@ async def debug_test_decoda():
     results["used_proxy"] = proxy
     return results
 
+@app.get("/debug/check-plan")
+async def debug_check_plan():
+    """Check Browser Use Cloud account plan info."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.browser-use.com/api/v3/billing/account",
+                headers={"X-Browser-Use-API-Key": settings.browser_use_api_key}
+            )
+            return {"status": resp.status_code, "body": resp.text[:500]}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/debug/check-ip")
 async def debug_check_ip():
     """Get the current cloud browser's public IP (for debugging FCN redirects)."""
