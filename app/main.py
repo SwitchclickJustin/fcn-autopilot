@@ -252,7 +252,16 @@ _SNAP_JS = """
   const links = q('a[href]').slice(0,80).map(e => ({
     href: e.href, text: (e.textContent || '').trim().slice(0,40)
   })).filter(l => l.text);
-  return {inputs, selects, buttons, forms, iframes, links,
+  const textareas = q('textarea').slice(0,15).map(e => ({
+    name: e.name, id: e.id, placeholder: e.placeholder,
+    cls: (e.className && e.className.toString ? e.className.toString() : '')
+  }));
+  const editables = q('[contenteditable]').slice(0,15).map(e => ({
+    id: e.id, role: e.getAttribute('role'),
+    cls: (e.className && e.className.toString ? e.className.toString() : ''),
+    placeholder: e.getAttribute('data-placeholder') || e.getAttribute('placeholder')
+  }));
+  return {inputs, selects, buttons, forms, iframes, links, textareas, editables,
           bodyText: (document.body ? document.body.innerText : '').slice(0,1800)};
 })()
 """
@@ -260,7 +269,7 @@ _SNAP_JS = """
 @app.get("/debug/inspect-fcn")
 async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0,
                             username: str = "TestAlexa99", room: str = "SextChat",
-                            gender: str = "f", block: int = 1):
+                            gender: str = "f", block: int = 1, wait: int = 5):
     """Provision a Decoda-proxied browser, navigate to the target, and dump the DOM.
 
     Diagnostic for building the CDP-driven guest-login flow. Captures the main
@@ -382,7 +391,7 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                     results["login_ok"] = await _bm._cdp_guest_login(w)
                 except Exception as e:
                     results["login_error"] = str(e)[:250]
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(max(1, wait) * 1000)
             results["post_login_url"] = page.url
             try:
                 results["post_login_title"] = await page.title()
