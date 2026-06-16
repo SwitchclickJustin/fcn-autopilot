@@ -227,6 +227,124 @@ async def debug_test_decoda():
     results["used_proxy"] = proxy
     return results
 
+# JS that snapshots the DOM (forms, inputs, selects, buttons, iframes, body text).
+_SNAP_JS = """
+(() => {
+  const q = (sel) => Array.from(document.querySelectorAll(sel));
+  const inputs = q('input').slice(0,50).map(e => ({
+    type: e.type, name: e.name, id: e.id, placeholder: e.placeholder,
+    value: (e.type === 'password' ? '' : (e.value || '').slice(0,40))
+  }));
+  const selects = q('select').slice(0,15).map(e => ({
+    name: e.name, id: e.id,
+    options: Array.from(e.options).slice(0,40).map(o => ({value: o.value, text: (o.textContent||'').trim()}))
+  }));
+  const buttons = q('button, input[type=submit], input[type=button], a[role=button], [onclick]')
+    .slice(0,50).map(e => ({
+      tag: e.tagName.toLowerCase(), type: e.getAttribute('type'),
+      id: e.id, cls: (e.className && e.className.toString ? e.className.toString() : ''),
+      text: (e.textContent || e.value || '').trim().slice(0,80)
+    })).filter(b => b.text || b.id);
+  const forms = q('form').slice(0,10).map(e => ({
+    id: e.id, name: e.name, action: e.getAttribute('action'), method: e.getAttribute('method')
+  }));
+  const iframes = q('iframe').slice(0,10).map(e => ({id: e.id, src: e.src, name: e.name}));
+  return {inputs, selects, buttons, forms, iframes,
+          bodyText: (document.body ? document.body.innerText : '').slice(0,1800)};
+})()
+"""
+
+@app.get("/debug/inspect-fcn")
+async def debug_inspect_fcn(url: str = "https://freechatnow.com"):
+    """Provision a Decoda-proxied browser, navigate to the target, and dump the DOM.
+
+    Diagnostic for building the CDP-driven guest-login flow. Captures the main
+    page + same-origin iframes, then cleans up the cloud browser. Pass ?url= to
+    inspect a different page.
+    """
+    import httpx, random, traceback
+    from app.browser import DECODA_PROXIES
+
+    results = {"target": url}
+    proxy = random.choice(DECODA_PROXIES)
+    results["proxy_port"] = proxy["port"]
+    bid = pw = browser = None
+    try:
+        # 1. Provision browser with Decoda proxy
+        async with httpx.AsyncClient(timeout=45) as client:
+            resp = await client.post(
+                "https://api.browser-use.com/api/v3/browsers",
+                headers={"X-Browser-Use-API-Key": settings.browser_use_api_key, "Content-Type": "application/json"},
+                json={"timeout": 5, "browserScreenWidth": 1280, "browserScreenHeight": 720, "customProxy": proxy},
+            )
+            results["provision_status"] = resp.status_code
+            if resp.status_code != 201:
+                results["provision_body"] = resp.text[:300]
+                return results
+            data = resp.json()
+            bid = data["id"]
+            cdp_url = data["cdpUrl"]
+            results["live_url"] = data.get("liveUrl", "")
+
+        # 2. CDP connect
+        from playwright.async_api import async_playwright
+        pw = await async_playwright().start()
+        browser = await pw.chromium.connect_over_cdp(cdp_url.replace("https://", "wss://"), timeout=30000)
+        ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+
+        # Block ad-redirect domains so we land on FCN, not a gateway
+        for pat in ["**12chats.com**", "**exoclick.com**", "**popads.net**", "**traffic*.com**", "**doubleclick.net**"]:
+            try:
+                await page.route(pat, lambda r: r.abort())
+            except Exception:
+                pass
+
+        # 3. Navigate + let JS settle
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        except Exception as e:
+            results["goto_error"] = str(e)[:200]
+        await page.wait_for_timeout(4500)
+        results["landed_url"] = page.url
+        try:
+            results["title"] = await page.title()
+        except Exception:
+            results["title"] = ""
+
+        # 4. Snapshot main page + same-origin iframes
+        results["dom"] = await page.evaluate(_SNAP_JS)
+        frames = []
+        for fr in page.frames:
+            if fr == page.main_frame:
+                continue
+            try:
+                frames.append({"url": fr.url, "dom": await fr.evaluate(_SNAP_JS)})
+            except Exception as e:
+                frames.append({"url": fr.url, "error": str(e)[:120]})
+        results["iframes_content"] = frames
+
+    except Exception as e:
+        results["error"] = str(e)[:300]
+        results["traceback"] = traceback.format_exc()[-900:]
+    finally:
+        if browser:
+            try: await browser.close()
+            except Exception: pass
+        if pw:
+            try: await pw.stop()
+            except Exception: pass
+        if bid:
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    await client.delete(
+                        f"https://api.browser-use.com/api/v3/browsers/{bid}",
+                        headers={"X-Browser-Use-API-Key": settings.browser_use_api_key},
+                    )
+            except Exception:
+                pass
+    return results
+
 @app.get("/debug/check-plan")
 async def debug_check_plan():
     """Check Browser Use Cloud account plan info."""
