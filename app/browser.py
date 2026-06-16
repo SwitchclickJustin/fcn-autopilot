@@ -75,13 +75,18 @@ class BrowserSession:
         """Provision a cloud browser, connect via CDP with Decoda proxy."""
         logger.info(f"Provisioning cloud browser for {self.persona.get('username')}")
 
-        # Create a vanilla cloud browser (proxy is handled at Playwright context level)
+        # Create browser — proxy is handled at Playwright context level
         browser_config = {
             "timeout": 60,
             "browserScreenWidth": 1280,
             "browserScreenHeight": 720,
             "enableRecording": False,
+            # Disable BU's built-in proxy so we control routing via Decoda
+            "proxyCountryCode": "none",
         }
+        # Option A: API-level custom proxy (works on paid plans, most reliable)
+        # Uncomment and set BROWSER_USE_PLAN=paid when on a tier that allows it:
+        # browser_config["custom_proxy"] = decoda
         result = await self._api("POST", "browsers", browser_config)
         if not result:
             logger.error("Browser API returned None — SDK/proxy setup failed")
