@@ -258,12 +258,16 @@ _SNAP_JS = """
 """
 
 @app.get("/debug/inspect-fcn")
-async def debug_inspect_fcn(url: str = "https://freechatnow.com"):
+async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0,
+                            username: str = "TestAlexa99", room: str = "SextChat",
+                            gender: str = "f"):
     """Provision a Decoda-proxied browser, navigate to the target, and dump the DOM.
 
     Diagnostic for building the CDP-driven guest-login flow. Captures the main
     page + same-origin iframes, then cleans up the cloud browser. Pass ?url= to
-    inspect a different page.
+    inspect a different page. Pass ?login=1 to run the REAL _cdp_guest_login()
+    (fill + submit the guest form) and report the post-login page — entering a
+    room posts nothing, so this validates login mechanics without chatting.
     """
     import httpx, random, traceback
     from app.browser import DECODA_PROXIES
@@ -314,6 +318,22 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com"):
             results["title"] = await page.title()
         except Exception:
             results["title"] = ""
+
+        # 3b. Optionally run the REAL guest-login code on this page
+        if login:
+            from app.browser import browser_manager as _bm, BotWorker as _BW
+            w = _BW({"username": username, "gender": gender, "selected_rooms": [room]})
+            w._page = page
+            try:
+                results["login_ok"] = await _bm._cdp_guest_login(w)
+            except Exception as e:
+                results["login_error"] = str(e)[:250]
+            await page.wait_for_timeout(3000)
+            results["post_login_url"] = page.url
+            try:
+                results["post_login_title"] = await page.title()
+            except Exception:
+                pass
 
         # 4. Snapshot main page + same-origin iframes
         results["dom"] = await page.evaluate(_SNAP_JS)

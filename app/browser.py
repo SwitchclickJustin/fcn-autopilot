@@ -232,52 +232,31 @@ class BotOrchestrator:
 
     async def _finish_bot_setup(self, worker: BotWorker, username: str,
                                  cdp_url: str, client):
-        """Background: SDK login → CDP connect → auto-pilot start."""
+        """Background: CDP connect → guest login via CDP → auto-pilot start.
+
+        We drive the SAME browser we provisioned (the one embedded in the
+        dashboard live view) — no separate agent session. Every step is visible
+        in the live view.
+        """
         try:
-            # Step 3 — SDK agent login (can take 30-60s)
             worker.status = "logging_in"
-            persona = worker.persona
-            age = random.randint(22, 26)
-            year = time.localtime().tm_year - age
-            month = random.randint(1, 12)
-            day = random.randint(1, 28)
-            birthdate = f"{year}-{month:02d}-{day:02d}"
-            gender = persona.get("gender", "f")
 
-            login_prompt = (
-                f"Go to freechatnow.com. You are logging in as a guest. "
-                f"Username: {username}. Gender: {gender}. Birthdate: {birthdate}. "
-                f"Check the agree-to-terms checkbox. Click the 'Chat As Guest' button. "
-                f"If you see any popup ads or 'Continue'/'Skip' buttons, close/dismiss them. "
-                f"If you get redirected to 12chats or any ad gateway, type freechatnow.com "
-                f"into the address bar and press Enter to navigate away. "
-                f"Once you are logged in and in a chat room, say 'logged in'."
-            )
+            # Step 3 — Connect CDP to the provisioned browser
+            if not cdp_url:
+                logger.error(f"No cdp_url for {username} — cannot drive browser")
+                worker.status = "error"
+                return
+            if not await self._connect_cdp(worker, cdp_url):
+                logger.error(f"CDP connect failed for {username}")
+                worker.status = "error"
+                return
+            logger.info(f"CDP connected for {username}")
 
-            # client.run() returns an AsyncSessionRun handle synchronously (it is NOT
-            # a coroutine). Awaiting it ONCE runs the agent task to completion, sets
-            # run.session_id, and returns a SessionResult. Awaiting the result again
-            # would raise (SessionResult is not awaitable) — that was the old bug that
-            # silently forced every bot into status="error".
-            run = client.run(
-                login_prompt,
-                profile_id=worker.profile_id,
-                keep_alive=True,
-                enable_recording=False,
-            )
-            await run
-            worker.session_id = run.session_id or ""
-            logger.info(f"Login complete for {username}, session: {worker.session_id}")
+            # Step 4 — Guest login (navigate to room → fill form → submit)
+            await self._cdp_guest_login(worker)
 
-            # Step 4 — Connect CDP for fast auto-pilot loop
-            if cdp_url:
-                cdok = await self._connect_cdp(worker, cdp_url)
-                if cdok:
-                    logger.info(f"CDP connected for {username}")
-                else:
-                    logger.warning(f"CDP connection failed for {username}")
-
-            # Step 5 — Start auto-pilot
+            # Step 5 — Start the auto-pilot loop on this same browser
+            worker.status = "running"
             self._auto_pilot_enabled[username] = True
             worker._task = asyncio.create_task(self._run_auto_pilot(worker))
 
@@ -313,6 +292,93 @@ class BotOrchestrator:
         except Exception as e:
             logger.warning(f"CDP connect failed: {e}")
             return False
+
+    # FCN guest-login form (verified 2026-06-16 via /debug/inspect-fcn):
+    #   page:   https://www.freechatnow.com/chat/<slug>/   (e.g. SextChat -> sext)
+    #   form:   <form action="/api/chat/login" method="post">
+    #   fields: input[name=username], select[name=gender] (male|female|other),
+    #           input[name=birthdate] (type=date, YYYY-MM-DD),
+    #           input[type=checkbox] (agree), button[type=submit] "Chat As Guest"
+    FCN_BASE = "https://www.freechatnow.com"
+    _GENDER_MAP = {"f": "female", "female": "female", "m": "male", "male": "male",
+                   "other": "other", "couple": "other", "x": "other"}
+
+    async def _cdp_guest_login(self, worker: BotWorker) -> bool:
+        """Navigate to the room page and submit FCN's guest-login form via CDP."""
+        page = worker._page
+        persona = worker.persona
+
+        rooms = persona.get("selected_rooms") or ["SextChat"]
+        if isinstance(rooms, str):
+            try:
+                rooms = json.loads(rooms)
+            except Exception:
+                rooms = [rooms]
+        room = (rooms[0] if rooms else "SextChat") or "SextChat"
+        slug = room.lower().replace("chat", "").strip() or "sext"
+        url = f"{self.FCN_BASE}/chat/{slug}/"
+
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        except Exception as e:
+            logger.warning(f"goto {url} failed for {worker.username}: {e}")
+        await page.wait_for_timeout(2500)
+
+        form = "form[action*='chat/login']"
+
+        # Username (required — bail if the form isn't there)
+        try:
+            await page.fill(f"{form} input[name=username]", worker.username, timeout=12000)
+        except Exception as e:
+            logger.warning(f"username fill failed ({worker.username}) @ {page.url}: {e}")
+            return False
+
+        # Gender
+        gval = self._GENDER_MAP.get((persona.get("gender") or "f").lower(), "female")
+        try:
+            await page.select_option(f"{form} select[name=gender]", gval)
+        except Exception as e:
+            logger.warning(f"gender select failed: {e}")
+
+        # Birthdate — adult, ISO YYYY-MM-DD for the native date input
+        age = random.randint(23, 30)
+        birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
+        try:
+            await page.fill(f"{form} input[name=birthdate]", birthdate, timeout=6000)
+        except Exception:
+            try:
+                await page.evaluate(
+                    "(v)=>{const i=document.querySelector(\"input[name=birthdate]\");"
+                    "if(i){i.value=v;i.dispatchEvent(new Event('change',{bubbles:true}));}}",
+                    birthdate)
+            except Exception:
+                pass
+
+        # Agree-to-terms checkbox
+        try:
+            await page.check(f"{form} input[type=checkbox]", timeout=6000)
+        except Exception:
+            try:
+                await page.evaluate(
+                    "()=>{const c=document.querySelector(\"form[action*='chat/login'] input[type=checkbox]\");"
+                    "if(c&&!c.checked)c.click();}")
+            except Exception:
+                pass
+
+        # Submit — "Chat As Guest"
+        try:
+            await page.click(f"{form} button[type=submit]", timeout=12000)
+        except Exception as e:
+            logger.warning(f"submit click failed: {e}")
+            try:
+                await page.evaluate(
+                    "()=>{const f=document.querySelector(\"form[action*='chat/login']\");if(f)f.submit();}")
+            except Exception:
+                pass
+
+        await page.wait_for_timeout(4500)
+        logger.info(f"Guest login submitted for {worker.username} (room={room}) — now at {page.url}")
+        return True
 
     async def _run_auto_pilot(self, worker: BotWorker):
         """Fast JS-based auto-pilot loop for a single bot.
@@ -425,14 +491,23 @@ class BotOrchestrator:
         # Disconnect CDP
         await worker.disconnect_cdp()
 
-        # Stop SDK session (saves cookies to profile)
+        client = await self._get_client()
+
+        # Terminate the provisioned cloud browser (stops billing). Cookies persist
+        # via the profile, so the next start for this persona resumes its login.
+        if worker.browser_id:
+            try:
+                await client.browsers.stop(worker.browser_id)
+                logger.info(f"Browser stopped for {username}")
+            except Exception as e:
+                logger.error(f"Error stopping browser for {username}: {e}")
+
+        # Legacy: stop an SDK agent session if one was ever created
         if worker.session_id:
             try:
-                client = await self._get_client()
                 await client.sessions.stop(worker.session_id)
-                logger.info(f"Session stopped for {username}, profile saved")
-            except Exception as e:
-                logger.error(f"Error stopping session for {username}: {e}")
+            except Exception:
+                pass
 
         worker.status = "stopped"
 
