@@ -735,25 +735,23 @@ class BotOrchestrator:
         return f"{name}{random.randint(10, 99999)}"
 
     async def _cdp_guest_login(self, worker: BotWorker, _attempt: int = 0) -> bool:
-        """Navigate to the room page and submit FCN's guest-login form via CDP.
+        """Homepage → room selection → guest-login form, all via CDP.
 
-        Verified flow (2026-06-16): fill the form, then submit via NATIVE
-        form.submit() — NOT a button click. The "Chat As Guest" button's onclick
-        fires an ad redirect (12chats -> stripchat) that hijacks the tab; the
-        native submit posts straight to /api/chat/login and the browser follows
-        the redirect chain into schat.freechatnow.com/room/<Room>. On a username
-        collision FCN bounces to /?alert=<base64> — we retry with a suffix.
+        Flow:
+          1. Land on freechatnow.com (looks like a real user arriving at the site).
+          2. Dwell briefly, then click the target room link in the room grid.
+          3. On the room page, fill the guest form with human-like delays and submit
+             via native form.submit() — NOT the button, which fires ad redirects.
+          4. Wait for the SPA to redirect into schat.freechatnow.com/room/<Room>.
+
+        On username collision FCN bounces to /?alert=<base64> — retry up to 5×.
         """
         page = worker._page
         persona = worker.persona
 
-        # Mint a fresh unique female name for the FCN form (guest names must be
-        # unique while active). This goes in login_name — NOT worker.username,
-        # which is the stable key for the _workers dict + _auto_pilot_enabled flag.
         worker.login_name = self._unique_username()
 
-        # Use pre-assigned rooms (from start_multi room distribution) if available;
-        # otherwise fall back to persona setting.
+        # Resolve target room + slug
         if worker.rooms:
             rooms = worker.rooms
         else:
@@ -767,14 +765,43 @@ class BotOrchestrator:
         room = (rooms[0] if rooms else "SextChat") or "SextChat"
         worker.room = room
         slug = FCN_SLUG_MAP.get(room.lower()) or room.lower().replace("chat", "").strip() or "sext"
-        url = f"{self.FCN_BASE}/chat/{slug}/"
+        room_url = f"{self.FCN_BASE}/chat/{slug}/"
 
-        worker.phase = "login_nav"
+        # ── Step 1: land on the FCN homepage ──────────────────────────────────
+        worker.phase = "login_homepage"
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            await page.goto(self.FCN_BASE + "/", wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
-            logger.warning(f"goto {url} failed for {worker.username}: {e}")
-        await page.wait_for_timeout(2500)
+            logger.warning(f"[{worker.agent_id}] homepage nav failed: {e}")
+        # Human dwell on the homepage before clicking anything
+        await page.wait_for_timeout(random.randint(1800, 4000))
+
+        # ── Step 2: click the target room from the homepage room grid ─────────
+        worker.phase = "login_room_select"
+        clicked = await page.evaluate("""(slug) => {
+            // FCN homepage has a room grid — try several selector patterns
+            const candidates = [
+                ...document.querySelectorAll('a[href*="/chat/'+slug+'"]'),
+                ...document.querySelectorAll('[data-room="'+slug+'"]'),
+                ...document.querySelectorAll('[href*="'+slug+'"]'),
+            ];
+            if (candidates.length) { candidates[0].click(); return true; }
+            return false;
+        }""", slug)
+
+        if clicked:
+            # Wait for the room page to load after the click
+            await page.wait_for_timeout(random.randint(2000, 3500))
+        else:
+            # Room not found in grid (e.g. homepage structure different than expected)
+            # — navigate directly as fallback so login still proceeds
+            logger.info(f"[{worker.agent_id}] room '{room}' not in homepage grid, navigating directly")
+            worker.phase = "login_nav"
+            try:
+                await page.goto(room_url, wait_until="domcontentloaded", timeout=45000)
+            except Exception as e:
+                logger.warning(f"[{worker.agent_id}] room nav failed: {e}")
+            await page.wait_for_timeout(random.randint(1500, 2500))
 
         gval = self._GENDER_MAP.get((persona.get("gender") or "f").lower(), "female")
         age = random.randint(23, 30)
