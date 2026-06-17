@@ -1,48 +1,206 @@
 {% extends "base.html" %}
 {% block title %}FCN Auto-Pilot — History{% endblock %}
 {% block content %}
+<style>
+.tabs{display:flex;gap:.25rem;margin-bottom:1rem;border-bottom:1px solid var(--border);padding-bottom:.1rem}
+.tab-btn{background:none;border:none;color:var(--text-dim);font-size:.85rem;padding:.4rem .9rem;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-pane{display:none}.tab-pane.active{display:block}
+.conv-row{display:flex;align-items:center;gap:.75rem;padding:.55rem .7rem;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s}
+.conv-row:hover{background:var(--surface-2)}
+.conv-row.converted{border-left:3px solid var(--green);padding-left:.5rem}
+.conv-badge{font-size:.65rem;padding:.1rem .4rem;border-radius:6px;font-weight:600}
+.badge-conv{background:color-mix(in srgb,var(--green) 20%,transparent);color:var(--green)}
+.badge-open{background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent)}
+.msg-bubble{max-width:80%;padding:.45rem .7rem;border-radius:10px;font-size:.85rem;line-height:1.45;margin-bottom:.4rem}
+.bubble-bot{background:color-mix(in srgb,var(--accent) 18%,transparent);margin-left:auto;text-align:right}
+.bubble-user{background:var(--surface-2)}
+.opener-card{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:.7rem 1rem;margin-bottom:.5rem}
+.opener-bar{height:6px;border-radius:3px;background:var(--green);margin-top:.4rem}
+</style>
 
-<h2>Conversation History</h2>
-<p class="subtitle">Every message sent and received by the auto-pilot.</p>
+<h2>History</h2>
+<p class="subtitle">DM conversations, conversion analysis, and message log.</p>
 
-<div class="card">
-  <div class="flex" style="gap:.75rem;margin-bottom:1rem">
-    <select id="history-filter" style="width:auto">
-      <option value="all">All messages</option>
-      <option value="ai">AI sent only</option>
-      <option value="user">User sent only</option>
-      <option value="blocked">Blocked by supervisor</option>
-    </select>
-    <button class="btn btn-secondary btn-sm" onclick="refreshHistory()">🔄 Refresh</button>
-  </div>
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('dm')">💬 DM Conversations</button>
+  <button class="tab-btn" onclick="switchTab('openers')">🏆 Top Openers</button>
+  <button class="tab-btn" onclick="switchTab('log')">📋 Message Log</button>
+</div>
 
-  <div id="history-log">
-    {% if logs %}
-    <div style="max-height:600px;overflow-y:auto">
-      {% for log in logs %}
-      <div class="chat-msg" style="{% if not log.supervisor_approved %}border-left:3px solid var(--red);padding-left:.5rem;{% endif %}">
-        <span class="flex gap-1" style="margin-bottom:.2rem">
-          <span class="text-sm text-dim">{{ log.created_at[11:19] }}</span>
-          <span class="text-sm">{% if log.source == 'ai' %}🤖 AI{% elif log.source == 'user' %}👤 You{% else %}⚙️ System{% endif %}</span>
-          {% if log.chat_type == 'dm' %}<span class="text-sm text-accent">💬 DM ({{ log.other_user }})</span>{% endif %}
-          {% if not log.supervisor_approved %}<span class="text-sm text-red">🚫 BLOCKED</span>{% endif %}
-        </span>
-        <div>{{ log.message }}</div>
-        {% if log.supervisor_note %}<div class="text-sm text-dim" style="margin-top:.2rem">Note: {{ log.supervisor_note }}</div>{% endif %}
-      </div>
-      {% endfor %}
+<!-- DM Conversations tab -->
+<div class="tab-pane active" id="tab-dm">
+  <div class="card" style="padding:.5rem 0">
+    <div class="flex" style="gap:.5rem;padding:.5rem 1rem 1rem">
+      <button class="btn btn-secondary btn-sm" id="btn-all-convs" onclick="loadConvs(false)">All</button>
+      <button class="btn btn-green btn-sm" id="btn-conv-only" onclick="loadConvs(true)">Converted only</button>
+      <span class="ml-auto text-sm text-dim" id="conv-summary"></span>
     </div>
-    {% else %}
-    <p class="empty">No conversation history yet. Start a session and the auto-pilot will log everything here.</p>
-    {% endif %}
+    <div id="conv-list"><p class="empty" style="padding:1rem">Loading…</p></div>
+  </div>
+  <!-- Thread viewer -->
+  <div class="card" id="thread-card" style="display:none;margin-top:.75rem">
+    <div class="flex" style="margin-bottom:.75rem">
+      <div>
+        <div class="card-title" id="thread-title" style="margin:0">Thread</div>
+        <div class="text-sm text-dim" id="thread-meta"></div>
+      </div>
+      <button class="btn btn-secondary btn-sm ml-auto" onclick="closeThread()">✕ Close</button>
+    </div>
+    <div id="thread-messages" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:.3rem"></div>
+  </div>
+</div>
+
+<!-- Top Openers tab -->
+<div class="tab-pane" id="tab-openers">
+  <div class="card">
+    <div class="card-title">Openers ranked by conversion rate</div>
+    <p class="text-sm text-dim" style="margin-bottom:1rem">The bot's first DM message in each thread. Green bar = conversions. More data = more accurate ranking.</p>
+    <div id="openers-list"><p class="empty">Loading…</p></div>
+  </div>
+</div>
+
+<!-- Message Log tab -->
+<div class="tab-pane" id="tab-log">
+  <div class="card">
+    <div class="flex" style="gap:.75rem;margin-bottom:1rem">
+      <select id="history-filter" style="width:auto">
+        <option value="all">All messages</option>
+        <option value="ai">AI sent only</option>
+        <option value="user">User sent only</option>
+        <option value="blocked">Blocked by supervisor</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" onclick="window.location.reload()">🔄 Refresh</button>
+    </div>
+    <div id="history-log">
+      {% if logs %}
+      <div style="max-height:600px;overflow-y:auto">
+        {% for log in logs %}
+        <div class="chat-msg" style="{% if not log.supervisor_approved %}border-left:3px solid var(--red);padding-left:.5rem;{% endif %}">
+          <span class="flex gap-1" style="margin-bottom:.2rem">
+            <span class="text-sm text-dim">{{ log.created_at[11:19] if log.created_at else '' }}</span>
+            <span class="text-sm">{% if log.source == 'ai' %}🤖 AI{% elif log.source == 'user' %}👤 You{% else %}⚙️ System{% endif %}</span>
+            {% if log.chat_type == 'dm' %}<span class="text-sm text-accent">💬 DM ({{ log.other_user }})</span>{% endif %}
+            {% if not log.supervisor_approved %}<span class="text-sm text-red">🚫 BLOCKED</span>{% endif %}
+          </span>
+          <div>{{ log.message }}</div>
+          {% if log.supervisor_note %}<div class="text-sm text-dim" style="margin-top:.2rem">Note: {{ log.supervisor_note }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="empty">No message history yet.</p>
+      {% endif %}
+    </div>
   </div>
 </div>
 
 {% endblock %}
 {% block scripts %}
 <script>
-async function refreshHistory() {
-  window.location.reload();
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>{
+    b.classList.toggle('active', ['dm','openers','log'][i]===name);
+  });
+  document.querySelectorAll('.tab-pane').forEach((p,i)=>{
+    p.classList.toggle('active', ['tab-dm','tab-openers','tab-log'][i]==='tab-'+name);
+  });
+  if(name==='dm' && !window._convsLoaded) loadConvs(false);
+  if(name==='openers' && !window._openersLoaded) loadOpeners();
 }
+
+// ── DM Conversations ──────────────────────────────────────────────────────────
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
+
+async function loadConvs(convertedOnly){
+  window._convFilter = convertedOnly;
+  window._convsLoaded = true;
+  document.getElementById('conv-list').innerHTML='<p class="empty" style="padding:1rem">Loading…</p>';
+  closeThread();
+  try{
+    const url='/api/dm/conversations'+(convertedOnly?'?converted_only=1':'');
+    const rows=await(await fetch(url)).json();
+    const total=rows.length;
+    const conv=rows.filter(r=>r.converted).length;
+    document.getElementById('conv-summary').textContent=
+      `${total} threads · ${conv} converted · ${total?Math.round(conv/total*100):0}% rate`;
+    if(!rows.length){
+      document.getElementById('conv-list').innerHTML='<p class="empty" style="padding:1rem">No DM conversations recorded yet.</p>';
+      return;
+    }
+    document.getElementById('conv-list').innerHTML=rows.map(r=>`
+      <div class="conv-row ${r.converted?'converted':''}" onclick="loadThread('${esc(r.id)}','${esc(r.other_user)}',${r.converted},${r.bot_msg_count},${r.user_msg_count})">
+        <div style="flex:1;min-width:0">
+          <div class="flex gap-1" style="margin-bottom:.2rem">
+            <span style="font-weight:600;font-size:.88rem">${esc(r.other_user)}</span>
+            <span class="conv-badge ${r.converted?'badge-conv':'badge-open'}">${r.converted?'✅ Converted':'Open'}</span>
+          </div>
+          <div class="text-sm text-dim">${esc(r.opener||'(no opener yet)')}</div>
+        </div>
+        <div style="text-align:right;white-space:nowrap;font-size:.78rem;color:var(--text-dim)">
+          <div>${r.bot_msg_count}↑ ${r.user_msg_count}↓</div>
+          <div>${(r.last_message_at||'').slice(0,16).replace('T',' ')}</div>
+        </div>
+      </div>`).join('');
+  }catch(e){
+    document.getElementById('conv-list').innerHTML=`<p class="text-red text-sm" style="padding:1rem">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+async function loadThread(convId, otherUser, converted, botMsgs, userMsgs){
+  document.getElementById('thread-card').style.display='block';
+  document.getElementById('thread-title').textContent=`DM with ${otherUser}`;
+  document.getElementById('thread-meta').textContent=
+    `${botMsgs} bot msgs · ${userMsgs} user msgs`+(converted?' · ✅ Converted':'');
+  const box=document.getElementById('thread-messages');
+  box.innerHTML='<p class="text-dim text-sm">Loading…</p>';
+  try{
+    const msgs=await(await fetch(`/api/dm/conversations/${encodeURIComponent(convId)}/messages`)).json();
+    if(!msgs.length){box.innerHTML='<p class="empty">No messages yet.</p>';return;}
+    box.innerHTML=msgs.map(m=>`
+      <div>
+        <div class="msg-bubble ${m.sender==='bot'?'bubble-bot':'bubble-user'}">${esc(m.content)}</div>
+        <div class="text-dim" style="font-size:.68rem;text-align:${m.sender==='bot'?'right':'left'}">${(m.ts||'').slice(11,19)}</div>
+      </div>`).join('');
+    box.scrollTop=box.scrollHeight;
+  }catch(e){
+    box.innerHTML=`<p class="text-red text-sm">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+function closeThread(){
+  document.getElementById('thread-card').style.display='none';
+  document.getElementById('thread-messages').innerHTML='';
+}
+
+// ── Top Openers ───────────────────────────────────────────────────────────────
+async function loadOpeners(){
+  window._openersLoaded=true;
+  try{
+    const rows=await(await fetch('/api/dm/top-openers?limit=20')).json();
+    if(!rows.length){
+      document.getElementById('openers-list').innerHTML='<p class="empty">No opener data yet — DM conversations will populate this.</p>';
+      return;
+    }
+    const maxConv=Math.max(...rows.map(r=>r.conversions),1);
+    document.getElementById('openers-list').innerHTML=rows.map((r,i)=>`
+      <div class="opener-card">
+        <div class="flex" style="margin-bottom:.3rem">
+          <span class="text-dim text-sm" style="margin-right:.5rem">#${i+1}</span>
+          <span style="flex:1;font-size:.88rem">${esc(r.opener)}</span>
+          <span class="text-sm" style="white-space:nowrap;margin-left:.75rem">
+            <span style="color:var(--green);font-weight:600">${r.conversions}</span>
+            <span class="text-dim">/ ${r.uses} (${r.rate}%)</span>
+          </span>
+        </div>
+        <div class="opener-bar" style="width:${Math.round(r.conversions/maxConv*100)}%"></div>
+      </div>`).join('');
+  }catch(e){
+    document.getElementById('openers-list').innerHTML=`<p class="text-red text-sm">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadConvs(false);
 </script>
 {% endblock %}

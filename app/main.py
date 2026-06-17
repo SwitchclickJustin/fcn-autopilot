@@ -19,6 +19,7 @@ from app.database import (
     create_session, update_session, get_active_session, get_session,
     log_chat, get_chat_log, get_ban_events, get_rules,
     get_stats, log_event, get_recent_events,
+    get_dm_conversations, get_dm_thread, get_top_converting_openers,
 )
 from app.models import PersonaCreate, PersonaUpdate, LLMProviderCreate, new_id
 from app.providers import provider_registry
@@ -936,32 +937,38 @@ async def debug_screenshot():
 
 @app.get("/debug/browser-status")
 async def debug_browser_status():
-    """Check the in-memory browser session status."""
-    if browser_manager.current_session:
+    """Status for all running agents."""
+    workers = list(browser_manager._workers.values())
+    if not workers:
+        return {"status": "no_session", "agents": []}
+    out = []
+    for w in workers:
         info = {
-            "status": browser_manager.current_session.status,
-            "login_name": browser_manager.current_session.login_name,
-            "browser_id": browser_manager.current_session.browser_id,
-            "proxy_ip": browser_manager.current_session.proxy_ip,
-            "proxy_location": browser_manager.current_session.proxy_location,
-            "live_url": browser_manager.current_session.live_url[:80] if browser_manager.current_session.live_url else "",
-            "connected": browser_manager.current_session._connected,
-            "has_page": browser_manager.current_session._page is not None,
-            "phase": browser_manager.current_session.phase,
-            "loop_ticks": browser_manager.current_session.loop_ticks,
-            "send_attempts": browser_manager.current_session.send_attempts,
-            "send_oks": browser_manager.current_session.send_oks,
-            "last_response": browser_manager.current_session.last_response,
-            "last_error": browser_manager.current_session.last_error,
+            "agent_id": w.agent_id,
+            "status": w.status,
+            "login_name": w.login_name,
+            "rooms": w.rooms,
+            "room": w.room,
+            "browser_id": w.browser_id,
+            "proxy_ip": w.proxy_ip,
+            "proxy_location": w.proxy_location,
+            "live_url": (w.live_url or "")[:80],
+            "connected": w._connected,
+            "has_page": w._page is not None,
+            "phase": w.phase,
+            "loop_ticks": w.loop_ticks,
+            "send_attempts": w.send_attempts,
+            "send_oks": w.send_oks,
+            "last_response": w.last_response,
+            "last_error": w.last_error,
         }
-        # Try to get the current URL from the page
-        if browser_manager.current_session._page:
+        if w._page:
             try:
-                info["current_url"] = browser_manager.current_session._page.url[:120]
+                info["current_url"] = w._page.url[:120]
             except Exception:
-                info["current_url"] = "error getting url"
-        return info
-    return {"status": "no_session"}
+                info["current_url"] = "error"
+        out.append(info)
+    return {"agents": out, "count": len(out)}
 
 @app.get("/debug/db")
 async def debug_db():
@@ -1103,9 +1110,6 @@ async def start_session(data: dict):
         "room_ids": persona.get("selected_rooms", ["SextChat"]),
         "status": "connecting"
     })
-    # Single start path: auto_pilot.start() provisions the browser via the
-    # orchestrator AND begins the auto-pilot loop. Calling start_bot() a second
-    # time here would provision a duplicate cloud browser and orphan the first.
     try:
         worker = await auto_pilot.start(sess["id"], persona)
         if not worker:
@@ -1126,6 +1130,41 @@ async def start_session(data: dict):
     })
 
     return {"session_id": sess["id"], "status": "active", "live_url": worker.live_url, "auto_pilot": True}
+
+
+@app.post("/api/session/start-multi")
+async def start_multi_session(data: dict):
+    """Launch N agents simultaneously, each in 2 distinct rooms (max 2 agents/room)."""
+    import traceback
+    persona_id = data.get("persona_id", "")
+    count = max(1, min(int(data.get("count", 1)), 8))
+    if not persona_id:
+        raise HTTPException(400, "persona_id required")
+    persona = await get_persona(persona_id)
+    if not persona:
+        raise HTTPException(404, "Persona not found")
+    for field in ["selected_rooms", "dm_gender_filter", "dm_blocklist"]:
+        if isinstance(persona.get(field), str):
+            try:
+                persona[field] = json.loads(persona[field])
+            except (json.JSONDecodeError, TypeError):
+                persona[field] = []
+
+    # Stop any prior session before launching a new fleet
+    await browser_manager.stop_all()
+
+    try:
+        workers = await browser_manager.start_multi(count, persona)
+    except Exception as e:
+        logger.error(f"MULTI-START ERROR: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, detail=f"Multi-agent start failed: {e}")
+
+    if not workers:
+        raise HTTPException(500, detail="No agents started — check Railway logs.")
+
+    agents = [{"agent_id": w.agent_id, "live_url": w.live_url, "rooms": w.rooms,
+                "status": w.status} for w in workers]
+    return {"agents": agents, "count": len(agents), "requested": count}
 
 @app.post("/api/session/stop")
 async def stop_session():
@@ -1158,12 +1197,29 @@ async def toggle_autopilot(data: dict):
 @app.get("/api/session/state")
 async def session_state():
     session = await get_active_session()
-    msgs = []
-    live_url = ""
-    if browser_manager.current_session:
-        msgs = await browser_manager.current_session.read_chat()
-        live_url = browser_manager.current_session.live_url
-    return {"session": session, "messages": msgs, "live_url": live_url, "auto_pilot": auto_pilot.enabled}
+    agents = []
+    for w in browser_manager._workers.values():
+        try:
+            msgs = await w.read_chat()
+        except Exception:
+            msgs = []
+        agents.append({
+            "agent_id": w.agent_id,
+            "live_url": w.live_url,
+            "rooms": w.rooms,
+            "room": w.room,
+            "status": w.status,
+            "messages": msgs[-10:],
+        })
+    # Legacy compat: expose first agent's messages + live_url at top level
+    first = agents[0] if agents else {}
+    return {
+        "session": session,
+        "agents": agents,
+        "messages": first.get("messages", []),
+        "live_url": first.get("live_url", ""),
+        "auto_pilot": bool(agents),
+    }
 
 @app.post("/api/session/send")
 async def send_message(data: dict):
@@ -1332,6 +1388,25 @@ async def api_rules():
 @app.get("/api/supervisor/ban-events")
 async def api_ban_events():
     return await get_ban_events()
+
+# ─── API: DM Conversations ───
+@app.get("/api/dm/conversations")
+async def api_dm_conversations(persona_id: str = "", converted_only: int = 0, limit: int = 100):
+    """List DM conversation threads, optionally filtered to converted-only."""
+    rows = await get_dm_conversations(persona_id=persona_id,
+                                      limit=limit,
+                                      converted_only=bool(converted_only))
+    return rows
+
+@app.get("/api/dm/conversations/{conv_id}/messages")
+async def api_dm_thread(conv_id: str):
+    """Full message thread for one DM conversation."""
+    return await get_dm_thread(conv_id)
+
+@app.get("/api/dm/top-openers")
+async def api_top_openers(persona_id: str = "", limit: int = 10):
+    """Openers ranked by conversion rate — use to understand what works."""
+    return await get_top_converting_openers(persona_id=persona_id, limit=limit)
 
 # ─── Entry point ───
 if __name__ == "__main__":

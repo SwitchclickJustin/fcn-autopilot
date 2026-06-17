@@ -43,6 +43,32 @@ DECODA_PROXIES = [
     for p in range(10001, 10051)
 ]
 
+# ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
+FCN_ROOMS = [
+    "AdultChat", "SexChat", "SexChat2", "YoungerforOlder",
+    "Roleplay", "SexChat3", "Boobs", "AdultChat2", "Kink", "BBCchat",
+]
+
+
+def assign_rooms(count: int, pool: list = FCN_ROOMS) -> list:
+    """Assign 2 rooms to each of `count` agents — max 2 agents per room.
+
+    Returns a list of [room1, room2] pairs. With 4 agents across 10 rooms,
+    all pairs are distinct (0 room collisions). Degrades gracefully when
+    count * 2 > len(pool) * 2 by recycling least-used rooms.
+    """
+    usage: dict = {r: 0 for r in pool}
+    assignments = []
+    for _ in range(count):
+        available = sorted([r for r in pool if usage[r] < 2], key=lambda r: usage[r])
+        if len(available) < 2:
+            available = sorted(pool, key=lambda r: usage[r])
+        picked = available[:2]
+        assignments.append(list(picked))
+        for r in picked:
+            usage[r] += 1
+    return assignments
+
 
 # ── Bot state per persona ──────────────────────────────────────────────────────
 class BotWorker:
@@ -50,10 +76,16 @@ class BotWorker:
 
     def __init__(self, persona: dict):
         self.persona = persona
-        self.username: str = persona.get("username", "ChatBot_42")  # STABLE key (dict/flag)
+        self.username: str = persona.get("username", "ChatBot_42")
+        self.agent_id: str = self.username  # UNIQUE key — set before inserting into _workers
         self.login_name: str = self.username  # generated FCN chat identity (per session)
-        self.room: str = ""            # current room name
+        self.rooms: list = []          # assigned rooms for this agent [primary, secondary]
+        self.room: str = ""            # current active room name
+        self._room_index: int = 0      # rotates across self.rooms for group-room replies
         self.handle_shared: bool = False  # shared the contact handle (awaiting confirm)
+        self.in_dm: bool = False           # currently responding in a DM thread
+        # DM conversation tracking: other_user → {conv_id, logged_count, is_first_bot_msg}
+        self._dm_state: dict = {}
         self.profile_id: str = ""
         self.session_id: str = ""
         self.browser_id: str = ""
@@ -199,8 +231,11 @@ class BotWorker:
 
     def to_dict(self):
         return {
+            "agent_id": self.agent_id,
             "username": self.username,
             "login_name": self.login_name,
+            "rooms": self.rooms,
+            "room": self.room,
             "profile_id": self.profile_id,
             "session_id": self.session_id,
             "browser_id": self.browser_id,
@@ -231,8 +266,8 @@ class BotOrchestrator:
     def __init__(self):
         self._client = None          # lazy-init AsyncBrowserUse
         self._semaphore = asyncio.Semaphore(50)
-        self._workers: dict[str, BotWorker] = {}   # username -> BotWorker
-        self._auto_pilot_enabled: dict[str, bool] = {}  # username -> bool
+        self._workers: dict[str, BotWorker] = {}           # agent_id -> BotWorker
+        self._auto_pilot_enabled: dict[str, bool] = {}    # agent_id -> bool
 
     # ── SDK client (lazy, single instance) ─────────────────────────────────
 
@@ -260,36 +295,60 @@ class BotOrchestrator:
 
     # ── Bot lifecycle ───────────────────────────────────────────────────────
 
-    async def start_bot(self, persona: dict) -> Optional[BotWorker]:
-        """Provision a browser, log in via SDK agent, connect CDP, start auto-pilot.
+    async def start_bot(self, persona: dict, agent_id: str = "",
+                        rooms: list = None) -> Optional[BotWorker]:
+        """Provision a browser, log in via CDP, connect auto-pilot.
 
-        1. Get/create profile for persistent cookies
-        2. Provision browser with Decoda proxy — returns immediately with live_url
-        3. Background: SDK agent handles login (autonomous navigation + form fill)
-        4. Background: Connect CDP for fast auto-pilot loop
-        5. Background: Start auto-pilot loop
+        agent_id: unique key (defaults to persona username). Pass e.g. "Alexa_2"
+                  when running multiple agents from the same persona.
+        rooms:    pre-assigned [primary, secondary] rooms for this agent.
         """
         async with self._semaphore:
             username = persona.get("username", "ChatBot_42")
-            logger.info(f"Starting bot: {username}")
+            if not agent_id:
+                agent_id = username
+            logger.info(f"Starting bot: {agent_id} (persona={username})")
 
             worker = BotWorker(persona)
-            self._workers[username] = worker
-            client = await self._get_client()
+            worker.agent_id = agent_id
+            if rooms:
+                worker.rooms = list(rooms)
+            self._workers[agent_id] = worker
+            self._auto_pilot_enabled[agent_id] = False
 
             # Provision a verified-working US browser (NO profile → no cookies carry
             # over, so a ban can't follow us into the next session).
             worker.status = "connecting"
             if not await self._provision_and_connect(worker):
-                logger.error(f"[{username}] no working US proxy after retries")
+                logger.error(f"[{agent_id}] no working US proxy after retries")
                 worker.status = "error"
-                self._workers.pop(username, None)
+                self._workers.pop(agent_id, None)
                 return None
 
             # Login + auto-pilot loop run in background (CDP already connected)
             worker.status = "running"
-            worker._task = asyncio.create_task(self._finish_bot_setup(worker, username))
+            worker._task = asyncio.create_task(self._finish_bot_setup(worker))
             return worker
+
+    async def start_multi(self, count: int, persona: dict) -> list:
+        """Launch `count` agents from one persona, each assigned 2 distinct rooms.
+
+        Room assignments respect the max-2-agents-per-room rule. Agents provision
+        in parallel — start time ≈ time for one agent, not N × that.
+        """
+        count = max(1, min(count, 16))
+        room_pairs = assign_rooms(count, FCN_ROOMS)
+        username = persona.get("username", "ChatBot_42")
+
+        async def _one(slot: int) -> Optional[BotWorker]:
+            aid = f"{username}_{slot + 1}" if count > 1 else username
+            return await self.start_bot(persona, agent_id=aid, rooms=room_pairs[slot])
+
+        results = await asyncio.gather(*[_one(i) for i in range(count)],
+                                       return_exceptions=True)
+        workers = [w for w in results if isinstance(w, BotWorker)]
+        logger.info(f"start_multi: {len(workers)}/{count} agents live")
+        return workers
 
     async def _provision_and_connect(self, worker: BotWorker) -> bool:
         """Provision a FRESH BU browser (new IP via a random US Decodo port, and NO
@@ -340,12 +399,8 @@ class BotOrchestrator:
         except Exception:
             return False
 
-    async def _recover(self, worker: BotWorker) -> bool:
-        """After a ban: tear down the banned browser and come back with a FRESH IP,
-        no cookies, and a new guest identity."""
-        logger.warning(f"[{worker.username}] BAN detected ({worker.proxy_ip}) — recovering fresh")
-        worker.phase = "recovering"
-        worker.handle_shared = False
+    async def _teardown_browser(self, worker: BotWorker):
+        """Disconnect CDP + stop the cloud browser for this worker."""
         await worker.disconnect_cdp()
         if worker.browser_id:
             try:
@@ -353,13 +408,68 @@ class BotOrchestrator:
             except Exception:
                 pass
             worker.browser_id = ""
-        if not await self._provision_and_connect(worker):
-            logger.error(f"[{worker.username}] recovery failed: no working proxy")
-            return False
-        await self._cdp_guest_login(worker)  # mints a new login_name, no cookies
-        worker.phase = "loop_running"
-        logger.info(f"[{worker.username}] recovered as {worker.login_name} on {worker.proxy_ip}")
-        return True
+            worker.live_url = ""
+
+    async def _recover(self, worker: BotWorker, max_attempts: int = 8) -> bool:
+        """Ban recovery: loop until we land in the room or exhaust attempts.
+
+        Each iteration:
+          1. Tear down the current browser (releases the banned IP)
+          2. Provision a NEW Browser Use Cloud browser on a DIFFERENT Decoda port
+             → fresh exit IP + fresh browser fingerprint / user-agent
+          3. Run guest login with a freshly generated name (no cookies)
+          4. If login confirms we're in the room → done
+          5. Else tear down again and rotate to next attempt
+
+        FCN bans are almost always IP-based; a new Decoda port = a new US
+        residential exit IP, which is enough to get back in. The new BU browser
+        instance also presents a fresh UA + fingerprint, removing any
+        client-side fingerprint signal FCN may have recorded.
+        """
+        agent_id = worker.agent_id
+        banned_ip = worker.proxy_ip
+        logger.warning(f"[{agent_id}] BAN confirmed ({banned_ip}) — recovery loop starting")
+        worker.phase = "recovering"
+        worker.handle_shared = False
+        worker.in_dm = False
+
+        # Tear down the banned browser first
+        await self._teardown_browser(worker)
+
+        for attempt in range(1, max_attempts + 1):
+            logger.info(f"[{agent_id}] recovery attempt {attempt}/{max_attempts}")
+            worker.phase = f"recover_{attempt}"
+
+            # Provision a fresh browser on a different Decoda port → new IP + UA.
+            # _provision_and_connect already rotates up to 5 ports internally and
+            # verifies the exit is US before returning True.
+            if not await self._provision_and_connect(worker):
+                logger.warning(f"[{agent_id}] provision failed (attempt {attempt}), "
+                                "waiting before retry…")
+                await asyncio.sleep(random.uniform(4, 10))
+                continue
+
+            # Fresh guest login with a new randomly generated name — no cookies.
+            ok = await self._cdp_guest_login(worker)
+            if ok:
+                worker.phase = "loop_running"
+                logger.info(f"[{agent_id}] ✅ recovered on attempt {attempt} "
+                             f"as {worker.login_name} @ {worker.proxy_ip} "
+                             f"(was banned on {banned_ip})")
+                return True
+
+            # Login failed (FCN still rejecting this IP, captcha, or form error).
+            # Tear down and try a completely fresh IP next iteration.
+            logger.warning(f"[{agent_id}] login failed on attempt {attempt} "
+                            f"({worker.proxy_ip}), rotating IP…")
+            await self._teardown_browser(worker)
+            # Brief pause so FCN's rate-limiter doesn't chain-ban consecutive IPs
+            await asyncio.sleep(random.uniform(6, 15))
+
+        logger.error(f"[{agent_id}] recovery EXHAUSTED after {max_attempts} attempts")
+        worker.status = "error"
+        worker.phase = "recovery_failed"
+        return False
 
     async def _check_us_proxy(self, worker: BotWorker) -> bool:
         """Confirm the proxy routes AND exits in the USA before touching FCN.
@@ -398,30 +508,94 @@ class BotOrchestrator:
             logger.warning(f"[{worker.username}] IP check failed: {e}")
             return False
 
-    async def _finish_bot_setup(self, worker: BotWorker, username: str):
+    async def _finish_bot_setup(self, worker: BotWorker):
         """Background (CDP already connected + proxy verified in start_bot):
-        guest login → auto-pilot loop, all on the embedded browser."""
+        guest login → optional second-room join → auto-pilot loop."""
+        agent_id = worker.agent_id
         try:
             worker.status = "logging_in"
             worker.phase = "logging_in"
 
-            # Guest login (navigate to room → fill form → native submit)
+            # Guest login (navigate to primary room → fill form → native submit)
             await self._cdp_guest_login(worker)
 
-            # Start the auto-pilot loop immediately. The loop is resilient: it
-            # read_chat()/send_message() no-op until the chat UI is ready, so we
-            # must NOT block startup waiting for it.
+            # Attempt to join the second assigned room (best-effort — if the button
+            # is hidden at 1280px width we still start the loop on the primary room)
+            if len(worker.rooms) > 1:
+                await asyncio.sleep(3)  # let the SPA settle before touching UI
+                await self._join_second_room(worker, worker.rooms[1])
+
+            # Start the auto-pilot loop immediately.
             worker.phase = "starting_loop"
             worker.status = "running"
-            self._auto_pilot_enabled[username] = True
+            self._auto_pilot_enabled[agent_id] = True
             worker._task = asyncio.create_task(self._run_auto_pilot(worker))
             worker.phase = "loop_running"
 
         except Exception as e:
             worker.phase = "setup_error"
             worker.last_error = f"setup: {type(e).__name__}: {e}"[:200]
-            logger.error(f"Bot setup failed for {username}: {e}")
+            logger.error(f"Bot setup failed for {agent_id}: {e}")
             worker.status = "error"
+
+    async def _join_second_room(self, worker: BotWorker, room_name: str) -> bool:
+        """After initial login, join a second FCN room via the Rooms panel.
+
+        The 'button.join' is hidden with CSS at 1280px desktop width, so we
+        force-click it via JS (bypasses display:none visibility check), wait for
+        the panel, then click the target room entry.
+        """
+        page = worker._page
+        if not page:
+            return False
+        try:
+            # Force-click the hidden Join/Rooms button
+            clicked = await page.evaluate("""
+                (() => {
+                    const btn = document.querySelector('button.join, .btn-join, [data-action="join-room"], [class*=join-room i]');
+                    if (!btn) return false;
+                    // make visible for click (CSS might hide it at desktop width)
+                    const orig = btn.style.cssText;
+                    btn.style.cssText += ';display:block!important;visibility:visible!important;opacity:1!important';
+                    btn.click();
+                    btn.style.cssText = orig;
+                    return true;
+                })()
+            """)
+            if not clicked:
+                logger.info(f"[{worker.agent_id}] join button not found, skipping second room")
+                return False
+            await page.wait_for_timeout(2000)
+
+            # Find the room entry in the panel and click it
+            joined = await page.evaluate("""
+                (roomName) => {
+                    const low = roomName.toLowerCase();
+                    const sels = ['[data-room]', 'a[href*="/room/"]', '[class*=room-item i]',
+                                  '[class*=room-link i]', 'li[class*=room i]'];
+                    for (const sel of sels) {
+                        for (const el of document.querySelectorAll(sel)) {
+                            const txt = (el.textContent || el.getAttribute('data-room') || '').toLowerCase();
+                            const href = (el.getAttribute('href') || '').toLowerCase();
+                            if (txt.includes(low) || href.includes(low)) {
+                                el.click();
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }
+            """, room_name)
+
+            if joined:
+                await page.wait_for_timeout(3000)
+                logger.info(f"[{worker.agent_id}] joined second room: {room_name}")
+            else:
+                logger.info(f"[{worker.agent_id}] room '{room_name}' not found in panel")
+            return joined
+        except Exception as e:
+            logger.warning(f"[{worker.agent_id}] join second room error: {e}")
+            return False
 
     async def _connect_cdp(self, worker: BotWorker, cdp_url: str) -> bool:
         """Connect Playwright CDP to the running browser for fast JS auto-pilot."""
@@ -520,16 +694,21 @@ class BotOrchestrator:
 
         # Mint a fresh unique female name for the FCN form (guest names must be
         # unique while active). This goes in login_name — NOT worker.username,
-        # which is the stable key for the _workers dict + _auto_pilot_enabled flag
-        # (overwriting it makes the auto-pilot loop's flag lookup miss and exit).
+        # which is the stable key for the _workers dict + _auto_pilot_enabled flag.
         worker.login_name = self._unique_username()
 
-        rooms = persona.get("selected_rooms") or ["SextChat"]
-        if isinstance(rooms, str):
-            try:
-                rooms = json.loads(rooms)
-            except Exception:
-                rooms = [rooms]
+        # Use pre-assigned rooms (from start_multi room distribution) if available;
+        # otherwise fall back to persona setting.
+        if worker.rooms:
+            rooms = worker.rooms
+        else:
+            rooms = persona.get("selected_rooms") or ["SextChat"]
+            if isinstance(rooms, str):
+                try:
+                    rooms = json.loads(rooms)
+                except Exception:
+                    rooms = [rooms]
+            worker.rooms = list(rooms) if rooms else ["SextChat"]
         room = (rooms[0] if rooms else "SextChat") or "SextChat"
         worker.room = room
         slug = room.lower().replace("chat", "").strip() or "sext"
@@ -776,13 +955,57 @@ class BotOrchestrator:
         except Exception:
             return False
 
+    async def _log_dm_messages(self, worker: BotWorker, other_user: str,
+                                msgs: list, persona_id: str):
+        """Store every message in a DM thread (both sides) since we last logged.
+
+        Parses each "username: text" line: if the username matches worker.login_name
+        it's a 'bot' message, otherwise 'user'. New messages only — tracked via
+        worker._dm_state[other_user]["logged_count"].
+        """
+        state = worker._dm_state.setdefault(other_user, {
+            "conv_id": None, "logged_count": 0, "first_bot_sent": False
+        })
+        # Lazy-create conversation row on first encounter
+        if not state["conv_id"]:
+            try:
+                state["conv_id"] = await db.get_or_create_dm_conversation(
+                    persona_id, worker.agent_id, other_user)
+            except Exception as e:
+                logger.warning(f"[{worker.agent_id}] dm_conversation create failed: {e}")
+                return
+
+        new_msgs = msgs[state["logged_count"]:]
+        if not new_msgs:
+            return
+
+        for msg in new_msgs:
+            if ":" in msg:
+                uname, content = msg.split(":", 1)
+                sender = "bot" if uname.strip() == worker.login_name else "user"
+                content = content.strip()
+            else:
+                sender = "user"
+                content = msg.strip()
+            if not content:
+                continue
+            is_opener = (sender == "bot" and not state["first_bot_sent"])
+            try:
+                await db.log_dm_message(state["conv_id"], sender, content, is_opener)
+            except Exception as e:
+                logger.warning(f"[{worker.agent_id}] log_dm_message failed: {e}")
+            if sender == "bot":
+                state["first_bot_sent"] = True
+
+        state["logged_count"] = len(msgs)
+
     async def _run_auto_pilot(self, worker: BotWorker):
         """Fast JS-based auto-pilot loop for a single bot.
-        
+
         Uses CDP (zero cost per tick) for read_chat → generate → send.
         Falls back to SDK agent for recovery if CDP is unavailable.
         """
-        username = worker.username
+        agent_id = worker.agent_id
         persona_id = worker.persona.get("id", "")
         client = await self._get_client()
 
@@ -790,24 +1013,26 @@ class BotOrchestrator:
         ban_strikes = 0
         next_send = 0.0  # group-room pace gate (monotonic seconds)
         dm_next = 0.0    # DM pace gate (faster)
-        while self._auto_pilot_enabled.get(username, False):
+        while self._auto_pilot_enabled.get(agent_id, False):
             try:
                 # ── CDP path (fast, zero cost) ──
                 if worker._page:
                     tick += 1
                     worker.loop_ticks = tick
 
-                    # Ban/kick detection → recover with a fresh IP + identity
+                    # Ban/kick detection: 2 consecutive "looks banned" ticks before
+                    # triggering recovery (debounces brief network blips).
                     if await self._looks_banned(worker):
                         ban_strikes += 1
+                        logger.info(f"[{agent_id}] ban signal #{ban_strikes} "
+                                    f"(url={worker._page.url[:60] if worker._page else '?'})")
                         if ban_strikes >= 2:
+                            ban_strikes = 0
                             try:
                                 await db.log_event(persona_id, "ban", room=worker.room,
                                                    content=worker.last_response or "")
                             except Exception:
                                 pass
-                            # Supervisor learns what got us banned (creates a rule
-                            # that pre_flight then enforces on future messages).
                             try:
                                 from app.supervisor import supervisor_engine
                                 await supervisor_engine.analyze_ban(
@@ -815,11 +1040,17 @@ class BotOrchestrator:
                                     "kicked/banned from room")
                             except Exception:
                                 pass
-                            ban_strikes = 0
                             if not await self._recover(worker):
+                                # Recovery exhausted all attempts — stop this agent
                                 worker.status = "error"
                                 break
-                            next_send = time.monotonic() + 15  # settle before posting
+                            # After recovery: give the room a moment to settle,
+                            # try to re-join second room, then resume the loop
+                            next_send = time.monotonic() + 20
+                            dm_next = time.monotonic() + 10
+                            if len(worker.rooms) > 1:
+                                await asyncio.sleep(4)
+                                await self._join_second_room(worker, worker.rooms[1])
                         await asyncio.sleep(3)
                         continue
                     ban_strikes = 0
@@ -857,18 +1088,24 @@ class BotOrchestrator:
                         c = unread_dms[0]
                         if await self._open_conversation(worker._page, c["href"]):
                             worker.in_dm = True
-                            worker.room = c["text"] or "DM"
+                            other_user = c["text"] or "unknown"
+                            worker.room = other_user
                             msgs = await worker.read_chat()
                             if msgs:
-                                await self._auto_pilot_tick(worker, msgs, client)
+                                # Log both sides of the DM before generating a reply
+                                await self._log_dm_messages(worker, other_user, msgs, persona_id)
+                                await self._auto_pilot_tick(worker, msgs, client,
+                                                            dm_other_user=other_user)
                         dm_next = now + random.randint(5, 10)
                     elif now >= next_send:
-                        # Group room: make sure we're on the room tab, then reply
-                        if rooms and not rooms[0]["active"]:
-                            await self._open_conversation(worker._page, rooms[0]["href"])
-                        worker.in_dm = False
+                        # Group room: rotate between all joined rooms on each send
                         if rooms:
-                            worker.room = rooms[0]["text"] or worker.room
+                            worker._room_index = (worker._room_index + 1) % len(rooms)
+                            target = rooms[worker._room_index % len(rooms)]
+                            if not target["active"]:
+                                await self._open_conversation(worker._page, target["href"])
+                            worker.in_dm = False
+                            worker.room = target["text"] or worker.room
                         messages = await worker.read_chat()
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
@@ -880,32 +1117,22 @@ class BotOrchestrator:
 
             except Exception as e:
                 worker.last_error = f"{type(e).__name__}: {e}"[:200]
-                logger.error(f"Auto-pilot tick error for {username}: {e}")
+                logger.error(f"Auto-pilot tick error for {agent_id}: {e}")
 
             await asyncio.sleep(3)
 
-    async def _auto_pilot_tick(self, worker: BotWorker, messages: list, client):
-        """One auto-pilot tick: close ads, check messages, generate, send."""
-        username = worker.login_name  # the bot's in-room chat identity
+    async def _auto_pilot_tick(self, worker: BotWorker, messages: list, client,
+                                dm_other_user: str = ""):
+        """One auto-pilot tick: generate a reply and send it.
+
+        dm_other_user: the FCN username of the DM partner (empty = group room).
+        When set, the bot logs its reply into the DM thread and tracks conversions
+        at the per-conversation level.
+        """
+        username = worker.login_name
         persona = worker.persona
+        is_dm = bool(dm_other_user)
 
-        # Close ad popups via SDK agent (one-shot)
-        if worker.session_id and random.random() < 0.1:  # 10% chance each tick
-            try:
-                await client.run(
-                    "Close any popup ad windows and dismiss any modal overlays "
-                    "on the current page.",
-                    session_id=worker.session_id,
-                    keep_alive=True,
-                    enable_recording=False,
-                )
-            except Exception:
-                pass
-
-        # Read new messages
-        # (messages list already fetched by caller)
-
-        # Generate response using the persona's LLM provider
         from app.providers import provider_registry
         llm = provider_registry.get_chat_provider()
         if not llm:
@@ -913,20 +1140,31 @@ class BotOrchestrator:
 
         persona_id = persona.get("id", "")
 
-        # Conversion: a recent message confirming they added her elsewhere
-        if worker.handle_shared and _CONFIRM_RE.search("\n".join(messages[-6:])):
+        # ── Conversion detection ─────────────────────────────────────────────
+        recent_text = "\n".join(messages[-6:])
+        if worker.handle_shared and _CONFIRM_RE.search(recent_text):
             try:
-                await db.log_event(persona_id, "conversion", room=worker.room, content="\n".join(messages[-3:]))
+                await db.log_event(persona_id, "conversion", room=worker.room,
+                                   content="\n".join(messages[-3:]))
             except Exception:
                 pass
+            # Mark the DM conversation as converted
+            if is_dm:
+                dm_state = worker._dm_state.get(dm_other_user, {})
+                conv_id = dm_state.get("conv_id")
+                if conv_id:
+                    try:
+                        await db.mark_dm_converted(conv_id)
+                    except Exception:
+                        pass
             worker.handle_shared = False
 
         context = "\n".join(messages[-10:])
         tone = persona.get("default_tone", "casual")
         bio = persona.get("bio", "")
         handle = (persona.get("telegram_handle", "") or "").strip()
-        is_dm = getattr(worker, "in_dm", False)  # DM round-robin not built yet → groups
 
+        # ── System prompt ────────────────────────────────────────────────────
         system = (
             f"You are {username}, a real flirty woman in an adult chat room (18+). "
             f"Tone: {tone}. Personality: {bio}. "
@@ -944,6 +1182,24 @@ class BotOrchestrator:
                 f"🛑 NEVER write 'telegram','tg','kik','snap','whatsapp','add me', or a URL — those get "
                 f"you BANNED. Always say 'find me', NEVER 'add me'."
             )
+
+        # ── Inject top-converting openers for DMs (learn from past wins) ────
+        if is_dm and not worker._dm_state.get(dm_other_user, {}).get("first_bot_sent"):
+            try:
+                openers = await db.get_top_converting_openers(persona_id, limit=5)
+                if openers:
+                    examples = "\n".join(
+                        f'• "{o["opener"]}" ({o["conversions"]}/{o["uses"]} converted)'
+                        for o in openers if o["conversions"] > 0
+                    )
+                    if examples:
+                        system += (
+                            f"\n\nOPENERS THAT CONVERTED IN PAST DMs (use as inspiration, "
+                            f"NOT copy-paste — vary them):\n{examples}"
+                        )
+            except Exception:
+                pass
+
         prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
         response = await llm.chat(system, prompt)
         worker.last_response = (response or "")[:200]
@@ -952,8 +1208,7 @@ class BotOrchestrator:
 
         shares_handle = bool(handle) and handle.lower().lstrip("@") in response.lower()
 
-        # Supervisor pre-flight: blocks only phrasings LEARNED to get us banned (so
-        # we keep pitching, just avoid the exact lines that triggered past bans)
+        # Supervisor pre-flight
         try:
             from app.supervisor import supervisor_engine
             approved, note = await supervisor_engine.pre_flight(response, context, persona)
@@ -961,16 +1216,17 @@ class BotOrchestrator:
             approved, note = True, ""
         if not approved:
             worker.last_error = f"blocked: {note}"[:200]
-            logger.info(f"[{worker.username}] supervisor blocked: {note}")
+            logger.info(f"[{worker.agent_id}] supervisor blocked: {note}")
             return
 
-        if shares_handle:  # only reachable in DMs
+        if shares_handle:
             worker.handle_shared = True
             try:
                 await db.log_event(persona_id, "handle_share", room=worker.room, content=response)
             except Exception:
                 pass
 
+        sent = False
         if worker._page:
             worker.send_attempts += 1
             sent = await worker.send_message(response)
@@ -985,6 +1241,20 @@ class BotOrchestrator:
                 f"Type this message in the chat input and send it: {response}",
                 session_id=worker.session_id, keep_alive=True, enable_recording=False,
             )
+            sent = True
+
+        # ── Log bot's reply into the DM thread ───────────────────────────────
+        if sent and is_dm:
+            dm_state = worker._dm_state.get(dm_other_user, {})
+            conv_id = dm_state.get("conv_id")
+            if conv_id:
+                is_opener = not dm_state.get("first_bot_sent", False)
+                try:
+                    await db.log_dm_message(conv_id, "bot", response, is_opener=is_opener)
+                except Exception:
+                    pass
+                dm_state["first_bot_sent"] = True
+                dm_state["logged_count"] = dm_state.get("logged_count", 0) + 1
 
     async def _sdk_auto_pilot_tick(self, worker: BotWorker, client):
         """SDK-agent auto-pilot fallback (when CDP is unavailable)."""
@@ -1004,14 +1274,14 @@ class BotOrchestrator:
             enable_recording=False,
         )
 
-    async def stop_bot(self, username: str):
-        """Stop a bot and persist its profile."""
-        worker = self._workers.pop(username, None)
+    async def stop_bot(self, agent_id: str):
+        """Stop a bot by its agent_id and clean up resources."""
+        worker = self._workers.pop(agent_id, None)
         if not worker:
             return
 
         # Stop auto-pilot loop
-        self._auto_pilot_enabled[username] = False
+        self._auto_pilot_enabled[agent_id] = False
         if worker._task:
             worker._task.cancel()
             worker._task = None
@@ -1042,8 +1312,8 @@ class BotOrchestrator:
     async def stop_all(self):
         """Gracefully stop all bot sessions."""
         logger.info("Stopping all bots...")
-        for username in list(self._workers.keys()):
-            await self.stop_bot(username)
+        for agent_id in list(self._workers.keys()):
+            await self.stop_bot(agent_id)
 
     async def close(self):
         """Full shutdown — stop bots + close SDK client."""
@@ -1074,10 +1344,8 @@ class BotOrchestrator:
         return await self.start_bot(persona)
 
     async def stop_session(self):
-        """Legacy alias — stops the first running bot."""
-        for username in list(self._workers.keys()):
-            await self.stop_bot(username)
-            break
+        """Legacy alias — stops ALL running bots (used by lifespan shutdown)."""
+        await self.stop_all()
 
     @property
     def current_session(self):

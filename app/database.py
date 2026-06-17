@@ -126,6 +126,28 @@ CREATE TABLE IF NOT EXISTS bot_events (
     content TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS dm_conversations (
+    id TEXT PRIMARY KEY,
+    persona_id TEXT DEFAULT '',
+    agent_id TEXT DEFAULT '',
+    other_user TEXT DEFAULT '',
+    opener TEXT DEFAULT '',       -- bot's very first DM message (for conversion rate analysis)
+    started_at TEXT,
+    last_message_at TEXT,
+    converted INTEGER DEFAULT 0,
+    converted_at TEXT,
+    bot_msg_count INTEGER DEFAULT 0,
+    user_msg_count INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS dm_messages (
+    id TEXT PRIMARY KEY,
+    conv_id TEXT,
+    sender TEXT,                  -- 'bot' or 'user'
+    content TEXT,
+    ts TEXT
+);
 """
 
 async def get_db():
@@ -425,3 +447,127 @@ async def upsert_rule(data: dict):
         placeholders = ", ".join([f"${i+1}" for i in range(len(data))]) if USE_NEON else ", ".join(["?"] * len(data))
         await _execute(db, f"INSERT INTO supervisor_rules ({cols}) VALUES ({placeholders})", list(data.values()))
     await close_db(db)
+
+
+# ─── DM Conversations ──────────────────────────────────────────────────────────
+
+def _p(n: int) -> str:
+    """Positional placeholder: $n for Neon, ? for SQLite."""
+    return f"${n}" if USE_NEON else "?"
+
+
+async def get_or_create_dm_conversation(persona_id: str, agent_id: str,
+                                        other_user: str) -> str:
+    """Return the id of the open DM conversation with other_user, creating one if needed."""
+    now = datetime.utcnow().isoformat()
+    db = await get_db()
+    try:
+        q = (f"SELECT id FROM dm_conversations WHERE persona_id = {_p(1)} "
+             f"AND agent_id = {_p(2)} AND other_user = {_p(3)} "
+             f"AND converted = 0 ORDER BY started_at DESC LIMIT 1")
+        rows = await _fetchall(db, q, [persona_id, agent_id, other_user])
+        if rows:
+            return rows[0]["id"]
+        conv_id = str(uuid.uuid4())
+        await _execute(db,
+            f"INSERT INTO dm_conversations (id, persona_id, agent_id, other_user, started_at, last_message_at) "
+            f"VALUES ({_p(1)},{_p(2)},{_p(3)},{_p(4)},{_p(5)},{_p(6)})",
+            [conv_id, persona_id or "", agent_id or "", other_user, now, now])
+        return conv_id
+    finally:
+        await close_db(db)
+
+
+async def log_dm_message(conv_id: str, sender: str, content: str,
+                          is_opener: bool = False) -> None:
+    """Append one message to a DM conversation and update counters + opener."""
+    now = datetime.utcnow().isoformat()
+    msg_id = str(uuid.uuid4())
+    db = await get_db()
+    try:
+        await _execute(db,
+            f"INSERT INTO dm_messages (id, conv_id, sender, content, ts) "
+            f"VALUES ({_p(1)},{_p(2)},{_p(3)},{_p(4)},{_p(5)})",
+            [msg_id, conv_id, sender, (content or "")[:1000], now])
+        # Increment the right counter and update last_message_at
+        col = "bot_msg_count" if sender == "bot" else "user_msg_count"
+        await _execute(db,
+            f"UPDATE dm_conversations SET {col} = {col} + 1, last_message_at = {_p(1)} "
+            f"WHERE id = {_p(2)}",
+            [now, conv_id])
+        # Store the bot's first message as the opener
+        if is_opener:
+            await _execute(db,
+                f"UPDATE dm_conversations SET opener = {_p(1)} WHERE id = {_p(2)} AND opener = ''",
+                [(content or "")[:500], conv_id])
+    except Exception as e:
+        logger.error(f"log_dm_message failed: {e}")
+    finally:
+        await close_db(db)
+
+
+async def mark_dm_converted(conv_id: str) -> None:
+    """Flag a DM conversation as converted (user confirmed they found us)."""
+    now = datetime.utcnow().isoformat()
+    db = await get_db()
+    try:
+        await _execute(db,
+            f"UPDATE dm_conversations SET converted = 1, converted_at = {_p(1)} WHERE id = {_p(2)}",
+            [now, conv_id])
+    finally:
+        await close_db(db)
+
+
+async def get_top_converting_openers(persona_id: str = "", limit: int = 8) -> list:
+    """Return bot opener messages from conversations that converted.
+
+    Used to inject proven openers into the DM system prompt so the LLM
+    can learn from what actually works.
+    """
+    db = await get_db()
+    try:
+        base = ("SELECT opener, COUNT(*) AS uses, SUM(converted) AS conversions "
+                "FROM dm_conversations WHERE opener <> '' AND bot_msg_count > 0")
+        params = []
+        if persona_id:
+            base += f" AND persona_id = {_p(1)}"
+            params.append(persona_id)
+        base += " GROUP BY opener ORDER BY conversions DESC, uses DESC LIMIT " + (
+            _p(len(params) + 1) if USE_NEON else "?")
+        params.append(limit)
+        rows = await _fetchall(db, base, params)
+        return [{"opener": r["opener"], "uses": r["uses"],
+                 "conversions": r["conversions"],
+                 "rate": round(r["conversions"] / r["uses"] * 100) if r["uses"] else 0}
+                for r in rows]
+    finally:
+        await close_db(db)
+
+
+async def get_dm_conversations(persona_id: str = "", limit: int = 100,
+                                converted_only: bool = False) -> list:
+    """Paginated DM conversation list for the history view."""
+    db = await get_db()
+    try:
+        q = "SELECT * FROM dm_conversations WHERE 1=1"
+        params = []
+        if persona_id:
+            params.append(persona_id)
+            q += f" AND persona_id = {_p(len(params))}"
+        if converted_only:
+            q += " AND converted = 1"
+        q += " ORDER BY last_message_at DESC LIMIT " + (_p(len(params) + 1) if USE_NEON else "?")
+        params.append(limit)
+        return await _fetchall(db, q, params)
+    finally:
+        await close_db(db)
+
+
+async def get_dm_thread(conv_id: str) -> list:
+    """Full message thread for one DM conversation."""
+    db = await get_db()
+    try:
+        q = f"SELECT * FROM dm_messages WHERE conv_id = {_p(1)} ORDER BY ts ASC"
+        return await _fetchall(db, q, [conv_id])
+    finally:
+        await close_db(db)
