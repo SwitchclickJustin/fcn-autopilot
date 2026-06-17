@@ -738,6 +738,15 @@ class BotOrchestrator:
                                                    content=worker.last_response or "")
                             except Exception:
                                 pass
+                            # Supervisor learns what got us banned (creates a rule
+                            # that pre_flight then enforces on future messages).
+                            try:
+                                from app.supervisor import supervisor_engine
+                                await supervisor_engine.analyze_ban(
+                                    "", persona_id, [worker.last_response or ""],
+                                    "kicked/banned from room")
+                            except Exception:
+                                pass
                             ban_strikes = 0
                             if not await self._recover(worker):
                                 worker.status = "error"
@@ -814,22 +823,29 @@ class BotOrchestrator:
         tone = persona.get("default_tone", "casual")
         bio = persona.get("bio", "")
         handle = (persona.get("telegram_handle", "") or "").strip()
+        is_dm = getattr(worker, "in_dm", False)  # DM round-robin not built yet → groups
 
         system = (
-            f"You are {username}, a real woman chatting in an adult chat room (18+). "
+            f"You are {username}, a real flirty woman in an adult chat room (18+). "
             f"Tone: {tone}. Personality: {bio}. "
-            f"Reply with ONE short single-line message — no line breaks, no lists, no "
-            f"quotes around it, natural and flirty. Vary your responses. Never include "
-            f"your username prefix. "
+            f"Reply with ONE short, natural, flirty single-line message — no line breaks, "
+            f"no lists, no quotes. Vary your replies. Never prefix your username. "
         )
-        if handle:
+        if is_dm and handle:
+            # PRIVATE DM: after rapport, share the handle casually (no salesy spam)
             system += (
-                f"GOAL: flirt and build a little rapport, then naturally get the person to add "
-                f"you on your private messaging app where you ({handle}) can send pics/chat 1-on-1. "
-                f"Don't be pushy — pitch it once there's some interest, with a reason (pics, "
-                f"private, no rules here). 🛑 NEVER write the words 'telegram', 'tg', 'kik', 'snap', "
-                f"or 'whatsapp' — those get you banned. Convey it your own way and share '{handle}'. "
-                f"After sharing, sometimes ask if they added you."
+                f"This is a private 1-on-1 DM and you've chatted a bit. When it feels natural "
+                f"(not the first line), casually invite them to add you on your private app as "
+                f"'{handle}' so you two can keep going there. Be smooth, not salesy. "
+                f"🛑 NEVER write 'telegram','tg','kik','snap','whatsapp' or a URL."
+            )
+        else:
+            # PUBLIC room: NEVER share a handle or offer pics — that = instant ban.
+            system += (
+                f"This is a PUBLIC room. Be magnetic and flirty to make people want you, and "
+                f"tease them to message/DM you ('dm me','msg me let's talk more'). 🛑 NEVER share "
+                f"a contact handle, username, link, or offer 'pics' here — that gets you BANNED. "
+                f"Just pull them into DMs; the private stuff happens there."
             )
         prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
         response = await llm.chat(system, prompt)
@@ -837,8 +853,25 @@ class BotOrchestrator:
         if not response:
             return
 
-        # Did the bot share its handle this message?
-        if handle and handle.lower().lstrip("@") in response.lower():
+        shares_handle = bool(handle) and handle.lower().lstrip("@") in response.lower()
+
+        # Hard guard: NEVER post a handle in a public room (the #1 ban trigger)
+        if shares_handle and not is_dm:
+            logger.info(f"[{worker.username}] dropped public handle-share (ban risk)")
+            return
+
+        # Supervisor pre-flight: blocks ban-worthy messages (learns from past bans)
+        try:
+            from app.supervisor import supervisor_engine
+            approved, note = await supervisor_engine.pre_flight(response, context, persona)
+        except Exception:
+            approved, note = True, ""
+        if not approved:
+            worker.last_error = f"blocked: {note}"[:200]
+            logger.info(f"[{worker.username}] supervisor blocked: {note}")
+            return
+
+        if shares_handle:  # only reachable in DMs
             worker.handle_shared = True
             try:
                 await db.log_event(persona_id, "handle_share", room=worker.room, content=response)
