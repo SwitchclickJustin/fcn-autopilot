@@ -494,6 +494,19 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
             except Exception as e:
                 results["tab_probe_error"] = str(e)[:150]
 
+            # Dump the message structure inside .room-messages-container (to refine read_chat)
+            try:
+                results["msg_structure"] = await page.evaluate("""
+                    (() => {
+                        const box = document.querySelector('.room-messages-container');
+                        if (!box) return {found: false};
+                        return {found: true, childCount: box.children.length,
+                                sampleHTML: box.innerHTML.slice(-3800)};
+                    })()
+                """)
+            except Exception as e:
+                results["msg_structure_error"] = str(e)[:150]
+
             # login=4: open the "Rooms" panel, dump the room list, join a 2nd room,
             # then dump nav.roomlist (the multi-room/DM tab structure).
             if login == 4:
