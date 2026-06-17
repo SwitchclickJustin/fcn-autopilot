@@ -488,6 +488,18 @@ async def debug_start_trace(persona_id: str = ""):
         out["worker"] = worker.to_dict() if worker else None
         out["start_returned_worker"] = worker is not None
 
+        # Replicate the EXACT real-endpoint post-start steps (the suspected 500)
+        if worker:
+            await update_session(sess["id"], {
+                "status": "active",
+                "browser_session_id": worker.browser_id,
+                "browser_live_url": worker.live_url,
+                "auto_pilot": True,
+            })
+            out["update_session_ok"] = True
+            out["would_return"] = {"session_id": sess["id"], "status": "active",
+                                   "live_url": worker.live_url, "auto_pilot": True}
+
         # Immediately stop so it doesn't chat
         await auto_pilot.stop()
         await browser_manager.stop_session()
