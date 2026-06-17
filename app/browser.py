@@ -607,14 +607,37 @@ class BotOrchestrator:
                         document.querySelectorAll('.action.dismiss, [class*=tip] [class*=dismiss], [class*=tip] [class*=close], [class*=welcome] [class*=close]')
                             .forEach(e => { try { e.click(); n++; } catch(_){} });
                         // 2. Remove ad iframes (the "I AM 18+" age-gate lives in one).
-                        // Only iframes — do NOT remove parents of stray [x] text, which
-                        // can nuke chat-panel layout (the over-aggressive old rule that
-                        // whited-out the live view).
                         document.querySelectorAll('iframe').forEach(f => {
                             const s = (f.src || '') + ' ' + (f.id || '');
                             if (/12chats|\\/afr|exoclick|popads|propeller|adsterra|doubleclick|trafficjunky/i.test(s)) {
                                 try { f.remove(); n++; } catch(_){}
                             }
+                        });
+                        // 3. Close ad MODALS: an [X]/× inside a positioned overlay, or a
+                        // positioned box holding a broken (ad) image. Remove only the
+                        // POSITIONED container, and NEVER one that holds the chat — so we
+                        // don't white-out the real UI (the old over-aggressive bug).
+                        const killModal = (start) => {
+                            let p = start, cont = null;
+                            for (let i = 0; i < 6 && p; i++) {
+                                const s = getComputedStyle(p);
+                                if (s.position === 'fixed' || s.position === 'absolute') cont = p;
+                                p = p.parentElement;
+                            }
+                            if (cont && !cont.querySelector('.room-messages-container, .writer-input, [class*=userlist i], [class*=roomlist i]')) {
+                                try { cont.remove(); return true; } catch(_) {}
+                            }
+                            return false;
+                        };
+                        document.querySelectorAll('a, span, div, button').forEach(e => {
+                            if (e.children.length) return;
+                            if (/^(\\[?[xX]\\]?|×|✕|✖)$/.test((e.textContent || '').trim())) {
+                                try { e.click(); } catch(_){}
+                                if (killModal(e)) n++;
+                            }
+                        });
+                        document.querySelectorAll('img').forEach(img => {
+                            if (img.complete && img.naturalWidth === 0) { if (killModal(img)) n++; }
                         });
                         return n;
                     })()
