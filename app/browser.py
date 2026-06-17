@@ -28,10 +28,12 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # ── Decoda proxy pool ──────────────────────────────────────────────────────────
-# Each entry: SOCKS5 proxy at gate.decodo.com, port-rotated for IP diversity
+# US-only residential, sticky ~10 min per port. us.decodo.com is the country-
+# specific endpoint (Decodo geo-targets by HOSTNAME, not a username suffix).
+# 50 ports (10001-10050) → up to 50 distinct sticky US IPs, one per bot.
 DECODA_PROXIES = [
-    {"host": "gate.decodo.com", "port": p, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"}
-    for p in range(10001, 10011)
+    {"host": "us.decodo.com", "port": p, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"}
+    for p in range(10001, 10051)
 ]
 
 
