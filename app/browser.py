@@ -1147,13 +1147,11 @@ class BotOrchestrator:
                 await page.wait_for_timeout(random.randint(200, 500))
 
             # ── Checkbox ──────────────────────────────────────────────────────
-            # Use focus()+Space instead of click() to avoid triggering FCN's
-            # document-level onclick ad-redirect handler.
+            # Use check(force=True): the checkbox is a hidden Vue-backed field
+            # (same pattern as the date input), so standard visibility checks fail.
+            # Form-scoped selector avoids hitting cookie-consent checkboxes elsewhere.
             logger.info(f"[{worker.agent_id}] ticking checkbox…")
-            await page.wait_for_selector("input[type=checkbox]", state="attached", timeout=5000)
-            await page.focus("input[type=checkbox]")
-            await page.wait_for_timeout(random.randint(200, 500))
-            await page.keyboard.press("Space")
+            await page.locator("form[action*='login'] input[type=checkbox]").check(force=True)
             logger.info(f"[{worker.agent_id}] ✓ checkbox")
             await page.wait_for_timeout(random.randint(700, 1600))
 
