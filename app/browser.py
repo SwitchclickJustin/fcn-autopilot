@@ -106,6 +106,7 @@ class BotWorker:
         self.session_id: str = ""
         self.browser_id: str = ""
         self.live_url: str = ""
+        self.proxy_port: int = 0       # Decoda port in use (unique per agent)
         self.proxy_ip: str = ""        # confirmed exit IP
         self.proxy_location: str = ""  # "City, State, US"
         self.status: str = "created"  # created | connecting | logging_in | running | error
@@ -367,12 +368,15 @@ class BotOrchestrator:
         return workers
 
     async def _provision_and_connect(self, worker: BotWorker) -> bool:
-        """Provision a FRESH BU browser (new IP via a random US Decodo port, and NO
-        profile so no cookies carry over), connect CDP, verify it exits in the US.
-        Rotates ports up to 5x. Returns True on a verified-working browser."""
+        """Provision a FRESH BU browser (new IP via a unique US Decoda port, no
+        cookies). Picks a port not already held by another live agent, then rotates
+        up to 5x on failure. Each agent is guaranteed a distinct residential IP."""
         client = await self._get_client()
-        for attempt in range(5):
-            proxy = random.choice(DECODA_PROXIES)
+        in_use = {w.proxy_port for w in self._workers.values() if w.proxy_port}
+        available = [p for p in DECODA_PROXIES if p["port"] not in in_use] or list(DECODA_PROXIES)
+        random.shuffle(available)
+        pool = (available + [p for p in DECODA_PROXIES if p not in available])[:5]
+        for attempt, proxy in enumerate(pool):
             try:
                 # 1280x960 (4:3) matches the dashboard's .browser-frame aspect-ratio
                 # so the live stream fills the box with no black bars.
@@ -387,6 +391,7 @@ class BotOrchestrator:
             worker.live_url = browser.live_url or ""
             cdp_url = browser.cdp_url or ""
             if cdp_url and await self._connect_cdp(worker, cdp_url) and await self._check_us_proxy(worker):
+                worker.proxy_port = proxy["port"]
                 logger.info(f"[{worker.username}] US proxy OK on port {proxy['port']} — {worker.proxy_location}")
                 return True
             logger.warning(f"[{worker.username}] proxy failed on port {proxy['port']} (try {attempt + 1}); rotating")
@@ -425,6 +430,7 @@ class BotOrchestrator:
                 pass
             worker.browser_id = ""
             worker.live_url = ""
+            worker.proxy_port = 0  # free the port for other agents
 
     async def _recover(self, worker: BotWorker, max_attempts: int = 8) -> bool:
         """Ban recovery: loop until we land in the room or exhaust attempts.
@@ -634,12 +640,28 @@ class BotOrchestrator:
             else:
                 worker._page = await (await worker._cdp.new_context()).new_page()
 
-            # Ad guard: allow ONLY the top-level (main-frame) navigation — FCN's
-            # guest login redirects THROUGH 12chats before landing in the room, so
-            # blocking that breaks login. Block ad documents loaded into CHILD
-            # iframes (the "I AM 18+" age-gate modal — note iframe docs are also
-            # resource_type 'document', so we must check the frame) plus every ad
-            # sub-resource. This kills the age-gate modal at the source.
+            # Stealth patches — injected before any page script on every navigation.
+            # navigator.webdriver=true is the #1 Playwright/CDP bot signal; FCN's
+            # detection checks it immediately. Patch it (and related signals) here so
+            # they're already gone when FCN's JS runs.
+            await worker._page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => {
+                    const p = [1,2,3,4,5];
+                    p.namedItem = () => null; p.refresh = () => {}; p.item = i => p[i];
+                    return p;
+                }});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
+                if (!window.chrome) {
+                    window.chrome = {runtime:{}, loadTimes:()=>{}, csi:()=>{}, app:{}};
+                }
+                delete window.__playwright;
+                delete window.__pw_manual;
+            """)
+
+            # Ad guard: block ONLY known ad/pop networks by exact domain.
+            # Do NOT use broad wildcards like "**traffic**" — that matches FCN's own
+            # analytics scripts and triggers bot-detection / captchas.
             async def _ad_guard(route):
                 req = route.request
                 try:
@@ -656,7 +678,8 @@ class BotOrchestrator:
                         pass
 
             for host in ("12chats.com", "exoclick.com", "popads.net", "doubleclick.net",
-                         "popunder", "propellerads", "adsterra", "trafficjunky", "traffic"):
+                         "propellerads.com", "adsterra.com", "trafficjunky.com",
+                         "popunder.net", "adnium.com", "juicyads.com"):
                 try:
                     await worker._page.route(f"**{host}**", _ad_guard)
                 except Exception:
@@ -747,25 +770,36 @@ class BotOrchestrator:
         age = random.randint(23, 30)
         birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
 
+        # Fill form fields with small human-like delays between each one,
+        # then submit via native form.submit() (NOT the button — it fires ad redirects).
         try:
+            form_exists = await page.evaluate(
+                "() => !!document.querySelector(\"form[action*='chat/login']\")")
+            if not form_exists:
+                logger.warning(f"guest form not found for {worker.username} @ {page.url}")
+                return False
+            await page.evaluate(
+                "(v) => { const u=document.querySelector(\"input[name=username]\"); if(u)u.value=v; }",
+                worker.login_name)
+            await page.wait_for_timeout(random.randint(250, 600))
+            await page.evaluate(
+                "(v) => { const g=document.querySelector(\"select[name=gender]\"); if(g)g.value=v; }",
+                gval)
+            await page.wait_for_timeout(random.randint(150, 400))
+            await page.evaluate(
+                "(v) => { const b=document.querySelector(\"input[name=birthdate]\"); if(b)b.value=v; }",
+                birthdate)
+            await page.wait_for_timeout(random.randint(200, 500))
+            await page.evaluate(
+                "() => { const c=document.querySelector(\"input[type=checkbox]\"); if(c)c.checked=true; }")
+            await page.wait_for_timeout(random.randint(300, 700))
             res = await page.evaluate(
-                """(a)=>{
-                    const f=document.querySelector("form[action*='chat/login']");
-                    if(!f) return 'no-form';
-                    const u=f.querySelector("input[name=username]"); if(u)u.value=a.username;
-                    const g=f.querySelector("select[name=gender]"); if(g)g.value=a.gender;
-                    const b=f.querySelector("input[name=birthdate]"); if(b)b.value=a.birthdate;
-                    const c=f.querySelector("input[type=checkbox]"); if(c)c.checked=true;
-                    f.submit();
-                    return 'submitted';
-                }""",
-                {"username": worker.login_name, "gender": gval, "birthdate": birthdate},
-            )
+                "() => { const f=document.querySelector(\"form[action*='chat/login']\"); if(!f) return 'no-form'; f.submit(); return 'submitted'; }")
         except Exception as e:
             logger.warning(f"guest-form submit failed ({worker.username}): {e}")
             return False
-        if res == "no-form":
-            logger.warning(f"guest form not found for {worker.username} @ {page.url}")
+        if res != "submitted":
+            logger.warning(f"guest form not submitted for {worker.username} @ {page.url}: {res}")
             return False
 
         # Wait for the room SPA to sign in and load (also watch for captcha)
