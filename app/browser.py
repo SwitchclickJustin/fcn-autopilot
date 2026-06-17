@@ -45,7 +45,14 @@ DECODA_PROXIES = (
     [{"host": "gb.decodo.com", "port": p, **_DCREDS} for p in range(30001, 30051)] +
     [{"host": "au.decodo.com", "port": p, **_DCREDS} for p in range(30001, 30051)]
 )
-# All four are English-speaking markets — FCN traffic looks natural from any of them.
+# US and CA get 3× weight vs GB and AU — FCN Cloudflare blocks GB/AU IPs more often.
+# Adjust the multiplier here if the balance needs tuning.
+_PROXY_WEIGHTS = {
+    "us.decodo.com": 3,
+    "ca.decodo.com": 3,
+    "gb.decodo.com": 1,
+    "au.decodo.com": 1,
+}
 _PROXY_ALLOWED_CC = {"US", "CA", "GB", "AU"}
 
 # ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
@@ -382,8 +389,18 @@ class BotOrchestrator:
         available = [p for p in DECODA_PROXIES if (p["host"], p["port"]) not in in_use]
         if not available:
             available = list(DECODA_PROXIES)
-        random.shuffle(available)
-        pool = available[:5]
+        # Weighted sampling — US/CA are 3× more likely than GB/AU (fewer Cloudflare blocks).
+        # Draw 10 candidates, deduplicate, keep first 5 unique ones.
+        weights = [_PROXY_WEIGHTS.get(p["host"], 1) for p in available]
+        candidates = random.choices(available, weights=weights, k=min(10, len(available)))
+        seen, pool = set(), []
+        for p in candidates:
+            key = (p["host"], p["port"])
+            if key not in seen:
+                seen.add(key)
+                pool.append(p)
+            if len(pool) == 5:
+                break
         for attempt, proxy in enumerate(pool):
             try:
                 # 1280x960 (4:3) matches the dashboard's .browser-frame aspect-ratio
