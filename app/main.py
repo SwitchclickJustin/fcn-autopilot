@@ -611,6 +611,10 @@ async def debug_proxy_check(country: str = "", port: int = 0):
                 out["ip_info"] = json.loads(body)
             except Exception:
                 out["ip_info_raw"] = (body or "")[:400]
+            # Bot-detection check: what UA + automation flags does the browser show?
+            out["user_agent"] = await page.evaluate("() => navigator.userAgent")
+            out["webdriver"] = await page.evaluate("() => navigator.webdriver")
+            out["headless_in_ua"] = "Headless" in (out.get("user_agent") or "")
         except Exception as e:
             out["lookup_error"] = str(e)[:200]
     except Exception as e:
