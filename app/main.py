@@ -508,6 +508,33 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
             except Exception as e:
                 results["msg_structure_error"] = str(e)[:150]
 
+            # Probe full-screen overlays + ad-iframe containers (the white box/backdrop)
+            try:
+                results["overlay_probe"] = await page.evaluate("""
+                    (() => {
+                        const out = {overlays: [], adIframeChains: []};
+                        document.querySelectorAll('*').forEach(e => {
+                            const s = getComputedStyle(e);
+                            if ((s.position === 'fixed' || s.position === 'absolute') && (parseInt(s.zIndex || '0') >= 50)) {
+                                const r = e.getBoundingClientRect();
+                                if (r.width > 250 && r.height > 150)
+                                    out.overlays.push({tag: e.tagName.toLowerCase(), cls: (e.className + '').slice(0,55), z: s.zIndex, bg: s.backgroundColor, w: Math.round(r.width), h: Math.round(r.height)});
+                            }
+                        });
+                        document.querySelectorAll('iframe').forEach(f => {
+                            const sig = (f.src || '') + (f.id || '');
+                            if (/12chats|afr|exoclick|popads/i.test(sig)) {
+                                let p = f.parentElement, chain = [];
+                                for (let i = 0; i < 4 && p; i++) { chain.push(p.tagName.toLowerCase() + '.' + (p.className + '').split(' ').filter(Boolean).slice(0,2).join('.')); p = p.parentElement; }
+                                out.adIframeChains.push({src: (f.src || '').slice(0,45), chain});
+                            }
+                        });
+                        return out;
+                    })()
+                """)
+            except Exception as e:
+                results["overlay_probe_error"] = str(e)[:150]
+
             # sendtest=1: send ONE message via the real send_message, then re-read
             # to confirm it posted (verifies both send_message + refined read_chat).
             if sendtest:
