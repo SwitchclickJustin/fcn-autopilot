@@ -768,12 +768,29 @@ class BotOrchestrator:
             logger.warning(f"guest form not found for {worker.username} @ {page.url}")
             return False
 
-        # Wait for the room SPA to sign in and load
+        # Wait for the room SPA to sign in and load (also watch for captcha)
         worker.phase = "login_wait_room"
         for _ in range(12):
             await page.wait_for_timeout(2000)
             if "schat." in page.url or "/room/" in page.url or "alert=" in page.url:
                 break
+            # Captcha check — hCaptcha / reCAPTCHA / Cloudflare challenge.
+            # Don't try to solve it; a fresh Decoda IP almost never triggers one.
+            try:
+                has_captcha = await page.evaluate("""() => {
+                    const sels = [
+                        'iframe[src*="hcaptcha"]','iframe[src*="recaptcha"]',
+                        '.h-captcha','.g-recaptcha','#challenge-form',
+                        '[data-sitekey]','#cf-challenge-running'
+                    ];
+                    return sels.some(s => !!document.querySelector(s));
+                }""")
+                if has_captcha:
+                    logger.warning(f"[{worker.agent_id}] captcha detected — rotating to fresh IP")
+                    worker.phase = "captcha_detected"
+                    return False
+            except Exception:
+                pass
         await page.wait_for_timeout(2500)
         url_now = page.url
 

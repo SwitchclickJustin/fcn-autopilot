@@ -1209,6 +1209,8 @@ async def session_state():
             "rooms": w.rooms,
             "room": w.room,
             "status": w.status,
+            "phase": w.phase,
+            "last_error": w.last_error,
             "messages": msgs[-10:],
         })
     # Legacy compat: expose first agent's messages + live_url at top level

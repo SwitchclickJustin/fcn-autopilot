@@ -150,31 +150,51 @@ function connectWS(){
 }
 
 // ─── Agent grid ───────────────────────────────────────────────────────────────
+function agentStatusCls(a){
+  const p=a.phase||'';
+  if(p.startsWith('recover')||p==='logging_in'||p==='login_wait_room') return 'connecting';
+  if(a.status==='running') return 'running';
+  if(a.status==='connecting') return 'connecting';
+  return '';
+}
+function agentLabel(a,i){
+  const rooms=(a.rooms||[]).join(' / ')||'—';
+  const p=a.phase||'';
+  if(p.startsWith('recover_')){
+    const n=p.split('_')[1];
+    return `Agent ${i+1} &bull; 🔄 Retrying login (${n}/8)`;
+  }
+  if(p==='recovery_failed') return `Agent ${i+1} &bull; ❌ Recovery failed`;
+  if(p==='logging_in'||p==='login_wait_room'||p==='login_nav') return `Agent ${i+1} &bull; ⏳ Logging in…`;
+  if(p==='captcha_detected') return `Agent ${i+1} &bull; 🔄 Captcha — rotating IP…`;
+  return `Agent ${i+1} &bull; ${escHtml(rooms)}`;
+}
+
 function buildAgentGrid(agents){
   const grid=document.getElementById('agents-grid');
   const n=agents.length;
   grid.className='agents-grid g'+Math.min(n,4);
   grid.innerHTML=agents.map((a,i)=>{
-    const rooms=(a.rooms||[]).join(' / ')||'—';
-    const statusCls=a.status==='running'?'running':a.status==='connecting'?'connecting':'';
     const body=a.live_url
       ?`<iframe src="${escHtml(a.live_url)}" allow="clipboard-read;clipboard-write" loading="lazy"></iframe>`
       :`<div class="tile-placeholder"><span style="font-size:1.5rem">🌐</span><span>Connecting...</span></div>`;
     return `<div class="agent-tile" id="tile-${escHtml(a.agent_id)}">
-      <div class="tile-label">Agent ${i+1} &bull; ${escHtml(rooms)}</div>
-      <div class="tile-status ${statusCls}"></div>
+      <div class="tile-label" id="lbl-${escHtml(a.agent_id)}">${agentLabel(a,i)}</div>
+      <div class="tile-status ${agentStatusCls(a)}" id="dot-${escHtml(a.agent_id)}"></div>
       ${body}
     </div>`;
   }).join('');
-  // record initial URLs
   agents.forEach(a=>{if(a.live_url) agentUrls[a.agent_id]=a.live_url;});
 
   const lbl=document.getElementById('agent-count-label');
   if(lbl) lbl.textContent=n>0?`— ${n} active`:'';
 }
 
+// Track agent index for label rendering after initial build
+const agentIndex={};
 function updateAgentTiles(agents){
-  agents.forEach(a=>{
+  agents.forEach((a,i)=>{
+    agentIndex[a.agent_id]=i;
     const tile=document.getElementById('tile-'+a.agent_id);
     if(!tile) return;
     // Swap in iframe only when URL first appears (never reload once live)
@@ -187,10 +207,11 @@ function updateAgentTiles(agents){
       tile.appendChild(ifr);
     }
     // Update status dot
-    const dot=tile.querySelector('.tile-status');
-    if(dot){
-      dot.className='tile-status'+(a.status==='running'?' running':a.status==='connecting'?' connecting':'');
-    }
+    const dot=document.getElementById('dot-'+a.agent_id);
+    if(dot) dot.className='tile-status '+agentStatusCls(a);
+    // Update label (shows recovery progress)
+    const lbl=document.getElementById('lbl-'+a.agent_id);
+    if(lbl) lbl.innerHTML=agentLabel(a,i);
   });
 }
 
