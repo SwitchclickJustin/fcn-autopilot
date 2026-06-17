@@ -978,8 +978,10 @@ class BotOrchestrator:
             await page.goto(room_url, wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] room nav failed: {e}")
-        # Longer dwell — Cloudflare's JS needs a few seconds to "pass" the visitor.
-        # Bots hit the form immediately; real users read the page first.
+            return False
+        logger.info(f"[{worker.agent_id}] loaded {page.url!r} title={await page.title()!r}")
+
+        # Cloudflare needs time to score the visitor — bots act immediately.
         await page.wait_for_timeout(random.randint(3000, 5500))
 
         # IP block check — Cloudflare "Sorry, you have been blocked"
@@ -988,7 +990,7 @@ class BotOrchestrator:
             worker.phase = "ip_blocked"
             return False
 
-        # Human mouse settle + gentle scroll before touching any form field
+        # Human mouse settle + gentle scroll
         await page.mouse.move(random.randint(250, 850), random.randint(100, 420))
         await page.wait_for_timeout(random.randint(400, 900))
         await page.mouse.wheel(0, random.randint(60, 180))
@@ -998,78 +1000,81 @@ class BotOrchestrator:
         age = random.randint(20, 26)
         birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
 
-        # Wait for the login form to be visible — with 4 agents starting
-        # simultaneously the page may still be rendering when we get here.
+        # Wait for login form (attached = exists in DOM; visible can fail if
+        # the form is off-screen or temporarily hidden on initial load).
         try:
             await page.wait_for_selector(
-                "form[action*='chat/login']", state="visible", timeout=10000)
+                "form[action*='chat/login']", state="attached", timeout=10000)
         except Exception:
-            logger.warning(f"[{worker.agent_id}] login form never appeared @ {page.url}")
+            try:
+                forms = await page.evaluate(
+                    "() => Array.from(document.querySelectorAll('form'))"
+                    ".map(f => f.getAttribute('action') || '(no action)')")
+                logger.warning(
+                    f"[{worker.agent_id}] form[action*='chat/login'] not found "
+                    f"@ {page.url} | forms: {forms}")
+            except Exception:
+                logger.warning(f"[{worker.agent_id}] login form not found @ {page.url}")
             return False
 
         try:
-            # ── Username: click → char-by-char keyboard type ──────────────────
-            await page.wait_for_selector(
-                "input[name=username]", state="visible", timeout=5000)
-            await page.click("input[name=username]", timeout=5000)
+            # ── Username: scroll into view → click → char-by-char keyboard type
+            u_el = await page.wait_for_selector(
+                "input[name=username]", state="attached", timeout=5000)
+            await u_el.scroll_into_view_if_needed()
+            await u_el.click(timeout=5000)
             await page.wait_for_timeout(random.randint(300, 800))
             for ch in worker.login_name:
                 await page.keyboard.type(ch)
                 await page.wait_for_timeout(random.randint(65, 215))
             logger.info(f"[{worker.agent_id}] typed username '{worker.login_name}'")
 
-            # ── Gender: mouse to element → select_option ──────────────────────
+            # ── Gender: scroll into view → mouse to centre → select_option ─────
             await page.wait_for_timeout(random.randint(500, 1100))
-            await page.wait_for_selector(
-                "select[name=gender]", state="visible", timeout=5000)
-            sel_el = await page.query_selector("select[name=gender]")
-            if sel_el:
-                bb = await sel_el.bounding_box()
-                if bb:
-                    await page.mouse.move(
-                        bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
-                    await page.wait_for_timeout(random.randint(200, 500))
+            g_el = await page.wait_for_selector(
+                "select[name=gender]", state="attached", timeout=5000)
+            await g_el.scroll_into_view_if_needed()
+            bb = await g_el.bounding_box()
+            if bb:
+                await page.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+                await page.wait_for_timeout(random.randint(200, 500))
             await page.select_option("select[name=gender]", gval, timeout=5000)
             logger.info(f"[{worker.agent_id}] selected gender={gval}")
             await page.wait_for_timeout(random.randint(400, 950))
 
-            # ── Birthdate: click → fill (ISO YYYY-MM-DD); type char-by-char if
-            #   fill doesn't stick (some date inputs need keyboard input)
-            await page.wait_for_selector(
-                "input[name=birthdate]", state="visible", timeout=5000)
-            await page.click("input[name=birthdate]", timeout=5000)
+            # ── Birthdate: scroll → click → fill; fallback to char-by-char type
+            b_el = await page.wait_for_selector(
+                "input[name=birthdate]", state="attached", timeout=5000)
+            await b_el.scroll_into_view_if_needed()
+            await b_el.click(timeout=5000)
             await page.wait_for_timeout(random.randint(300, 700))
-            await page.fill("input[name=birthdate]", birthdate, timeout=5000)
-            actual = await page.input_value("input[name=birthdate]")
+            await b_el.fill(birthdate)
+            actual = await b_el.input_value()
             if actual != birthdate:
-                await page.triple_click("input[name=birthdate]")
+                await b_el.triple_click()
                 for ch in birthdate:
                     await page.keyboard.type(ch)
                     await page.wait_for_timeout(random.randint(50, 130))
-            logger.info(f"[{worker.agent_id}] birthdate={birthdate}")
+            logger.info(f"[{worker.agent_id}] birthdate={birthdate} (field={await b_el.input_value()!r})")
             await page.wait_for_timeout(random.randint(400, 900))
 
-            # ── Checkbox: mouse to element → real click ───────────────────────
-            await page.wait_for_selector(
-                "input[type=checkbox]", state="visible", timeout=5000)
-            chk_el = await page.query_selector("input[type=checkbox]")
-            if chk_el:
-                bb = await chk_el.bounding_box()
-                if bb:
-                    await page.mouse.move(
-                        bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
-                    await page.wait_for_timeout(random.randint(200, 500))
-            await page.click("input[type=checkbox]", timeout=5000)
+            # ── Checkbox: scroll → mouse to centre → click ────────────────────
+            c_el = await page.wait_for_selector(
+                "input[type=checkbox]", state="attached", timeout=5000)
+            await c_el.scroll_into_view_if_needed()
+            bb = await c_el.bounding_box()
+            if bb:
+                await page.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+                await page.wait_for_timeout(random.randint(200, 500))
+            await c_el.click(timeout=5000)
             logger.info(f"[{worker.agent_id}] checkbox ticked")
             await page.wait_for_timeout(random.randint(700, 1600))
 
-            # ── Submit: refocus username and press Enter ───────────────────────
-            # Keyboard Enter submits the form natively without firing the
-            # submit button's onclick ad-redirect handlers.
-            await page.focus("input[name=username]")
+            # ── Submit: focus username → Enter (native submit, no button onclick)
+            await u_el.focus()
             await page.wait_for_timeout(random.randint(300, 700))
             await page.keyboard.press("Enter")
-            logger.info(f"[{worker.agent_id}] form submitted via Enter key")
+            logger.info(f"[{worker.agent_id}] form submitted via Enter")
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] form interaction failed: {e}")
             return False
