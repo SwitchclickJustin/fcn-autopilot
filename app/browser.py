@@ -213,59 +213,85 @@ class BotOrchestrator:
             worker.profile_id = await self.get_or_create_profile(f"fcn-{username}")
             logger.info(f"Profile: {worker.profile_id}")
 
-            # Step 2 — Provision browser with Decoda proxy (fast, ~3s)
-            # Returns browser with live_url immediately — login happens in bg
-            decoda = random.choice(DECODA_PROXIES)
-            proxy_kwargs = {
-                "customProxy": decoda,
-            }
+            # Step 2 — Provision a browser whose US proxy ACTUALLY routes. Decodo
+            # IPs/ports can transiently 403 ("Upstream proxy error") — so connect
+            # CDP and verify routing, rotating to a different port on failure. We
+            # return only a verified-working browser (its live_url is then valid).
+            worker.status = "connecting"
+            connected = False
+            for attempt in range(5):
+                proxy = random.choice(DECODA_PROXIES)
+                try:
+                    browser = await client.browsers.create(
+                        profile_id=worker.profile_id,
+                        timeout=60,
+                        browser_screen_width=1280,
+                        browser_screen_height=720,
+                        enable_recording=False,
+                        customProxy=proxy,
+                    )
+                except Exception as e:
+                    logger.warning(f"[{username}] provision failed (try {attempt + 1}): {e}")
+                    continue
 
-            browser = await client.browsers.create(
-                profile_id=worker.profile_id,
-                timeout=60,
-                browser_screen_width=1280,
-                browser_screen_height=720,
-                enable_recording=False,
-                **proxy_kwargs,
-            )
-            worker.browser_id = str(browser.id)
-            worker.live_url = browser.live_url or ""
-            cdp_url = browser.cdp_url or ""
-            logger.info(f"Browser: {worker.browser_id}, live: {worker.live_url[:60] if worker.live_url else 'none'}")
+                worker.browser_id = str(browser.id)
+                worker.live_url = browser.live_url or ""
+                cdp_url = browser.cdp_url or ""
 
-            # Steps 3-5 run in background — return worker with live_url immediately
-            worker._task = asyncio.create_task(
-                self._finish_bot_setup(worker, username, cdp_url, client)
-            )
+                if cdp_url and await self._connect_cdp(worker, cdp_url) and await self._proxy_ok(worker):
+                    logger.info(f"[{username}] proxy OK on port {proxy['port']} — {worker.live_url[:55]}")
+                    connected = True
+                    break
+
+                # Bad/interrupted proxy — tear down and rotate to another port
+                logger.warning(f"[{username}] proxy failed on port {proxy['port']} (try {attempt + 1}); rotating")
+                await worker.disconnect_cdp()
+                try:
+                    await client.browsers.stop(worker.browser_id)
+                except Exception:
+                    pass
+                worker.browser_id = ""
+                worker.live_url = ""
+
+            if not connected:
+                logger.error(f"[{username}] no working US proxy after retries")
+                worker.status = "error"
+                self._workers.pop(username, None)
+                return None
+
+            # Step 3-5 run in background (CDP is already connected + verified)
             worker.status = "running"
+            worker._task = asyncio.create_task(self._finish_bot_setup(worker, username))
             return worker
 
-    async def _finish_bot_setup(self, worker: BotWorker, username: str,
-                                 cdp_url: str, client):
-        """Background: CDP connect → guest login via CDP → auto-pilot start.
+    async def _proxy_ok(self, worker: BotWorker) -> bool:
+        """Verify the proxy actually routes (catch Decodo's transient 403/502)."""
+        page = worker._page
+        if not page:
+            return False
+        try:
+            resp = await page.goto(
+                "http://ip-api.com/json/?fields=status,countryCode,query",
+                wait_until="domcontentloaded", timeout=20000)
+            body = await page.evaluate("() => document.body.innerText || ''")
+            if "Upstream proxy error" in body or "Bad Gateway" in body:
+                return False
+            if resp is not None and resp.status >= 400:
+                return False
+            return ('"status":"success"' in body) or ('countryCode' in body)
+        except Exception:
+            return False
 
-        We drive the SAME browser we provisioned (the one embedded in the
-        dashboard live view) — no separate agent session. Every step is visible
-        in the live view.
-        """
+    async def _finish_bot_setup(self, worker: BotWorker, username: str):
+        """Background (CDP already connected + proxy verified in start_bot):
+        guest login → auto-pilot loop, all on the embedded browser."""
         try:
             worker.status = "logging_in"
 
-            # Step 3 — Connect CDP to the provisioned browser
-            if not cdp_url:
-                logger.error(f"No cdp_url for {username} — cannot drive browser")
-                worker.status = "error"
-                return
-            if not await self._connect_cdp(worker, cdp_url):
-                logger.error(f"CDP connect failed for {username}")
-                worker.status = "error"
-                return
-            logger.info(f"CDP connected for {username}")
-
-            # Step 4 — Guest login (navigate to room → fill form → submit)
+            # Guest login (navigate to room → fill form → native submit)
             await self._cdp_guest_login(worker)
 
-            # Step 5 — Start the auto-pilot loop on this same browser
+            # Start the auto-pilot loop on this same browser
             worker.status = "running"
             self._auto_pilot_enabled[username] = True
             worker._task = asyncio.create_task(self._run_auto_pilot(worker))
