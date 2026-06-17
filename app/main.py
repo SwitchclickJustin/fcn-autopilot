@@ -411,9 +411,9 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 results["fetch_login_error"] = str(e)[:250]
 
         # 3b. Optionally run login: 1 = real _cdp_guest_login (button click),
-        #     3 = native form.submit() (bypasses the button's ad onclick).
-        if login in (1, 3):
-            if login == 3:
+        #     3 = native form.submit(), 4 = submit + open Rooms panel/join probe.
+        if login in (1, 3, 4):
+            if login in (3, 4):
                 slug = room.lower().replace("chat", "").strip() or "sext"
                 try:
                     await page.goto(f"https://www.freechatnow.com/chat/{slug}/",
@@ -493,6 +493,49 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 """)
             except Exception as e:
                 results["tab_probe_error"] = str(e)[:150]
+
+            # login=4: open the "Rooms" panel, dump the room list, join a 2nd room,
+            # then dump nav.roomlist (the multi-room/DM tab structure).
+            if login == 4:
+                try:
+                    await page.click("button.join", timeout=8000)
+                    await page.wait_for_timeout(2500)
+                    results["roomlist_probe"] = await page.evaluate("""
+                        (() => {
+                            const out = {rooms: [], panelHTML: ''};
+                            const panel = document.querySelector('[class*=roomlist i], [class*=room-list i], [class*=rooms-panel i], [class*=roomselect i]');
+                            if (panel) out.panelHTML = panel.outerHTML.slice(0, 2600);
+                            document.querySelectorAll('a, li, [data-room], [class*=room-item i], [class*=roomlink i]').forEach(e => {
+                                const t = (e.textContent || '').trim();
+                                const dr = e.getAttribute('data-room') || '';
+                                if ((dr || (t && t.length < 26)) && e.children.length < 3)
+                                    out.rooms.push({tag: e.tagName.toLowerCase(), cls: (e.className + '').slice(0,50), text: t.slice(0,24), data_room: dr, href: (e.getAttribute('href') || '').slice(0,60)});
+                            });
+                            return out;
+                        })()
+                    """)
+                    # try to join a different room, then re-dump the tab bar
+                    joined = await page.evaluate("""
+                        (() => {
+                            const cur = location.pathname;
+                            const cands = Array.from(document.querySelectorAll('a[href*="/room/"], [data-room]'));
+                            for (const el of cands) {
+                                const href = el.getAttribute('href') || '';
+                                if (href.includes('/room/') && !cur.endsWith(href.split('/room/')[1])) { el.click(); return href; }
+                            }
+                            return null;
+                        })()
+                    """)
+                    results["join_clicked"] = joined
+                    await page.wait_for_timeout(4000)
+                    results["tabs_after_join"] = await page.evaluate("""
+                        (() => {
+                            const navs = document.querySelectorAll('nav.roomlist');
+                            return Array.from(navs).map(n => n.outerHTML.slice(0,1500));
+                        })()
+                    """)
+                except Exception as e:
+                    results["roomlist_error"] = str(e)[:200]
 
         # 4. Snapshot main page + same-origin iframes
         results["dom"] = await page.evaluate(_SNAP_JS)
