@@ -300,7 +300,8 @@ _SNAP_JS = """
 @app.get("/debug/inspect-fcn")
 async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0,
                             username: str = "TestAlexa99", room: str = "SextChat",
-                            gender: str = "f", block: int = 1, wait: int = 5):
+                            gender: str = "f", block: int = 1, wait: int = 5,
+                            sendtest: int = 0):
     """Provision a Decoda-proxied browser, navigate to the target, and dump the DOM.
 
     Diagnostic for building the CDP-driven guest-login flow. Captures the main
@@ -506,6 +507,23 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 """)
             except Exception as e:
                 results["msg_structure_error"] = str(e)[:150]
+
+            # sendtest=1: send ONE message via the real send_message, then re-read
+            # to confirm it posted (verifies both send_message + refined read_chat).
+            if sendtest:
+                from app.browser import BotWorker as _BW3
+                w = _BW3({"username": username, "gender": gender, "selected_rooms": [room]})
+                w._page = page
+                try:
+                    results["read_before"] = (await w.read_chat())[-5:]
+                    results["send_ok"] = await w.send_message("hey everyone, how is your night going?")
+                    await page.wait_for_timeout(2500)
+                    after = await w.read_chat()
+                    results["read_after"] = after[-8:]
+                    results["our_msg_appeared"] = any(
+                        username in m and "how is your night" in m for m in after[-12:])
+                except Exception as e:
+                    results["send_error"] = str(e)[:150]
 
             # login=4: open the "Rooms" panel, dump the room list, join a 2nd room,
             # then dump nav.roomlist (the multi-room/DM tab structure).

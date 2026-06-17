@@ -89,19 +89,24 @@ class BotWorker:
         try:
             result = await self._page.evaluate("""
                 (() => {
-                    // FCN room chat lives in div.room-messages-container (verified)
+                    // FCN room chat: ul > li.message-item, with .message-meta (user)
+                    // and .message-text (body). Verified structure.
                     const box = document.querySelector('.room-messages-container');
-                    if (box) {
-                        const rows = Array.from(box.children)
-                            .map(e => (e.textContent || '').trim()).filter(t => t);
-                        if (rows.length) return rows.slice(-25);
-                    }
-                    for (const sel of ['.room-message','.chat-message','.message','[class*=chatmsg]']) {
-                        const els = document.querySelectorAll(sel);
-                        if (els.length > 2) return Array.from(els).slice(-25)
-                            .map(e => (e.textContent || '').trim()).filter(t => t);
-                    }
-                    return [];
+                    if (!box) return [];
+                    const out = [];
+                    box.querySelectorAll('li.message-item').forEach(li => {
+                        const textEl = li.querySelector('.message-text');
+                        if (!textEl) return;
+                        const msg = (textEl.textContent || '').trim();
+                        if (!msg) return;
+                        const metaEl = li.querySelector('.message-meta');
+                        const user = metaEl ? (metaEl.textContent || '').trim() : '';
+                        out.push(user ? user + ': ' + msg : msg);
+                    });
+                    if (out.length) return out.slice(-30);
+                    // fallback: raw child text
+                    return Array.from(box.children)
+                        .map(e => (e.textContent || '').trim()).filter(t => t).slice(-25);
                 })();
             """)
             return result if isinstance(result, list) else []
@@ -115,27 +120,21 @@ class BotWorker:
         """
         if not message or not self._page:
             return False
-        escaped = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         try:
-            await self._page.evaluate(f"""
-                (() => {{
-                    const input = document.querySelector('input[placeholder="Type to chat"]')
-                        || document.querySelector('textarea')
-                        || document.querySelector('[contenteditable]')
-                        || document.querySelector('input[type=search]')
-                        || document.querySelector('input[type=text]');
-                    if (!input) return 'no input';
-                    input.value = '{escaped}';
-                    input.dispatchEvent(new Event('input', {{bubbles: true}}));
-                    input.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    input.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter',
-                        code: 'Enter', keyCode: 13, which: 13, bubbles: true}}));
-                    const btn = document.querySelector('button[type=submit], [class*=send]');
-                    if (btn) btn.click();
-                    return 'sent';
-                }})();
-            """)
-            await asyncio.sleep(1)
+            inp = await self._page.query_selector('input[placeholder="Type to chat"]')
+            if inp is None:
+                for s in ('textarea', '[contenteditable]', 'input[type=search]', 'input[type=text]'):
+                    inp = await self._page.query_selector(s)
+                    if inp is not None:
+                        break
+            if inp is None:
+                return False
+            # Real Playwright input — fill() + Enter reliably triggers the Vue
+            # v-model + send handler (JS .value= alone often doesn't).
+            await inp.click()
+            await inp.fill(message)
+            await self._page.keyboard.press("Enter")
+            await asyncio.sleep(0.6)
             return True
         except Exception:
             return False
