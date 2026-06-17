@@ -863,6 +863,7 @@ async def debug_browser_status():
             "live_url": browser_manager.current_session.live_url[:80] if browser_manager.current_session.live_url else "",
             "connected": browser_manager.current_session._connected,
             "has_page": browser_manager.current_session._page is not None,
+            "phase": browser_manager.current_session.phase,
             "loop_ticks": browser_manager.current_session.loop_ticks,
             "send_attempts": browser_manager.current_session.send_attempts,
             "send_oks": browser_manager.current_session.send_oks,

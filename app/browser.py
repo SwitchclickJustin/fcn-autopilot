@@ -52,6 +52,7 @@ class BotWorker:
         self.proxy_location: str = ""  # "City, State, US"
         self.status: str = "created"  # created | connecting | logging_in | running | error
         # diagnostics
+        self.phase: str = "init"
         self.loop_ticks: int = 0
         self.send_attempts: int = 0
         self.send_oks: int = 0
@@ -179,6 +180,7 @@ class BotWorker:
             "proxy_ip": self.proxy_ip,
             "proxy_location": self.proxy_location,
             "status": self.status,
+            "phase": self.phase,
             "loop_ticks": self.loop_ticks,
             "send_attempts": self.send_attempts,
             "send_oks": self.send_oks,
@@ -344,16 +346,23 @@ class BotOrchestrator:
         guest login → auto-pilot loop, all on the embedded browser."""
         try:
             worker.status = "logging_in"
+            worker.phase = "logging_in"
 
             # Guest login (navigate to room → fill form → native submit)
             await self._cdp_guest_login(worker)
 
-            # Start the auto-pilot loop on this same browser
+            # Start the auto-pilot loop immediately. The loop is resilient: it
+            # read_chat()/send_message() no-op until the chat UI is ready, so we
+            # must NOT block startup waiting for it.
+            worker.phase = "starting_loop"
             worker.status = "running"
             self._auto_pilot_enabled[username] = True
             worker._task = asyncio.create_task(self._run_auto_pilot(worker))
+            worker.phase = "loop_running"
 
         except Exception as e:
+            worker.phase = "setup_error"
+            worker.last_error = f"setup: {type(e).__name__}: {e}"[:200]
             logger.error(f"Bot setup failed for {username}: {e}")
             worker.status = "error"
 
@@ -466,6 +475,7 @@ class BotOrchestrator:
         slug = room.lower().replace("chat", "").strip() or "sext"
         url = f"{self.FCN_BASE}/chat/{slug}/"
 
+        worker.phase = "login_nav"
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
@@ -498,6 +508,7 @@ class BotOrchestrator:
             return False
 
         # Wait for the room SPA to sign in and load
+        worker.phase = "login_wait_room"
         for _ in range(12):
             await page.wait_for_timeout(2000)
             if "schat." in page.url or "/room/" in page.url or "alert=" in page.url:
@@ -522,14 +533,10 @@ class BotOrchestrator:
             return False
 
         in_room = "schat." in url_now or "/room/" in url_now
+        worker.phase = "in_room" if in_room else "login_uncertain"
 
-        # Wait for the WS-driven chat UI (message input) to actually load before
-        # the loop starts. The room SPA often loads the shell but stalls on the
-        # chat (WS flap) — reload once if so.
-        if in_room:
-            await self._wait_chat_ready(page, worker)
-
-        # Close ad popups + dismiss the welcome/tip overlay
+        # Close ad popups + dismiss the welcome/tip overlay (do NOT block on chat
+        # readiness — the loop handles that itself and would otherwise never start).
         await self._close_popups(worker)
         await self._dismiss_overlays(page)
 
