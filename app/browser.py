@@ -1180,7 +1180,10 @@ class BotOrchestrator:
             page.context.remove_listener("page", _handle_new_page)
             return False
 
-        page.context.remove_listener("page", _handle_new_page)
+        # Keep the listener active through the wait loop — the button onclick fires
+        # asynchronously AFTER click() returns (no_wait_after=True), so the popup
+        # event can arrive any time during the first few seconds of the loop.
+        # Removing the listener here (before the loop) was swallowing the popup.
 
         # Wait for the chat room to appear — either the main page navigates to
         # schat.freechatnow.com OR the room opened as a popup (_fcn_popup).
@@ -1195,6 +1198,7 @@ class BotOrchestrator:
             # The popup URL starts at freechatnow.com/chat/sex (form POST landing)
             # before a server-side redirect takes it to schat.*.
             if _fcn_popup:
+                page.context.remove_listener("page", _handle_new_page)
                 chat_page = _fcn_popup[0]
                 worker._page = chat_page
                 page = chat_page
@@ -1205,6 +1209,7 @@ class BotOrchestrator:
                     if await self._is_blocked_page(page):
                         logger.warning(f"[{worker.agent_id}] Cloudflare in popup — rotating IP")
                         worker.phase = "cf_blocked_popup"
+                        page.context.remove_listener("page", _handle_new_page)
                         return False
                     await page.wait_for_timeout(2000)
                 break
@@ -1217,6 +1222,7 @@ class BotOrchestrator:
             if await self._is_blocked_page(page):
                 logger.warning(f"[{worker.agent_id}] Cloudflare block on form POST — rotating IP")
                 worker.phase = "cf_blocked_post"
+                page.context.remove_listener("page", _handle_new_page)
                 return False
 
             # Captcha challenge (hCaptcha / reCAPTCHA / CF interactive challenge)
@@ -1232,9 +1238,11 @@ class BotOrchestrator:
                 if has_captcha:
                     logger.warning(f"[{worker.agent_id}] captcha detected — rotating to fresh IP")
                     worker.phase = "captcha_detected"
+                    page.context.remove_listener("page", _handle_new_page)
                     return False
             except Exception:
                 pass
+        page.context.remove_listener("page", _handle_new_page)
         await page.wait_for_timeout(2500)
         url_now = page.url
 
