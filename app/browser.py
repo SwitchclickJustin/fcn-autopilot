@@ -48,7 +48,9 @@ class BotWorker:
         self.session_id: str = ""
         self.browser_id: str = ""
         self.live_url: str = ""
-        self.status: str = "created"  # created | logging_in | running | error
+        self.proxy_ip: str = ""        # confirmed exit IP
+        self.proxy_location: str = ""  # "City, State, US"
+        self.status: str = "created"  # created | connecting | logging_in | running | error
 
         # CDP connection (for fast JS-based auto-pilot)
         self._page = None
@@ -145,6 +147,8 @@ class BotWorker:
             "session_id": self.session_id,
             "browser_id": self.browser_id,
             "live_url": self.live_url,
+            "proxy_ip": self.proxy_ip,
+            "proxy_location": self.proxy_location,
             "status": self.status,
         }
 
@@ -238,8 +242,8 @@ class BotOrchestrator:
                 worker.live_url = browser.live_url or ""
                 cdp_url = browser.cdp_url or ""
 
-                if cdp_url and await self._connect_cdp(worker, cdp_url) and await self._proxy_ok(worker):
-                    logger.info(f"[{username}] proxy OK on port {proxy['port']} — {worker.live_url[:55]}")
+                if cdp_url and await self._connect_cdp(worker, cdp_url) and await self._check_us_proxy(worker):
+                    logger.info(f"[{username}] US proxy OK on port {proxy['port']} — {worker.proxy_location}")
                     connected = True
                     break
 
@@ -264,22 +268,41 @@ class BotOrchestrator:
             worker._task = asyncio.create_task(self._finish_bot_setup(worker, username))
             return worker
 
-    async def _proxy_ok(self, worker: BotWorker) -> bool:
-        """Verify the proxy actually routes (catch Decodo's transient 403/502)."""
+    async def _check_us_proxy(self, worker: BotWorker) -> bool:
+        """Confirm the proxy routes AND exits in the USA before touching FCN.
+
+        Loads ip-api.com (clean JSON IP geolocation) through the proxied browser,
+        captures IP + City, State, Country onto the worker, and returns True only
+        when countryCode == 'US'. A non-US or non-routing exit → rotate the port.
+        """
         page = worker._page
         if not page:
             return False
         try:
-            resp = await page.goto(
-                "http://ip-api.com/json/?fields=status,countryCode,query",
+            await page.goto(
+                "http://ip-api.com/json/?fields=status,country,countryCode,regionName,city,query,proxy,hosting",
                 wait_until="domcontentloaded", timeout=20000)
             body = await page.evaluate("() => document.body.innerText || ''")
             if "Upstream proxy error" in body or "Bad Gateway" in body:
+                logger.warning(f"[{worker.username}] proxy error during IP check")
                 return False
-            if resp is not None and resp.status >= 400:
+            try:
+                info = json.loads(body)
+            except Exception:
+                logger.warning(f"[{worker.username}] IP check unparseable: {body[:80]}")
                 return False
-            return ('"status":"success"' in body) or ('countryCode' in body)
-        except Exception:
+            if info.get("status") != "success":
+                return False
+            worker.proxy_ip = info.get("query", "")
+            cc = info.get("countryCode", "")
+            worker.proxy_location = f"{info.get('city', '?')}, {info.get('regionName', '?')}, {cc}"
+            if cc != "US":
+                logger.warning(f"[{worker.username}] proxy NOT US ({worker.proxy_ip} {worker.proxy_location}) — rotating")
+                return False
+            logger.info(f"[{worker.username}] ✅ US proxy: {worker.proxy_ip} ({worker.proxy_location})")
+            return True
+        except Exception as e:
+            logger.warning(f"[{worker.username}] IP check failed: {e}")
             return False
 
     async def _finish_bot_setup(self, worker: BotWorker, username: str):

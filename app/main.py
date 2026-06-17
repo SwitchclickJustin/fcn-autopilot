@@ -743,6 +743,8 @@ async def debug_browser_status():
         info = {
             "status": browser_manager.current_session.status,
             "browser_id": browser_manager.current_session.browser_id,
+            "proxy_ip": browser_manager.current_session.proxy_ip,
+            "proxy_location": browser_manager.current_session.proxy_location,
             "live_url": browser_manager.current_session.live_url[:80] if browser_manager.current_session.live_url else "",
             "connected": browser_manager.current_session._connected,
             "has_page": browser_manager.current_session._page is not None,
