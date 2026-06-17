@@ -1155,7 +1155,10 @@ class BotOrchestrator:
             # Playwright from hanging 30 s waiting for the resulting popup/navigation to
             # settle — we handle that ourselves in the wait loop below.
             logger.info(f"[{worker.agent_id}] ticking checkbox…")
-            await page.locator("form[action*='login'] input[type=checkbox]").check(
+            # Playwright 1.50 removed no_wait_after from check(); use click() instead.
+            # click(force=True, no_wait_after=True) toggles the unchecked box and
+            # returns immediately without waiting for the resulting popup/navigation.
+            await page.locator("form[action*='login'] input[type=checkbox]").click(
                 force=True, no_wait_after=True)
             logger.info(f"[{worker.agent_id}] ✓ checkbox")
 
