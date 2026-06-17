@@ -261,7 +261,21 @@ _SNAP_JS = """
     cls: (e.className && e.className.toString ? e.className.toString() : ''),
     placeholder: e.getAttribute('data-placeholder') || e.getAttribute('placeholder')
   }));
-  return {inputs, selects, buttons, forms, iframes, links, textareas, editables,
+  const msgCandidates = (() => {
+    const hits = {};
+    document.querySelectorAll('[class]').forEach(e => {
+      const c = (e.className && e.className.toString) ? e.className.toString() : '';
+      if (/mess|msg|chat-?line|chatmsg|bubble|post|nick|user-?msg/i.test(c)) {
+        const key = e.tagName.toLowerCase() + '.' + c.split(/\\s+/).slice(0,3).join('.');
+        if (!hits[key]) hits[key] = {count:0, sample:''};
+        hits[key].count++;
+        if (!hits[key].sample) hits[key].sample = (e.textContent||'').trim().slice(0,70);
+      }
+    });
+    return Object.entries(hits).map(([k,v]) => ({sel:k, count:v.count, sample:v.sample}))
+      .sort((a,b)=>b.count-a.count).slice(0,20);
+  })();
+  return {inputs, selects, buttons, forms, iframes, links, textareas, editables, msgCandidates,
           bodyText: (document.body ? document.body.innerText : '').slice(0,1800)};
 })()
 """
@@ -392,6 +406,23 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 except Exception as e:
                     results["login_error"] = str(e)[:250]
             await page.wait_for_timeout(max(1, wait) * 1000)
+            # Dismiss the first-run tip carousel (may be several tips in sequence)
+            dismissed = 0
+            for _ in range(6):
+                clicked = False
+                for sel in ["button.action.dismiss", "text=I'm already familiar",
+                            "[class*=tip] [class*=close]", "[class*=tip] button"]:
+                    try:
+                        await page.click(sel, timeout=1500)
+                        clicked = True
+                        dismissed += 1
+                        break
+                    except Exception:
+                        pass
+                if not clicked:
+                    break
+                await page.wait_for_timeout(800)
+            results["tips_dismissed"] = dismissed
             results["post_login_url"] = page.url
             try:
                 results["post_login_title"] = await page.title()
