@@ -880,6 +880,40 @@ async def cleanup_browsers():
     
     return results
 
+@app.get("/debug/tabs")
+async def debug_tabs():
+    """Dump the live session's conversation tabs (rooms + DMs) + the '...' overflow
+    menu — to build the DM round-robin selectors from the real DOM."""
+    cs = browser_manager.current_session
+    if not cs or not cs._page:
+        return JSONResponse({"error": "no session"}, status_code=404)
+    page = cs._page
+    try:
+        return await page.evaluate("""
+            (() => {
+                const out = {url: location.href, navs: [], tabs: [], dotsMenu: ''};
+                document.querySelectorAll('nav.roomlist, [class*=roomlist i]').forEach(n => {
+                    if (n.outerHTML) out.navs.push(n.outerHTML.slice(0, 2200));
+                });
+                document.querySelectorAll('nav.roomlist *, [class*=roomlink i], [class*=conversation i], [class*=channel i], [class*=tab i]').forEach(e => {
+                    const t = (e.textContent || '').trim();
+                    if (t && t.length < 30 && e.children.length < 5)
+                        out.tabs.push({tag: e.tagName.toLowerCase(), cls: (e.className + '').slice(0,70), text: t.slice(0,28),
+                                       data: e.getAttribute('data-room') || e.getAttribute('data-conversation') || e.getAttribute('data-user') || e.getAttribute('data-id') || ''});
+                });
+                for (const e of document.querySelectorAll('*')) {
+                    const t = (e.textContent || '').trim();
+                    if (t === 'Unanswered conversations' || t === 'All conversations' || t === 'This room') {
+                        let box = e; for (let i = 0; i < 3 && box.parentElement; i++) box = box.parentElement;
+                        out.dotsMenu = box.outerHTML.slice(0, 1600); break;
+                    }
+                }
+                return out;
+            })()
+        """)
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:200]}, status_code=500)
+
 @app.get("/debug/events")
 async def debug_events(limit: int = 40):
     """Recent bot events (messages/handle_shares/conversions/bans) for diagnosis."""
