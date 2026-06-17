@@ -528,9 +528,13 @@ class BotOrchestrator:
             try:
                 # 1280x960 (4:3) matches the dashboard's .browser-frame aspect-ratio
                 # so the live stream fills the box with no black bars.
+                # proxyCountryCode="us" pins each browser to a US residential IP
+                # from BU Cloud's pool — each browser instance gets a distinct IP,
+                # so N concurrent bots = N different US exit IPs. No external proxy
+                # service needed; BU Cloud rotates automatically.
                 browser = await client.browsers.create(
                     timeout=60, browser_screen_width=1280, browser_screen_height=960,
-                    enable_recording=False,
+                    enable_recording=False, proxyCountryCode="us",
                 )
             except Exception as e:
                 logger.warning(f"[{worker.username}] provision failed (try {attempt + 1}): {e}")
