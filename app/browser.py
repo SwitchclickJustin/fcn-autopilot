@@ -1041,11 +1041,15 @@ class BotOrchestrator:
             except Exception:
                 pass
             url = new_page.url
+            try:
+                title = await new_page.title()
+            except Exception:
+                title = "?"
             if "freechatnow.com" in url:
-                logger.info(f"[{worker.agent_id}] FCN popup captured: {url}")
+                logger.info(f"[{worker.agent_id}] FCN popup captured: {url} | title={title!r}")
                 _fcn_popup.append(new_page)
             else:
-                logger.info(f"[{worker.agent_id}] closing ad popup: {url}")
+                logger.info(f"[{worker.agent_id}] closing ad popup: {url} | title={title!r}")
                 try:
                     await new_page.close()
                 except Exception:
@@ -1154,6 +1158,28 @@ class BotOrchestrator:
             # a popup) when checked with all fields filled.  no_wait_after=True prevents
             # Playwright from hanging 30 s waiting for the resulting popup/navigation to
             # settle — we handle that ourselves in the wait loop below.
+
+            # Diagnostic: log form target + checkbox onclick to understand submission mechanism
+            try:
+                form_info = await page.evaluate("""() => {
+                    const f = document.querySelector('form[action*="login"]');
+                    if (!f) return {error: 'no form'};
+                    const cb = f.querySelector('input[type=checkbox]');
+                    const btn = f.querySelector('button[type=submit]');
+                    return {
+                        action: f.action,
+                        method: f.method,
+                        target: f.target || '',
+                        cb_onclick: cb ? (cb.getAttribute('onclick') || cb.onclick?.toString()?.slice(0,200) || '') : 'none',
+                        btn_onclick: btn ? (btn.getAttribute('onclick') || btn.onclick?.toString()?.slice(0,200) || '') : 'none',
+                        cb_name: cb ? cb.name : 'none',
+                        cb_value: cb ? cb.value : 'none',
+                    };
+                }""")
+                logger.info(f"[{worker.agent_id}] form_info: {form_info}")
+            except Exception as e:
+                logger.warning(f"[{worker.agent_id}] form_info eval failed: {e}")
+
             logger.info(f"[{worker.agent_id}] ticking checkbox…")
             # Playwright 1.50 removed no_wait_after from check(); use click() instead.
             # click(force=True, no_wait_after=True) toggles the unchecked box and
@@ -1227,13 +1253,19 @@ class BotOrchestrator:
                     cur = page.url or ""
                     if "schat." in cur or "/room/" in cur or "alert=" in cur:
                         break
+                    # Log title + body snippet to diagnose CF vs login-form-reload
+                    try:
+                        _ptitle = await page.title()
+                        _pbody  = await page.evaluate("() => (document.body?.innerText||'').slice(0,150)")
+                    except Exception:
+                        _ptitle, _pbody = "?", "?"
+                    logger.info(f"[{worker.agent_id}] popup tick={_tick} url={cur[:60]} title={_ptitle!r} body={_pbody!r}")
                     if _tick >= 5 and await self._is_blocked_page(page):
                         logger.warning(f"[{worker.agent_id}] Cloudflare in popup — rotating IP")
                         worker.phase = "cf_blocked_popup"
                         page.context.remove_listener("page", _handle_new_page)
                         return False
                     await page.wait_for_timeout(2000)
-                    logger.info(f"[{worker.agent_id}] popup tick={_tick} url={cur[:60]}")
                 break
 
             # Main-page navigation case
