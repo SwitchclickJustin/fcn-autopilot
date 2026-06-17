@@ -333,6 +333,27 @@ class BotOrchestrator:
     _GENDER_MAP = {"f": "female", "female": "female", "m": "male", "male": "male",
                    "other": "other", "couple": "other", "x": "other"}
 
+    # Female-sounding username generator — FCN guest names must be unique while
+    # active, so we mint a fresh high-entropy name on every login (and retry).
+    _FEMALE_NAMES = [
+        "Alexa", "Mia", "Sophia", "Luna", "Zoe", "Lily", "Ava", "Ella", "Chloe", "Ruby",
+        "Nina", "Ivy", "Maya", "Lola", "Bella", "Aria", "Nova", "Sadie", "Gigi", "Vera",
+        "Daisy", "Skye", "Jade", "Roxy", "Coco", "Lexi", "Demi", "Remi", "Cleo", "Tessa",
+        "Hazel", "Willow", "Sienna", "Eva", "Nia", "Gemma", "Faye", "Elle", "Juno", "Cora",
+        "Stella", "Penny", "Naomi", "Iris", "Layla", "Hanna", "Riley", "Paige", "Mila", "Joss",
+    ]
+    _FLIRTY_PREFIX = [
+        "Sweet", "Foxy", "Babe", "Honey", "Sassy", "Cherry", "Sugar", "Velvet", "Kitten",
+        "Angel", "Star", "Silk", "Peach", "Misty", "Lush", "Naughty", "Wild", "Cozy", "Sultry",
+    ]
+
+    def _unique_username(self) -> str:
+        """Mint a fresh, female-sounding, high-entropy username (~75M combos)."""
+        name = random.choice(self._FEMALE_NAMES)
+        if random.random() < 0.45:
+            name = random.choice(self._FLIRTY_PREFIX) + name
+        return f"{name}{random.randint(10, 99999)}"
+
     async def _cdp_guest_login(self, worker: BotWorker, _attempt: int = 0) -> bool:
         """Navigate to the room page and submit FCN's guest-login form via CDP.
 
@@ -345,6 +366,10 @@ class BotOrchestrator:
         """
         page = worker._page
         persona = worker.persona
+
+        # Mint a fresh unique female username for this attempt (guest names must be
+        # unique while active). worker.username drives the bot's in-room identity.
+        worker.username = self._unique_username()
 
         rooms = persona.get("selected_rooms") or ["SextChat"]
         if isinstance(rooms, str):
@@ -406,9 +431,8 @@ class BotOrchestrator:
             except Exception:
                 pass
             logger.warning(f"login bounced for {worker.username}: {msg or url_now}")
-            if "taken" in msg.lower() and _attempt < 2:
-                worker.username = f"{worker.username}{random.randint(1, 99)}"
-                logger.info(f"retrying guest login as {worker.username}")
+            if "taken" in msg.lower() and _attempt < 5:
+                logger.info("username taken — retrying with a fresh generated name")
                 return await self._cdp_guest_login(worker, _attempt + 1)
             return False
 
