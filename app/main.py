@@ -30,6 +30,21 @@ from app.supervisor import supervisor_engine
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 logger = logging.getLogger(__name__)
 
+# In-memory ring buffer for recent log lines (last 500)
+import collections
+_log_ring: collections.deque = collections.deque(maxlen=500)
+
+class _RingHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            _log_ring.append(self.format(record))
+        except Exception:
+            pass
+
+_ring_handler = _RingHandler()
+_ring_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+logging.getLogger().addHandler(_ring_handler)
+
 # ─── Lifecycle ───
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -934,6 +949,14 @@ async def debug_screenshot():
         return Response(content=png, media_type="image/png")
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=500)
+
+@app.get("/debug/logs")
+async def debug_logs(n: int = 200, grep: str = ""):
+    """Return the last N lines from the in-memory log ring buffer."""
+    lines = list(_log_ring)[-n:]
+    if grep:
+        lines = [l for l in lines if grep.lower() in l.lower()]
+    return {"count": len(lines), "lines": lines}
 
 @app.get("/debug/browser-status")
 async def debug_browser_status():
