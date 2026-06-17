@@ -998,30 +998,39 @@ class BotOrchestrator:
         age = random.randint(23, 30)
         birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
 
-        # Check form is present before touching it
-        form_exists = await page.evaluate(
-            "() => !!document.querySelector(\"form[action*='chat/login']\")")
-        if not form_exists:
-            logger.warning(f"guest form not found for {worker.username} @ {page.url}")
+        # Wait for the login form to be visible — with 4 agents starting
+        # simultaneously the page may still be rendering when we get here.
+        try:
+            await page.wait_for_selector(
+                "form[action*='chat/login']", state="visible", timeout=10000)
+        except Exception:
+            logger.warning(f"[{worker.agent_id}] login form never appeared @ {page.url}")
             return False
 
         try:
-            # ── Username: real click → char-by-char keyboard type ─────────────
-            # JS .value= sets the field silently with no input/keydown events.
-            # Real typing fires focus → keydown/keypress/input/keyup per char,
-            # which is what Cloudflare expects from a human.
+            # ── Username: wait for field visible → click → char-by-char type ──
+            # JS .value= sets the field silently (no keydown/input events).
+            # page.keyboard.type() fires real key events Cloudflare expects.
             try:
+                await page.wait_for_selector(
+                    "input[name=username]", state="visible", timeout=5000)
                 await page.click("input[name=username]", timeout=5000)
-            except Exception:
-                await page.evaluate("() => document.querySelector('input[name=username]')?.focus()")
-            await page.wait_for_timeout(random.randint(300, 800))
-            for ch in worker.login_name:
-                await page.keyboard.type(ch)
-                await page.wait_for_timeout(random.randint(65, 215))
+                await page.wait_for_timeout(random.randint(300, 800))
+                for ch in worker.login_name:
+                    await page.keyboard.type(ch)
+                    await page.wait_for_timeout(random.randint(65, 215))
+                logger.info(f"[{worker.agent_id}] typed username via keyboard events")
+            except Exception as e:
+                logger.warning(f"[{worker.agent_id}] username click/type failed ({e}) — JS fallback")
+                await page.evaluate(
+                    "(v) => { const u=document.querySelector('input[name=username]'); if(u)u.value=v; }",
+                    worker.login_name)
 
-            # ── Gender: mouse to element → select_option (fires change events) ─
+            # ── Gender: mouse to element → select_option ─────────────────────
             await page.wait_for_timeout(random.randint(500, 1100))
             try:
+                await page.wait_for_selector(
+                    "select[name=gender]", state="visible", timeout=5000)
                 sel_el = await page.query_selector("select[name=gender]")
                 if sel_el:
                     bb = await sel_el.bounding_box()
@@ -1030,18 +1039,34 @@ class BotOrchestrator:
                             bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
                         await page.wait_for_timeout(random.randint(200, 500))
                 await page.select_option("select[name=gender]", gval, timeout=5000)
-            except Exception:
+                logger.info(f"[{worker.agent_id}] selected gender={gval} via select_option")
+            except Exception as e:
+                logger.warning(f"[{worker.agent_id}] gender select failed ({e}) — JS fallback")
                 await page.evaluate(
                     "(v) => { const g=document.querySelector('select[name=gender]'); if(g)g.value=v; }",
                     gval)
             await page.wait_for_timeout(random.randint(400, 950))
 
-            # ── Birthdate: click → fill (fires focus + change events) ─────────
+            # ── Birthdate: click → fill → verify value was accepted ───────────
+            # <input type="date"> expects ISO "YYYY-MM-DD" from page.fill().
+            # Verify the field actually holds the value; if not, type it manually.
             try:
+                await page.wait_for_selector(
+                    "input[name=birthdate]", state="visible", timeout=5000)
                 await page.click("input[name=birthdate]", timeout=5000)
                 await page.wait_for_timeout(random.randint(300, 700))
                 await page.fill("input[name=birthdate]", birthdate, timeout=5000)
-            except Exception:
+                actual = await page.input_value("input[name=birthdate]")
+                if actual != birthdate:
+                    # Date input didn't accept ISO string — type it char by char
+                    await page.triple_click("input[name=birthdate]")
+                    await page.keyboard.press("Control+A")
+                    for ch in birthdate:
+                        await page.keyboard.type(ch)
+                        await page.wait_for_timeout(random.randint(50, 130))
+                logger.info(f"[{worker.agent_id}] birthdate set to {birthdate}")
+            except Exception as e:
+                logger.warning(f"[{worker.agent_id}] birthdate fill failed ({e}) — JS fallback")
                 await page.evaluate(
                     "(v) => { const b=document.querySelector('input[name=birthdate]'); if(b)b.value=v; }",
                     birthdate)
@@ -1049,6 +1074,8 @@ class BotOrchestrator:
 
             # ── Checkbox: mouse to element → real click ───────────────────────
             try:
+                await page.wait_for_selector(
+                    "input[type=checkbox]", state="visible", timeout=5000)
                 chk_el = await page.query_selector("input[type=checkbox]")
                 if chk_el:
                     bb = await chk_el.bounding_box()
@@ -1057,7 +1084,9 @@ class BotOrchestrator:
                             bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
                         await page.wait_for_timeout(random.randint(200, 500))
                 await page.click("input[type=checkbox]", timeout=5000)
-            except Exception:
+                logger.info(f"[{worker.agent_id}] checkbox clicked")
+            except Exception as e:
+                logger.warning(f"[{worker.agent_id}] checkbox click failed ({e}) — JS fallback")
                 await page.evaluate(
                     "() => { const c=document.querySelector('input[type=checkbox]'); if(c)c.checked=true; }")
             await page.wait_for_timeout(random.randint(700, 1600))

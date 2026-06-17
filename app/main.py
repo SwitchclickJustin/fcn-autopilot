@@ -1072,6 +1072,16 @@ async def providers_page(request: Request):
 async def supervisor_page(request: Request):
     rules = await get_rules()
     ban_events = await get_ban_events()
+    # asyncpg returns TIMESTAMP columns as datetime objects; stringify for template slicing
+    for b in ban_events:
+        if hasattr(b.get("created_at"), "strftime"):
+            b["created_at"] = b["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        b.setdefault("likely_reason", "")
+        b.setdefault("cooldown_adjustment", 0)
+    for r in rules:
+        if hasattr(r.get("created_at"), "strftime"):
+            r["created_at"] = r["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        r.setdefault("description", "")
     return templates.TemplateResponse(request, "supervisor.html", context={
         "rules": rules,
         "ban_events": ban_events
