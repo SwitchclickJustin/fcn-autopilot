@@ -158,7 +158,15 @@ class BotWorker:
                     pass
                 await inp.focus()
                 await inp.fill("")  # clear any stale text
-                await self._page.keyboard.type(message, delay=10)
+                # Human-like typing ~15-20 WPM (FCN analyzes typing cadence). ~5
+                # chars/word → ~0.6s/char avg = ~18 WPM, with jitter + the odd pause.
+                for ch in message:
+                    await self._page.keyboard.type(ch)
+                    delay = random.uniform(0.35, 0.85)
+                    if random.random() < 0.06:
+                        delay += random.uniform(0.4, 1.3)  # brief "thinking" pause
+                    await asyncio.sleep(delay)
+                await asyncio.sleep(random.uniform(0.2, 0.6))
                 await self._page.keyboard.press("Enter")
                 await asyncio.sleep(0.7)
                 if await _sent():
