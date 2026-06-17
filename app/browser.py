@@ -805,6 +805,18 @@ class BotOrchestrator:
             else:
                 worker._page = await (await worker._cdp.new_context()).new_page()
 
+            # Wipe any cookies/storage the cloud provider may have pre-populated
+            # on the default context before we touch FCN. Belt-and-suspenders —
+            # browsers.create() gives a fresh instance but clearing explicitly
+            # ensures no fingerprint leaks across recovery attempts.
+            await worker._page.context.clear_cookies()
+            try:
+                await worker._page.evaluate(
+                    "() => { window.localStorage.clear(); window.sessionStorage.clear(); }"
+                )
+            except Exception:
+                pass
+
             # Rotate user agent — every agent gets a different UA so the fleet
             # doesn't share a single fingerprint that Cloudflare can block en masse.
             ua = random.choice(self._USER_AGENTS)
