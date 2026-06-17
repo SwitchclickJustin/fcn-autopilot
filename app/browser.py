@@ -1006,82 +1006,112 @@ class BotOrchestrator:
         age = random.randint(20, 26)
         birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
 
-        # Wait for login form (attached = exists in DOM; visible can fail if
-        # the form is off-screen or temporarily hidden on initial load).
+        # Diagnose the form before touching it — log all selects so we can verify
+        # field names. Read-only evaluate, no injection.
+        try:
+            form_info = await page.evaluate("""() => {
+                const f = document.querySelector('form[action*="login"]');
+                if (!f) return {found: false, forms: Array.from(document.querySelectorAll('form')).map(x=>x.getAttribute('action'))};
+                return {found: true, action: f.getAttribute('action'),
+                    inputs: Array.from(f.querySelectorAll('input,select')).map(e=>({tag:e.tagName,name:e.name,type:e.type}))};
+            }""")
+            logger.info(f"[{worker.agent_id}] form_info: {form_info}")
+        except Exception:
+            pass
+
+        # form[action*='login'] — broader match; the action per room is e.g.
+        # /chat/sex/login which does NOT contain 'chat/login' as a substring.
         try:
             await page.wait_for_selector(
-                "form[action*='chat/login']", state="attached", timeout=10000)
+                "form[action*='login']", state="attached", timeout=10000)
         except Exception:
-            try:
-                forms = await page.evaluate(
-                    "() => Array.from(document.querySelectorAll('form'))"
-                    ".map(f => f.getAttribute('action') || '(no action)')")
-                logger.warning(
-                    f"[{worker.agent_id}] form[action*='chat/login'] not found "
-                    f"@ {page.url} | forms: {forms}")
-            except Exception:
-                logger.warning(f"[{worker.agent_id}] login form not found @ {page.url}")
+            logger.warning(f"[{worker.agent_id}] no login form found @ {page.url}")
             return False
 
-        try:
-            # Use page-level methods throughout — they re-query the DOM fresh on
-            # every call, so FCN's JS mutating the form between steps never causes
-            # a stale element-handle error.
+        # Close any ad popups that open during form interaction — FCN's submit
+        # button onclick fires ad redirects in new tabs; shut them immediately
+        # so they don't steal focus or mess with our CDP page context.
+        async def _close_ad(new_page):
+            try:
+                await new_page.close()
+            except Exception:
+                pass
+        page.context.on("page", _close_ad)
 
+        try:
             # ── Username ──────────────────────────────────────────────────────
-            logger.info(f"[{worker.agent_id}] waiting for username field…")
+            logger.info(f"[{worker.agent_id}] filling username…")
             await page.wait_for_selector("input[name=username]", state="attached", timeout=8000)
             await page.click("input[name=username]")
             await page.wait_for_timeout(random.randint(300, 800))
-            logger.info(f"[{worker.agent_id}] typing username '{worker.login_name}'")
             for ch in worker.login_name:
                 await page.keyboard.type(ch)
                 await page.wait_for_timeout(random.randint(65, 215))
-            logger.info(f"[{worker.agent_id}] ✓ username done")
+            logger.info(f"[{worker.agent_id}] ✓ username '{worker.login_name}'")
 
             # ── Gender ────────────────────────────────────────────────────────
             await page.wait_for_timeout(random.randint(500, 1100))
             logger.info(f"[{worker.agent_id}] selecting gender={gval}…")
             await page.wait_for_selector("select[name=gender]", state="attached", timeout=5000)
             await page.select_option("select[name=gender]", gval)
-            logger.info(f"[{worker.agent_id}] ✓ gender done")
+            logger.info(f"[{worker.agent_id}] ✓ gender")
             await page.wait_for_timeout(random.randint(400, 950))
 
-            # ── Birthdate ─────────────────────────────────────────────────────
-            logger.info(f"[{worker.agent_id}] filling birthdate={birthdate}…")
-            await page.wait_for_selector("input[name=birthdate]", state="attached", timeout=5000)
-            await page.click("input[name=birthdate]")
-            await page.wait_for_timeout(random.randint(300, 700))
-            await page.fill("input[name=birthdate]", birthdate)
-            actual = await page.input_value("input[name=birthdate]")
-            if actual != birthdate:
-                # date input didn't accept ISO string — type it manually
-                await page.triple_click("input[name=birthdate]")
-                for ch in birthdate:
-                    await page.keyboard.type(ch)
-                    await page.wait_for_timeout(random.randint(50, 130))
-                actual = await page.input_value("input[name=birthdate]")
-            logger.info(f"[{worker.agent_id}] ✓ birthdate done (field={actual!r})")
+            # ── Birthdate — 3 separate <select> dropdowns (Month / Day / Year)
+            # The form uses selects, not a single date input.
+            year_str, month_str, day_str = birthdate.split("-")
+            month_int = int(month_str)   # 1-12
+            day_int   = int(day_str)     # 1-28
+            year_int  = int(year_str)    # e.g. 2001
+
+            logger.info(f"[{worker.agent_id}] filling birthdate selects {month_int}/{day_int}/{year_int}…")
+            # Month — try value as int string, then as zero-padded, then by label
+            await page.wait_for_selector("select[name*='month']", state="attached", timeout=5000)
+            for mv in [str(month_int), f"{month_int:02d}"]:
+                try:
+                    await page.select_option("select[name*='month']", value=mv)
+                    break
+                except Exception:
+                    pass
+            logger.info(f"[{worker.agent_id}] ✓ birth month")
+            await page.wait_for_timeout(random.randint(200, 500))
+
+            # Day
+            await page.wait_for_selector("select[name*='day']", state="attached", timeout=5000)
+            for dv in [str(day_int), f"{day_int:02d}"]:
+                try:
+                    await page.select_option("select[name*='day']", value=dv)
+                    break
+                except Exception:
+                    pass
+            logger.info(f"[{worker.agent_id}] ✓ birth day")
+            await page.wait_for_timeout(random.randint(200, 500))
+
+            # Year
+            await page.wait_for_selector("select[name*='year']", state="attached", timeout=5000)
+            await page.select_option("select[name*='year']", value=str(year_int))
+            logger.info(f"[{worker.agent_id}] ✓ birth year")
             await page.wait_for_timeout(random.randint(400, 900))
 
             # ── Checkbox ──────────────────────────────────────────────────────
             logger.info(f"[{worker.agent_id}] ticking checkbox…")
             await page.wait_for_selector("input[type=checkbox]", state="attached", timeout=5000)
             await page.click("input[type=checkbox]")
-            logger.info(f"[{worker.agent_id}] ✓ checkbox done")
+            logger.info(f"[{worker.agent_id}] ✓ checkbox")
             await page.wait_for_timeout(random.randint(700, 1600))
 
-            # ── Submit: focus a text field then press Enter ───────────────────
-            # Enter submits the form natively without firing the submit button's
-            # onclick ad-redirect handlers.
-            logger.info(f"[{worker.agent_id}] submitting form…")
-            await page.click("input[name=username]")
-            await page.wait_for_timeout(random.randint(300, 700))
-            await page.keyboard.press("Enter")
-            logger.info(f"[{worker.agent_id}] ✓ form submitted")
+            # ── Submit: click "Chat As Guest" button ──────────────────────────
+            # Ad-popup handler above closes new tabs; the button click itself
+            # stays on the FCN page which then redirects to schat.freechatnow.com.
+            logger.info(f"[{worker.agent_id}] clicking Chat As Guest…")
+            await page.click("input[value*='Chat As Guest'], button:has-text('Chat As Guest')", timeout=5000)
+            logger.info(f"[{worker.agent_id}] ✓ submitted")
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] form step failed: {e}")
+            page.context.remove_listener("page", _close_ad)
             return False
+
+        page.context.remove_listener("page", _close_ad)
 
         # Wait for the room SPA to sign in and load (also watch for captcha)
         worker.phase = "login_wait_room"
@@ -1650,9 +1680,9 @@ class BotOrchestrator:
         if worker.browser_id:
             try:
                 await client.browsers.stop(worker.browser_id)
-                logger.info(f"Browser stopped for {username}")
+                logger.info(f"Browser stopped for {agent_id}")
             except Exception as e:
-                logger.error(f"Error stopping browser for {username}: {e}")
+                logger.error(f"Error stopping browser for {agent_id}: {e}")
 
         # Legacy: stop an SDK agent session if one was ever created
         if worker.session_id:
