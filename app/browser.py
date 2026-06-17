@@ -1008,98 +1008,70 @@ class BotOrchestrator:
             return False
 
         try:
-            # ── Username: wait for field visible → click → char-by-char type ──
-            # JS .value= sets the field silently (no keydown/input events).
-            # page.keyboard.type() fires real key events Cloudflare expects.
-            try:
-                await page.wait_for_selector(
-                    "input[name=username]", state="visible", timeout=5000)
-                await page.click("input[name=username]", timeout=5000)
-                await page.wait_for_timeout(random.randint(300, 800))
-                for ch in worker.login_name:
-                    await page.keyboard.type(ch)
-                    await page.wait_for_timeout(random.randint(65, 215))
-                logger.info(f"[{worker.agent_id}] typed username via keyboard events")
-            except Exception as e:
-                logger.warning(f"[{worker.agent_id}] username click/type failed ({e}) — JS fallback")
-                await page.evaluate(
-                    "(v) => { const u=document.querySelector('input[name=username]'); if(u)u.value=v; }",
-                    worker.login_name)
+            # ── Username: click → char-by-char keyboard type ──────────────────
+            await page.wait_for_selector(
+                "input[name=username]", state="visible", timeout=5000)
+            await page.click("input[name=username]", timeout=5000)
+            await page.wait_for_timeout(random.randint(300, 800))
+            for ch in worker.login_name:
+                await page.keyboard.type(ch)
+                await page.wait_for_timeout(random.randint(65, 215))
+            logger.info(f"[{worker.agent_id}] typed username '{worker.login_name}'")
 
-            # ── Gender: mouse to element → select_option ─────────────────────
+            # ── Gender: mouse to element → select_option ──────────────────────
             await page.wait_for_timeout(random.randint(500, 1100))
-            try:
-                await page.wait_for_selector(
-                    "select[name=gender]", state="visible", timeout=5000)
-                sel_el = await page.query_selector("select[name=gender]")
-                if sel_el:
-                    bb = await sel_el.bounding_box()
-                    if bb:
-                        await page.mouse.move(
-                            bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
-                        await page.wait_for_timeout(random.randint(200, 500))
-                await page.select_option("select[name=gender]", gval, timeout=5000)
-                logger.info(f"[{worker.agent_id}] selected gender={gval} via select_option")
-            except Exception as e:
-                logger.warning(f"[{worker.agent_id}] gender select failed ({e}) — JS fallback")
-                await page.evaluate(
-                    "(v) => { const g=document.querySelector('select[name=gender]'); if(g)g.value=v; }",
-                    gval)
+            await page.wait_for_selector(
+                "select[name=gender]", state="visible", timeout=5000)
+            sel_el = await page.query_selector("select[name=gender]")
+            if sel_el:
+                bb = await sel_el.bounding_box()
+                if bb:
+                    await page.mouse.move(
+                        bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+                    await page.wait_for_timeout(random.randint(200, 500))
+            await page.select_option("select[name=gender]", gval, timeout=5000)
+            logger.info(f"[{worker.agent_id}] selected gender={gval}")
             await page.wait_for_timeout(random.randint(400, 950))
 
-            # ── Birthdate: click → fill → verify value was accepted ───────────
-            # <input type="date"> expects ISO "YYYY-MM-DD" from page.fill().
-            # Verify the field actually holds the value; if not, type it manually.
-            try:
-                await page.wait_for_selector(
-                    "input[name=birthdate]", state="visible", timeout=5000)
-                await page.click("input[name=birthdate]", timeout=5000)
-                await page.wait_for_timeout(random.randint(300, 700))
-                await page.fill("input[name=birthdate]", birthdate, timeout=5000)
-                actual = await page.input_value("input[name=birthdate]")
-                if actual != birthdate:
-                    # Date input didn't accept ISO string — type it char by char
-                    await page.triple_click("input[name=birthdate]")
-                    await page.keyboard.press("Control+A")
-                    for ch in birthdate:
-                        await page.keyboard.type(ch)
-                        await page.wait_for_timeout(random.randint(50, 130))
-                logger.info(f"[{worker.agent_id}] birthdate set to {birthdate}")
-            except Exception as e:
-                logger.warning(f"[{worker.agent_id}] birthdate fill failed ({e}) — JS fallback")
-                await page.evaluate(
-                    "(v) => { const b=document.querySelector('input[name=birthdate]'); if(b)b.value=v; }",
-                    birthdate)
+            # ── Birthdate: click → fill (ISO YYYY-MM-DD); type char-by-char if
+            #   fill doesn't stick (some date inputs need keyboard input)
+            await page.wait_for_selector(
+                "input[name=birthdate]", state="visible", timeout=5000)
+            await page.click("input[name=birthdate]", timeout=5000)
+            await page.wait_for_timeout(random.randint(300, 700))
+            await page.fill("input[name=birthdate]", birthdate, timeout=5000)
+            actual = await page.input_value("input[name=birthdate]")
+            if actual != birthdate:
+                await page.triple_click("input[name=birthdate]")
+                for ch in birthdate:
+                    await page.keyboard.type(ch)
+                    await page.wait_for_timeout(random.randint(50, 130))
+            logger.info(f"[{worker.agent_id}] birthdate={birthdate}")
             await page.wait_for_timeout(random.randint(400, 900))
 
             # ── Checkbox: mouse to element → real click ───────────────────────
-            try:
-                await page.wait_for_selector(
-                    "input[type=checkbox]", state="visible", timeout=5000)
-                chk_el = await page.query_selector("input[type=checkbox]")
-                if chk_el:
-                    bb = await chk_el.bounding_box()
-                    if bb:
-                        await page.mouse.move(
-                            bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
-                        await page.wait_for_timeout(random.randint(200, 500))
-                await page.click("input[type=checkbox]", timeout=5000)
-                logger.info(f"[{worker.agent_id}] checkbox clicked")
-            except Exception as e:
-                logger.warning(f"[{worker.agent_id}] checkbox click failed ({e}) — JS fallback")
-                await page.evaluate(
-                    "() => { const c=document.querySelector('input[type=checkbox]'); if(c)c.checked=true; }")
+            await page.wait_for_selector(
+                "input[type=checkbox]", state="visible", timeout=5000)
+            chk_el = await page.query_selector("input[type=checkbox]")
+            if chk_el:
+                bb = await chk_el.bounding_box()
+                if bb:
+                    await page.mouse.move(
+                        bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+                    await page.wait_for_timeout(random.randint(200, 500))
+            await page.click("input[type=checkbox]", timeout=5000)
+            logger.info(f"[{worker.agent_id}] checkbox ticked")
             await page.wait_for_timeout(random.randint(700, 1600))
 
-            # ── Submit via form.submit() (NOT the button — it fires ad redirects)
-            res = await page.evaluate(
-                "() => { const f=document.querySelector(\"form[action*='chat/login']\"); "
-                "if(!f) return 'no-form'; f.submit(); return 'submitted'; }")
+            # ── Submit: refocus username and press Enter ───────────────────────
+            # Keyboard Enter submits the form natively without firing the
+            # submit button's onclick ad-redirect handlers.
+            await page.focus("input[name=username]")
+            await page.wait_for_timeout(random.randint(300, 700))
+            await page.keyboard.press("Enter")
+            logger.info(f"[{worker.agent_id}] form submitted via Enter key")
         except Exception as e:
-            logger.warning(f"guest-form submit failed ({worker.username}): {e}")
-            return False
-        if res != "submitted":
-            logger.warning(f"guest form not submitted for {worker.username} @ {page.url}: {res}")
+            logger.warning(f"[{worker.agent_id}] form interaction failed: {e}")
             return False
 
         # Wait for the room SPA to sign in and load (also watch for captcha)
