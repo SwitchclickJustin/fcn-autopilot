@@ -100,7 +100,7 @@ class BotWorker:
                         const msg = (textEl.textContent || '').trim();
                         if (!msg) return;
                         const metaEl = li.querySelector('.message-meta');
-                        const user = metaEl ? (metaEl.textContent || '').trim() : '';
+                        const user = metaEl ? (metaEl.textContent || '').trim().replace(/:+$/, '') : '';
                         out.push(user ? user + ': ' + msg : msg);
                     });
                     if (out.length) return out.slice(-30);
@@ -129,15 +129,39 @@ class BotWorker:
                         break
             if inp is None:
                 return False
-            # Real Playwright input — fill() + Enter reliably triggers the Vue
-            # v-model + send handler (JS .value= alone often doesn't).
-            await inp.click()
-            await inp.fill(message)
+            # focus() (not click) so an ad overlay covering the input doesn't block
+            # us, then type real keystrokes (Vue v-model picks them up) + Enter.
+            try:
+                await inp.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
+            await inp.focus()
+            await self._page.keyboard.type(message, delay=12)
             await self._page.keyboard.press("Enter")
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.7)
             return True
-        except Exception:
-            return False
+        except Exception as e:
+            logger.warning(f"[{self.username}] send (keyboard) failed: {e}; trying JS")
+            # JS fallback: native value setter (Vue-safe) + Enter + send button
+            try:
+                ok = await self._page.evaluate("""(msg) => {
+                    const inp = document.querySelector('input[placeholder="Type to chat"]')
+                        || document.querySelector('textarea')
+                        || document.querySelector('input[type=search]');
+                    if (!inp) return false;
+                    inp.focus();
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                    setter.call(inp, msg);
+                    inp.dispatchEvent(new Event('input', {bubbles: true}));
+                    inp.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
+                    const btn = document.querySelector('button[class*=send i], [class*=send-message i], [class*=composer i] button');
+                    if (btn) btn.click();
+                    return true;
+                }""", message)
+                await asyncio.sleep(0.7)
+                return bool(ok)
+            except Exception:
+                return False
 
     def to_dict(self):
         return {
