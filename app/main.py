@@ -17,7 +17,8 @@ from app.database import (
     get_db, get_personas, get_persona, create_persona, update_persona, delete_persona,
     get_providers, create_provider, delete_provider,
     create_session, update_session, get_active_session, get_session,
-    log_chat, get_chat_log, get_ban_events, get_rules
+    log_chat, get_chat_log, get_ban_events, get_rules,
+    get_stats, log_event,
 )
 from app.models import PersonaCreate, PersonaUpdate, LLMProviderCreate, new_id
 from app.providers import provider_registry
@@ -1256,6 +1257,31 @@ async def api_generate_username(data: dict):
     import random
     fallbacks = ["SugarSpice", "VelvetAngel", "SweetTempt", "BlushingBabe", "CherryBlossom", "SilkDreams", "GoldenMuse", "LunaFlirt"]
     return {"username": random.choice(fallbacks) + str(random.randint(10, 999))}
+
+# ─── API: Stats ───
+@app.get("/api/stats")
+async def api_stats(range: str = "today", start: str = "", end: str = ""):
+    """Bot activity stats for a date range (UTC). range: today|yesterday|week|month|custom."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    fmt = "%Y-%m-%d %H:%M:%S"
+    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if range == "yesterday":
+        s, e = day0 - timedelta(days=1), day0
+    elif range == "week":
+        s, e = day0 - timedelta(days=6), now
+    elif range == "month":
+        s, e = day0 - timedelta(days=29), now
+    elif range == "custom" and start:
+        try:
+            s = datetime.strptime(start, "%Y-%m-%d")
+            e = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)) if end else now
+        except Exception:
+            s, e = day0, now
+    else:  # today (default)
+        s, e = day0, now
+    stats = await get_stats(s.strftime(fmt), e.strftime(fmt))
+    return {"range": range, "start": s.strftime(fmt), "end": e.strftime(fmt), **stats}
 
 # ─── API: Supervisor ───
 @app.get("/api/supervisor/rules")

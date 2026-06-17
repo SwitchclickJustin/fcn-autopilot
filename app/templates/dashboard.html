@@ -75,12 +75,39 @@
       </div>
     </div>
 
-    <!-- Quick Send -->
+    <!-- Statistics -->
     <div class="card" style="margin-bottom:.75rem">
-      <div class="card-title">Quick Send</div>
-      <div class="flex" style="gap:.5rem">
-        <input type="text" id="quick-msg" placeholder="Type a message..." style="flex:1" onkeydown="if(event.key==='Enter')sendMessage()">
-        <button class="btn btn-primary" onclick="sendMessage()">Send</button>
+      <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:.6rem">
+        <div class="card-title" style="margin:0">📊 Statistics</div>
+        <select id="stats-range" onchange="onStatsRange()" style="width:auto;min-width:110px">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="week">Week</option>
+          <option value="month">Month</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div id="stats-custom" class="flex" style="display:none;gap:.4rem;margin-bottom:.6rem">
+        <input type="date" id="stats-start" style="flex:1" onchange="loadStats()">
+        <input type="date" id="stats-end" style="flex:1" onchange="loadStats()">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-messages" style="font-size:1.6rem;font-weight:700">–</div>
+          <div style="font-size:.72rem;opacity:.65">Messages sent</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-handles" style="font-size:1.6rem;font-weight:700">–</div>
+          <div style="font-size:.72rem;opacity:.65">Handle shares</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-dms" style="font-size:1.6rem;font-weight:700">–</div>
+          <div style="font-size:.72rem;opacity:.65">DMs talked to</div>
+        </div>
+        <div style="background:rgba(74,222,128,.08);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-conversions" style="font-size:1.6rem;font-weight:700;color:#4ade80">–</div>
+          <div style="font-size:.72rem;opacity:.65">Conversions ✅</div>
+        </div>
       </div>
     </div>
 
@@ -309,8 +336,34 @@ function copyText(msg) { navigator.clipboard.writeText(msg).then(() => toast('Co
 function escHtml(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 function escAttr(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
 
+// ─── Statistics ───
+async function loadStats() {
+  const range = document.getElementById('stats-range').value;
+  let url = '/api/stats?range=' + range;
+  if (range === 'custom') {
+    const s = document.getElementById('stats-start').value;
+    const e = document.getElementById('stats-end').value;
+    if (s) url += '&start=' + s;
+    if (e) url += '&end=' + e;
+  }
+  try {
+    const d = await (await fetch(url)).json();
+    document.getElementById('stat-messages').textContent = d.messages ?? 0;
+    document.getElementById('stat-handles').textContent = d.handle_shares ?? 0;
+    document.getElementById('stat-dms').textContent = d.dms ?? 0;
+    document.getElementById('stat-conversions').textContent = d.conversions ?? 0;
+  } catch (e) {}
+}
+function onStatsRange() {
+  document.getElementById('stats-custom').style.display =
+    document.getElementById('stats-range').value === 'custom' ? 'flex' : 'none';
+  loadStats();
+}
+
 // ─── Init ───
 connectWS();
+loadStats();
+setInterval(loadStats, 20000);
 
 // Auto-start session if a persona exists and no session is active
 {% if session and session.status == 'active' %}

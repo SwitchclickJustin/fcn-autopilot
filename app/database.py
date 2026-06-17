@@ -116,6 +116,16 @@ CREATE TABLE IF NOT EXISTS supervisor_rules (
     last_triggered TIMESTAMP DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS bot_events (
+    id SERIAL PRIMARY KEY,
+    persona_id TEXT DEFAULT '',
+    event_type TEXT,              -- message | handle_share | dm | conversion | ban
+    room TEXT DEFAULT '',
+    other_user TEXT DEFAULT '',
+    content TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 async def get_db():
@@ -313,6 +323,61 @@ async def get_chat_log(session_id: str, limit=50):
     rows = await _fetchall(db, query, [session_id, limit])
     await close_db(db)
     return rows
+
+# ─── Bot Events / Stats ───
+async def log_event(persona_id: str, event_type: str, room: str = "",
+                    other_user: str = "", content: str = ""):
+    """Record a bot action for stats (message/handle_share/dm/conversion/ban)."""
+    entry = {"persona_id": persona_id or "", "event_type": event_type,
+             "room": room or "", "other_user": other_user or "", "content": (content or "")[:500]}
+    cols = ", ".join(entry.keys())
+    placeholders = ", ".join([f"${i+1}" for i in range(len(entry))]) if USE_NEON else ", ".join(["?"] * len(entry))
+    db = await get_db()
+    try:
+        await _execute(db, f"INSERT INTO bot_events ({cols}) VALUES ({placeholders})", list(entry.values()))
+    except Exception as e:
+        logger.error(f"log_event failed: {e}")
+    finally:
+        await close_db(db)
+
+async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
+    """Counts by event_type in [start, end) (UTC 'YYYY-MM-DD HH:MM:SS' strings).
+    Returns {messages, handle_shares, dms, conversions, bans}."""
+    # asyncpg needs datetime objects for a timestamp column; sqlite compares text.
+    if USE_NEON:
+        s = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+        e = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+    else:
+        s, e = start, end
+    db = await get_db()
+    if USE_NEON:
+        q = "SELECT event_type, COUNT(*) AS c FROM bot_events WHERE created_at >= $1 AND created_at < $2"
+        params = [s, e]
+        if persona_id:
+            q += " AND persona_id = $3"; params.append(persona_id)
+        q += " GROUP BY event_type"
+    else:
+        q = "SELECT event_type, COUNT(*) AS c FROM bot_events WHERE created_at >= ? AND created_at < ?"
+        params = [s, e]
+        if persona_id:
+            q += " AND persona_id = ?"; params.append(persona_id)
+        q += " GROUP BY event_type"
+    rows = await _fetchall(db, q, params)
+    # distinct DM users in range
+    if USE_NEON:
+        dq = "SELECT COUNT(DISTINCT other_user) AS c FROM bot_events WHERE event_type='dm' AND created_at >= $1 AND created_at < $2 AND other_user <> ''"
+    else:
+        dq = "SELECT COUNT(DISTINCT other_user) AS c FROM bot_events WHERE event_type='dm' AND created_at >= ? AND created_at < ? AND other_user <> ''"
+    drows = await _fetchall(db, dq, [s, e])
+    await close_db(db)
+    counts = {r["event_type"]: r["c"] for r in rows}
+    return {
+        "messages": counts.get("message", 0),
+        "handle_shares": counts.get("handle_share", 0),
+        "dms": (drows[0]["c"] if drows else 0),
+        "conversions": counts.get("conversion", 0),
+        "bans": counts.get("ban", 0),
+    }
 
 # ─── Ban Events ───
 async def log_ban_event(entry: dict):

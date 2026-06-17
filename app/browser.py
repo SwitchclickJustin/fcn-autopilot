@@ -20,10 +20,17 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time
 from typing import Optional
 
 from app.config import settings
+import app.database as db
+
+# A user confirming they added her elsewhere = a conversion
+_CONFIRM_RE = re.compile(
+    r"\b(added (you|u|ya|her)|found (you|u)|messaged (you|u)|i('?ve)? added|just added|"
+    r"add(ed)? you there|hit you up|in your dm|texted you|added u there)\b", re.I)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +52,8 @@ class BotWorker:
         self.persona = persona
         self.username: str = persona.get("username", "ChatBot_42")  # STABLE key (dict/flag)
         self.login_name: str = self.username  # generated FCN chat identity (per session)
+        self.room: str = ""            # current room name
+        self.handle_shared: bool = False  # shared the contact handle (awaiting confirm)
         self.profile_id: str = ""
         self.session_id: str = ""
         self.browser_id: str = ""
@@ -158,15 +167,15 @@ class BotWorker:
                     pass
                 await inp.focus()
                 await inp.fill("")  # clear any stale text
-                # Human-like typing ~15-20 WPM (FCN analyzes typing cadence). ~5
-                # chars/word → ~0.6s/char avg = ~18 WPM, with jitter + the odd pause.
+                # Human-like typing ~25 WPM (FCN analyzes typing cadence). ~5
+                # chars/word → ~0.48s/char avg = ~25 WPM, with jitter + the odd pause.
                 for ch in message:
                     await self._page.keyboard.type(ch)
-                    delay = random.uniform(0.35, 0.85)
-                    if random.random() < 0.06:
-                        delay += random.uniform(0.4, 1.3)  # brief "thinking" pause
+                    delay = random.uniform(0.28, 0.62)
+                    if random.random() < 0.05:
+                        delay += random.uniform(0.3, 0.9)  # brief "thinking" pause
                     await asyncio.sleep(delay)
-                await asyncio.sleep(random.uniform(0.2, 0.6))
+                await asyncio.sleep(random.uniform(0.15, 0.45))
                 await self._page.keyboard.press("Enter")
                 await asyncio.sleep(0.7)
                 if await _sent():
@@ -493,6 +502,7 @@ class BotOrchestrator:
             except Exception:
                 rooms = [rooms]
         room = (rooms[0] if rooms else "SextChat") or "SextChat"
+        worker.room = room
         slug = room.lower().replace("chat", "").strip() or "sext"
         url = f"{self.FCN_BASE}/chat/{slug}/"
 
@@ -744,34 +754,65 @@ class BotOrchestrator:
         if not llm:
             return
 
+        persona_id = persona.get("id", "")
+
+        # Conversion: a recent message confirming they added her elsewhere
+        if worker.handle_shared and _CONFIRM_RE.search("\n".join(messages[-6:])):
+            try:
+                await db.log_event(persona_id, "conversion", room=worker.room, content="\n".join(messages[-3:]))
+            except Exception:
+                pass
+            worker.handle_shared = False
+
         context = "\n".join(messages[-10:])
         tone = persona.get("default_tone", "casual")
         bio = persona.get("bio", "")
+        handle = (persona.get("telegram_handle", "") or "").strip()
+
         system = (
-            f"You are chatting in an adult chat room (18+). Your username is {username}. "
+            f"You are {username}, a real woman chatting in an adult chat room (18+). "
             f"Tone: {tone}. Personality: {bio}. "
             f"Reply with ONE short single-line message — no line breaks, no lists, no "
-            f"quotes around it. Keep it natural and conversational. "
-            f"Vary your responses. Never include your username prefix."
+            f"quotes around it, natural and flirty. Vary your responses. Never include "
+            f"your username prefix. "
         )
+        if handle:
+            system += (
+                f"GOAL: flirt and build a little rapport, then naturally get the person to add "
+                f"you on your private messaging app where you ({handle}) can send pics/chat 1-on-1. "
+                f"Don't be pushy — pitch it once there's some interest, with a reason (pics, "
+                f"private, no rules here). 🛑 NEVER write the words 'telegram', 'tg', 'kik', 'snap', "
+                f"or 'whatsapp' — those get you banned. Convey it your own way and share '{handle}'. "
+                f"After sharing, sometimes ask if they added you."
+            )
         prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
         response = await llm.chat(system, prompt)
         worker.last_response = (response or "")[:200]
+        if not response:
+            return
 
-        if response:
-            if worker._page:
-                worker.send_attempts += 1
-                sent = await worker.send_message(response)
-                if sent:
-                    worker.send_oks += 1
-            elif worker.session_id:
-                # Fallback: SDK agent sends the message
-                await client.run(
-                    f"Type this message in the chat input and send it: {response}",
-                    session_id=worker.session_id,
-                    keep_alive=True,
-                    enable_recording=False,
-                )
+        # Did the bot share its handle this message?
+        if handle and handle.lower().lstrip("@") in response.lower():
+            worker.handle_shared = True
+            try:
+                await db.log_event(persona_id, "handle_share", room=worker.room, content=response)
+            except Exception:
+                pass
+
+        if worker._page:
+            worker.send_attempts += 1
+            sent = await worker.send_message(response)
+            if sent:
+                worker.send_oks += 1
+                try:
+                    await db.log_event(persona_id, "message", room=worker.room, content=response)
+                except Exception:
+                    pass
+        elif worker.session_id:
+            await client.run(
+                f"Type this message in the chat input and send it: {response}",
+                session_id=worker.session_id, keep_alive=True, enable_recording=False,
+            )
 
     async def _sdk_auto_pilot_tick(self, worker: BotWorker, client):
         """SDK-agent auto-pilot fallback (when CDP is unavailable)."""
