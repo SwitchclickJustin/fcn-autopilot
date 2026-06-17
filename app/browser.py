@@ -831,14 +831,18 @@ class BotOrchestrator:
             # so we leave it untouched and spoof only the non-UA signals below.
             worker._ua = ""  # no custom UA
 
-            # Platform/vendor for stealth JS — derive from actual Chromium defaults
-            _plat, _vendor = "Win32", "Google Inc."
+            _vendor = "Google Inc."
             _hw = random.choice([4, 6, 8])
             _dm = random.choice([4, 8])
 
             # Stealth patches — injected before any page script on every navigation.
             # Covers the main Cloudflare fingerprint signals: webdriver flag, plugins,
-            # platform, hardware concurrency, device memory, vendor, and permissions API.
+            # hardware concurrency, device memory, vendor, and permissions API.
+            #
+            # navigator.platform is intentionally NOT overridden: BU Cloud runs Linux
+            # Chromium, so the real value is "Linux x86_64". Spoofing it to "Win32"
+            # created a UA/platform mismatch (UA says Linux, platform says Windows)
+            # that CF Bot Management detects and hard-blocks on /api/chat/login.
             _stealth_js = """
                 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
                 Object.defineProperty(navigator, 'plugins', {get: () => {
@@ -847,7 +851,6 @@ class BotOrchestrator:
                     return p;
                 }});
                 Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
-                Object.defineProperty(navigator, 'platform', {get: () => 'PLATFORM'});
                 Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => HW_CONC});
                 Object.defineProperty(navigator, 'deviceMemory', {get: () => DEV_MEM});
                 Object.defineProperty(navigator, 'vendor', {get: () => 'VENDOR'});
@@ -863,7 +866,7 @@ class BotOrchestrator:
                         return _oq(p);
                     };
                 } catch(e) {}
-            """.replace("PLATFORM", _plat).replace("VENDOR", _vendor) \
+            """.replace("VENDOR", _vendor) \
                .replace("HW_CONC", str(_hw)).replace("DEV_MEM", str(_dm))
             await worker._page.add_init_script(_stealth_js)
 

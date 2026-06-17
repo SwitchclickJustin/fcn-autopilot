@@ -318,29 +318,38 @@ _SNAP_JS = """
 async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0,
                             username: str = "TestAlexa99", room: str = "SextChat",
                             gender: str = "f", block: int = 1, wait: int = 5,
-                            sendtest: int = 0):
-    """Provision a Decoda-proxied browser, navigate to the target, and dump the DOM.
+                            sendtest: int = 0, native_proxy: int = 0):
+    """Provision a browser, navigate to the target, and dump the DOM.
 
     Diagnostic for building the CDP-driven guest-login flow. Captures the main
     page + same-origin iframes, then cleans up the cloud browser. Pass ?url= to
     inspect a different page. Pass ?login=1 to run the REAL _cdp_guest_login()
     (fill + submit the guest form) and report the post-login page — entering a
     room posts nothing, so this validates login mechanics without chatting.
+    Pass ?native_proxy=1 to use BU Cloud's built-in residential proxy instead
+    of Decoda — tests whether BU's own IPs get through CF's /api/chat/login check.
     """
     import httpx, random, traceback
     from app.browser import DECODA_PROXIES
 
-    results = {"target": url}
+    results = {"target": url, "native_proxy": bool(native_proxy)}
     proxy = random.choice(DECODA_PROXIES)
-    results["proxy_port"] = proxy["port"]
+    if native_proxy:
+        results["proxy_note"] = "using BU Cloud native proxy (no customProxy)"
+    else:
+        results["proxy_port"] = proxy["port"]
+        results["proxy_host"] = proxy["host"]
     bid = pw = browser = None
     try:
-        # 1. Provision browser with Decoda proxy
+        # 1. Provision browser (with or without Decoda proxy)
+        _payload = {"timeout": 5, "browserScreenWidth": 1280, "browserScreenHeight": 720}
+        if not native_proxy:
+            _payload["customProxy"] = proxy
         async with httpx.AsyncClient(timeout=45) as client:
             resp = await client.post(
                 "https://api.browser-use.com/api/v3/browsers",
                 headers={"X-Browser-Use-API-Key": settings.browser_use_api_key, "Content-Type": "application/json"},
-                json={"timeout": 5, "browserScreenWidth": 1280, "browserScreenHeight": 720, "customProxy": proxy},
+                json=_payload,
             )
             results["provision_status"] = resp.status_code
             if resp.status_code != 201:
