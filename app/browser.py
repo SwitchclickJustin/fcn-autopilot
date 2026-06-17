@@ -191,6 +191,13 @@ def _build_ua_pool() -> list:
 
 UA_POOL = _build_ua_pool()
 
+# Desktop-only subset — mobile UAs (iPhone/iPad/Android/Samsung) must NOT be
+# used on our 1280×960 headless Chromium browser: the UA/viewport mismatch
+# (mobile UA + no touch events + desktop dimensions) is an immediate Cloudflare
+# fingerprint signal. Filter them out here; use DESKTOP_UA_POOL in _connect_cdp.
+_MOBILE_TOKENS = ("iPhone", "iPad", "Android", "Mobile", "CriOS", "FxiOS", "SamsungBrowser", "Silk")
+DESKTOP_UA_POOL = [u for u in UA_POOL if not any(t in u for t in _MOBILE_TOKENS)]
+
 
 # ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
 # Verified working FCN room slugs (confirmed URLs 2026-06-17)
@@ -786,9 +793,8 @@ class BotOrchestrator:
             logger.warning(f"[{worker.agent_id}] join second room error: {e}")
             return False
 
-    # 500+ UA pool generated at module load — desktop, tablet, and mobile across
-    # Chrome/Edge/Firefox/Safari on Windows/Mac/Linux/iOS/Android.
-    _USER_AGENTS = UA_POOL
+    # Desktop-only UAs — mobile UAs are excluded (UA/viewport mismatch = instant block).
+    _USER_AGENTS = DESKTOP_UA_POOL
 
     async def _connect_cdp(self, worker: BotWorker, cdp_url: str) -> bool:
         """Connect Playwright CDP to the running browser for fast JS auto-pilot."""
