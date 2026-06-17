@@ -180,7 +180,7 @@ class BotOrchestrator:
             profile = resp.items[0]
         else:
             profile = await client.profiles.create(name=persona_name)
-        return profile.id
+        return str(profile.id)
 
     # ── Bot lifecycle ───────────────────────────────────────────────────────
 
@@ -220,7 +220,7 @@ class BotOrchestrator:
                 enable_recording=False,
                 **proxy_kwargs,
             )
-            worker.browser_id = browser.id
+            worker.browser_id = str(browser.id)
             worker.live_url = browser.live_url or ""
             cdp_url = browser.cdp_url or ""
             logger.info(f"Browser: {worker.browser_id}, live: {worker.live_url[:60] if worker.live_url else 'none'}")

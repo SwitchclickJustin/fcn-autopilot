@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import uuid
 from datetime import datetime
 from app.config import settings
 
@@ -170,9 +171,18 @@ async def _execute(db, query, params=None):
     (sqlite is indifferent). This is the single write choke point, so doing it
     here fixes every INSERT/UPDATE (sessions.auto_pilot, personas.auto_reply_dms,
     llm_providers.enabled, ...).
+
+    Also stringify UUIDs: the Browser Use SDK returns UUID objects for ids
+    (browser_id, profile_id) and asyncpg rejects a UUID for a TEXT column.
     """
+    def _coerce(p):
+        if isinstance(p, bool):
+            return int(p)
+        if isinstance(p, uuid.UUID):
+            return str(p)
+        return p
     if params:
-        params = [int(p) if isinstance(p, bool) else p for p in params]
+        params = [_coerce(p) for p in params]
     if USE_NEON:
         await db.execute(query, *(params or []))
     else:
