@@ -1024,65 +1024,63 @@ class BotOrchestrator:
             return False
 
         try:
-            # ── Username: scroll into view → click → char-by-char keyboard type
-            u_el = await page.wait_for_selector(
-                "input[name=username]", state="attached", timeout=5000)
-            await u_el.scroll_into_view_if_needed()
-            await u_el.click(timeout=5000)
+            # Use page-level methods throughout — they re-query the DOM fresh on
+            # every call, so FCN's JS mutating the form between steps never causes
+            # a stale element-handle error.
+
+            # ── Username ──────────────────────────────────────────────────────
+            logger.info(f"[{worker.agent_id}] waiting for username field…")
+            await page.wait_for_selector("input[name=username]", state="attached", timeout=8000)
+            await page.click("input[name=username]")
             await page.wait_for_timeout(random.randint(300, 800))
+            logger.info(f"[{worker.agent_id}] typing username '{worker.login_name}'")
             for ch in worker.login_name:
                 await page.keyboard.type(ch)
                 await page.wait_for_timeout(random.randint(65, 215))
-            logger.info(f"[{worker.agent_id}] typed username '{worker.login_name}'")
+            logger.info(f"[{worker.agent_id}] ✓ username done")
 
-            # ── Gender: scroll into view → mouse to centre → select_option ─────
+            # ── Gender ────────────────────────────────────────────────────────
             await page.wait_for_timeout(random.randint(500, 1100))
-            g_el = await page.wait_for_selector(
-                "select[name=gender]", state="attached", timeout=5000)
-            await g_el.scroll_into_view_if_needed()
-            bb = await g_el.bounding_box()
-            if bb:
-                await page.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
-                await page.wait_for_timeout(random.randint(200, 500))
-            await page.select_option("select[name=gender]", gval, timeout=5000)
-            logger.info(f"[{worker.agent_id}] selected gender={gval}")
+            logger.info(f"[{worker.agent_id}] selecting gender={gval}…")
+            await page.wait_for_selector("select[name=gender]", state="attached", timeout=5000)
+            await page.select_option("select[name=gender]", gval)
+            logger.info(f"[{worker.agent_id}] ✓ gender done")
             await page.wait_for_timeout(random.randint(400, 950))
 
-            # ── Birthdate: scroll → click → fill; fallback to char-by-char type
-            b_el = await page.wait_for_selector(
-                "input[name=birthdate]", state="attached", timeout=5000)
-            await b_el.scroll_into_view_if_needed()
-            await b_el.click(timeout=5000)
+            # ── Birthdate ─────────────────────────────────────────────────────
+            logger.info(f"[{worker.agent_id}] filling birthdate={birthdate}…")
+            await page.wait_for_selector("input[name=birthdate]", state="attached", timeout=5000)
+            await page.click("input[name=birthdate]")
             await page.wait_for_timeout(random.randint(300, 700))
-            await b_el.fill(birthdate)
-            actual = await b_el.input_value()
+            await page.fill("input[name=birthdate]", birthdate)
+            actual = await page.input_value("input[name=birthdate]")
             if actual != birthdate:
-                await b_el.triple_click()
+                # date input didn't accept ISO string — type it manually
+                await page.triple_click("input[name=birthdate]")
                 for ch in birthdate:
                     await page.keyboard.type(ch)
                     await page.wait_for_timeout(random.randint(50, 130))
-            logger.info(f"[{worker.agent_id}] birthdate={birthdate} (field={await b_el.input_value()!r})")
+                actual = await page.input_value("input[name=birthdate]")
+            logger.info(f"[{worker.agent_id}] ✓ birthdate done (field={actual!r})")
             await page.wait_for_timeout(random.randint(400, 900))
 
-            # ── Checkbox: scroll → mouse to centre → click ────────────────────
-            c_el = await page.wait_for_selector(
-                "input[type=checkbox]", state="attached", timeout=5000)
-            await c_el.scroll_into_view_if_needed()
-            bb = await c_el.bounding_box()
-            if bb:
-                await page.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
-                await page.wait_for_timeout(random.randint(200, 500))
-            await c_el.click(timeout=5000)
-            logger.info(f"[{worker.agent_id}] checkbox ticked")
+            # ── Checkbox ──────────────────────────────────────────────────────
+            logger.info(f"[{worker.agent_id}] ticking checkbox…")
+            await page.wait_for_selector("input[type=checkbox]", state="attached", timeout=5000)
+            await page.click("input[type=checkbox]")
+            logger.info(f"[{worker.agent_id}] ✓ checkbox done")
             await page.wait_for_timeout(random.randint(700, 1600))
 
-            # ── Submit: focus username → Enter (native submit, no button onclick)
-            await u_el.focus()
+            # ── Submit: focus a text field then press Enter ───────────────────
+            # Enter submits the form natively without firing the submit button's
+            # onclick ad-redirect handlers.
+            logger.info(f"[{worker.agent_id}] submitting form…")
+            await page.click("input[name=username]")
             await page.wait_for_timeout(random.randint(300, 700))
             await page.keyboard.press("Enter")
-            logger.info(f"[{worker.agent_id}] form submitted via Enter")
+            logger.info(f"[{worker.agent_id}] ✓ form submitted")
         except Exception as e:
-            logger.warning(f"[{worker.agent_id}] form interaction failed: {e}")
+            logger.warning(f"[{worker.agent_id}] form step failed: {e}")
             return False
 
         # Wait for the room SPA to sign in and load (also watch for captcha)
