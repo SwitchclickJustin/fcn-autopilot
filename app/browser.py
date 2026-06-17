@@ -541,16 +541,24 @@ class BotOrchestrator:
         return total
 
     async def _close_popups(self, worker: BotWorker):
-        """Close any ad popup windows, keeping only the room page."""
+        """Close any ad popup windows, keeping only the room page foregrounded."""
         try:
             if not worker._page:
                 return
+            closed = False
             for pg in list(worker._page.context.pages):
                 if pg is not worker._page:
                     try:
                         await pg.close()
+                        closed = True
                     except Exception:
                         pass
+            # Return the live view to the room tab after closing a popup
+            if closed:
+                try:
+                    await worker._page.bring_to_front()
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -563,13 +571,23 @@ class BotOrchestrator:
         username = worker.username
         client = await self._get_client()
 
+        tick = 0
         while self._auto_pilot_enabled.get(username, False):
             try:
                 # ── CDP path (fast, zero cost) ──
                 if worker._page:
-                    # Keep the room clear of ad popups / lingering tip overlays
-                    await self._close_popups(worker)
-                    await self._dismiss_overlays(worker._page)
+                    tick += 1
+                    # Clean ad popups/overlays only periodically (ads refresh ~30s).
+                    # Doing this every tick churns the DOM and destabilizes FCN's
+                    # chat WebSocket. Also keep the room tab foregrounded so the
+                    # live view stays on the room (not a closing popup tab).
+                    if tick % 5 == 1:
+                        await self._close_popups(worker)
+                        await self._dismiss_overlays(worker._page)
+                        try:
+                            await worker._page.bring_to_front()
+                        except Exception:
+                            pass
                     messages = await worker.read_chat()
                     if messages:
                         # Generate response and send it
