@@ -824,6 +824,16 @@ class BotOrchestrator:
                         continue
                     ban_strikes = 0
 
+                    # Refresh persona settings (handle/bio/tone) live — so edits on
+                    # the Personas page apply WITHOUT restarting the session.
+                    if tick % 15 == 0 and persona_id:
+                        try:
+                            fresh = await db.get_persona(persona_id)
+                            if fresh:
+                                worker.persona = fresh
+                        except Exception:
+                            pass
+
                     # Kill the ad modal/iframe every tick (cheap, targeted) so the
                     # gray "[x]" box never lingers in the live view.
                     await self._kill_ads(worker._page)
