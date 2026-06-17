@@ -128,6 +128,11 @@ class BotWorker:
         """
         if not message or not self._page:
             return False
+        # Single-line: the chat input sends on Enter, so a newline mid-message
+        # fires a premature/partial send. Collapse whitespace + cap length.
+        message = " ".join(message.split())[:300].strip()
+        if not message:
+            return False
         try:
             inp = await self._page.query_selector('input[placeholder="Type to chat"]')
             if inp is None:
@@ -713,7 +718,8 @@ class BotOrchestrator:
         system = (
             f"You are chatting in an adult chat room (18+). Your username is {username}. "
             f"Tone: {tone}. Personality: {bio}. "
-            f"Keep messages short, natural, and conversational. "
+            f"Reply with ONE short single-line message — no line breaks, no lists, no "
+            f"quotes around it. Keep it natural and conversational. "
             f"Vary your responses. Never include your username prefix."
         )
         prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
