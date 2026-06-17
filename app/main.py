@@ -340,11 +340,27 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
         ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-        # Block ad-redirect domains so we land on FCN, not a gateway (block=0 to disable)
+        # Ad guard (block=0 disables): allow only top-level nav (login redirect),
+        # block ad documents in child iframes (the "I AM 18+" age-gate) + ad
+        # sub-resources. Mirrors the production _connect_cdp guard.
         if block:
-            for pat in ["**12chats.com**", "**exoclick.com**", "**popads.net**", "**traffic*.com**", "**doubleclick.net**"]:
+            async def _ad_guard(route):
+                req = route.request
                 try:
-                    await page.route(pat, lambda r: r.abort())
+                    f = req.frame
+                    if req.is_navigation_request() and (f is None or f.parent_frame is None):
+                        await route.continue_()
+                    else:
+                        await route.abort()
+                except Exception:
+                    try:
+                        await route.abort()
+                    except Exception:
+                        pass
+            for host in ("12chats.com", "exoclick.com", "popads.net", "doubleclick.net",
+                         "popunder", "propellerads", "adsterra", "trafficjunky", "traffic"):
+                try:
+                    await page.route(f"**{host}**", _ad_guard)
                 except Exception:
                     pass
 

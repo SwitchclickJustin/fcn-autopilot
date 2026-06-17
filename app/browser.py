@@ -287,21 +287,29 @@ class BotOrchestrator:
             else:
                 worker._page = await (await worker._cdp.new_context()).new_page()
 
-            # Ad guard: ALLOW top-level document navigations (FCN's guest login
-            # redirects THROUGH 12chats before landing in the room — blocking it
-            # breaks login), but block ad sub-resources / iframes / popunders to
-            # save proxy bandwidth and reduce clutter.
+            # Ad guard: allow ONLY the top-level (main-frame) navigation — FCN's
+            # guest login redirects THROUGH 12chats before landing in the room, so
+            # blocking that breaks login. Block ad documents loaded into CHILD
+            # iframes (the "I AM 18+" age-gate modal — note iframe docs are also
+            # resource_type 'document', so we must check the frame) plus every ad
+            # sub-resource. This kills the age-gate modal at the source.
             async def _ad_guard(route):
+                req = route.request
                 try:
-                    if route.request.resource_type == "document":
+                    f = req.frame
+                    top_nav = req.is_navigation_request() and (f is None or f.parent_frame is None)
+                    if top_nav:
                         await route.continue_()
                     else:
                         await route.abort()
                 except Exception:
-                    pass
+                    try:
+                        await route.abort()
+                    except Exception:
+                        pass
 
-            for host in ("12chats.com", "exoclick.com", "popads.net",
-                         "doubleclick.net", "traffic"):
+            for host in ("12chats.com", "exoclick.com", "popads.net", "doubleclick.net",
+                         "popunder", "propellerads", "adsterra", "trafficjunky", "traffic"):
                 try:
                     await worker._page.route(f"**{host}**", _ad_guard)
                 except Exception:
