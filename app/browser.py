@@ -1028,15 +1028,30 @@ class BotOrchestrator:
             logger.warning(f"[{worker.agent_id}] no login form found @ {page.url}")
             return False
 
-        # Close any ad popups that open during form interaction — FCN's submit
-        # button onclick fires ad redirects in new tabs; shut them immediately
-        # so they don't steal focus or mess with our CDP page context.
-        async def _close_ad(new_page):
+        # FCN submit fires TWO things simultaneously:
+        #   1. current page → ad redirect
+        #   2. new popup → schat.freechatnow.com (the actual chat room)
+        # Also, ad popups may fire on any form interaction before submit.
+        # Strategy: capture any new page that contains freechatnow.com; close the rest.
+        _fcn_popup: list = []
+
+        async def _handle_new_page(new_page):
             try:
-                await new_page.close()
+                await new_page.wait_for_load_state("domcontentloaded", timeout=8000)
             except Exception:
                 pass
-        page.context.on("page", _close_ad)
+            url = new_page.url
+            if "freechatnow.com" in url:
+                logger.info(f"[{worker.agent_id}] FCN popup captured: {url}")
+                _fcn_popup.append(new_page)
+            else:
+                logger.info(f"[{worker.agent_id}] closing ad popup: {url}")
+                try:
+                    await new_page.close()
+                except Exception:
+                    pass
+
+        page.context.on("page", _handle_new_page)
 
         try:
             # ── Username ──────────────────────────────────────────────────────
@@ -1052,7 +1067,7 @@ class BotOrchestrator:
             # ── Gender ────────────────────────────────────────────────────────
             await page.wait_for_timeout(random.randint(500, 1100))
             logger.info(f"[{worker.agent_id}] selecting gender={gval}…")
-            await page.wait_for_selector("select[name=gender]", state="attached", timeout=5000)
+            await page.wait_for_selector("select[name=gender]", state="attached", timeout=10000)
             await page.select_option("select[name=gender]", gval)
             logger.info(f"[{worker.agent_id}] ✓ gender")
             await page.wait_for_timeout(random.randint(400, 950))
@@ -1100,18 +1115,31 @@ class BotOrchestrator:
             logger.info(f"[{worker.agent_id}] ✓ checkbox")
             await page.wait_for_timeout(random.randint(700, 1600))
 
-            # ── Submit: click "Chat As Guest" button ──────────────────────────
-            # Ad-popup handler above closes new tabs; the button click itself
-            # stays on the FCN page which then redirects to schat.freechatnow.com.
+            # ── Submit ────────────────────────────────────────────────────────
             logger.info(f"[{worker.agent_id}] clicking Chat As Guest…")
             await page.click("input[value*='Chat As Guest'], button:has-text('Chat As Guest')", timeout=5000)
             logger.info(f"[{worker.agent_id}] ✓ submitted")
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] form step failed: {e}")
-            page.context.remove_listener("page", _close_ad)
+            page.context.remove_listener("page", _handle_new_page)
             return False
 
-        page.context.remove_listener("page", _close_ad)
+        # FCN opens the chat room as a popup while redirecting the current page to
+        # an ad. Wait up to 20s for the popup then switch worker._page to it.
+        for _ in range(10):
+            if _fcn_popup:
+                break
+            await page.wait_for_timeout(2000)
+
+        page.context.remove_listener("page", _handle_new_page)
+
+        if _fcn_popup:
+            new_p = _fcn_popup[0]
+            worker._page = new_p
+            page = new_p
+            logger.info(f"[{worker.agent_id}] switched to chat popup @ {page.url}")
+        else:
+            logger.info(f"[{worker.agent_id}] no popup captured — checking current page: {page.url}")
 
         # Wait for the room SPA to sign in and load (also watch for captcha)
         worker.phase = "login_wait_room"
