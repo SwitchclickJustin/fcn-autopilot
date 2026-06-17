@@ -299,10 +299,10 @@ class BotOrchestrator:
         for attempt in range(5):
             proxy = random.choice(DECODA_PROXIES)
             try:
-                # Taller viewport (1280x1000) so the live view fills the tall dashboard
-                # panel instead of letterboxing a 16:9 stream.
+                # 1280x960 (4:3) matches the dashboard's .browser-frame aspect-ratio
+                # so the live stream fills the box with no black bars.
                 browser = await client.browsers.create(
-                    timeout=60, browser_screen_width=1280, browser_screen_height=1000,
+                    timeout=60, browser_screen_width=1280, browser_screen_height=960,
                     enable_recording=False, customProxy=proxy,
                 )
             except Exception as e:

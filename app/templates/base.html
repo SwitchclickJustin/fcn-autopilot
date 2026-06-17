@@ -59,8 +59,7 @@ label{display:block;font-size:.8rem;color:var(--text-dim);margin-bottom:.3rem}
 /* Grid — fills remaining viewport height */
 .grid-2{display:grid;grid-template-columns:3fr 2fr;gap:1rem;min-height:calc(100vh - 240px);align-items:stretch}
 .grid-2 > :first-child{display:flex;flex-direction:column}
-.grid-2 > :first-child .card{flex:1;display:flex;flex-direction:column;margin-bottom:0}
-.grid-2 > :first-child .card .browser-frame{flex:1}
+.grid-2 > :first-child .card{display:flex;flex-direction:column;margin-bottom:0}
 /* Toggle switch */
 .toggle{position:relative;display:inline-block;width:48px;height:26px}
 .toggle input{opacity:0;width:0;height:0}
@@ -78,9 +77,11 @@ label{display:block;font-size:.8rem;color:var(--text-dim);margin-bottom:.3rem}
 .suggestion-card:hover{border-color:var(--accent)}
 .suggestion-card .num{font-size:.75rem;font-weight:700;color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,transparent);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .suggestion-card .text{flex:1;font-size:.9rem;line-height:1.4}
-/* Inline browser — fills available space via flex parent */
-.browser-frame{width:100%;flex:1;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--surface-2);display:flex;flex-direction:column}
-.browser-frame iframe{width:100%;height:100%;border:none;flex:1}
+/* Live browser — responsive aspect-ratio box (matches the 1280x960 viewport) so
+   the stream fills its width with NO black bars, at any size (incl. a future grid
+   of multiple agent windows). */
+.browser-frame{width:100%;aspect-ratio:4/3;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--surface-2)}
+.browser-frame iframe{width:100%;height:100%;border:none;display:block}
 /* Table */
 table{width:100%;border-collapse:collapse;font-size:.82rem}
 th,td{padding:.5rem .6rem;text-align:left;border-bottom:1px solid var(--border)}
