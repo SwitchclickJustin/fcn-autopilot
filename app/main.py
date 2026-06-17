@@ -564,6 +564,74 @@ async def debug_start_trace(persona_id: str = ""):
             pass
     return out
 
+@app.get("/debug/proxy-check")
+async def debug_proxy_check(country: str = "", port: int = 0):
+    """Provision a Decoda-proxied browser and report the exit IP + geolocation.
+
+    Confirms the proxy works and shows country/ISP/proxy-flag. Pass ?country=us to
+    test country-targeted residential (appends '-country-<cc>' to the proxy user,
+    the Decodo/Smartproxy format). Pass ?port= to pin a specific gateway port.
+    """
+    import httpx, random
+    from app.browser import DECODA_PROXIES
+
+    proxy = dict(random.choice(DECODA_PROXIES))
+    if port:
+        proxy["port"] = port
+    if country:
+        proxy["username"] = f"{proxy['username']}-country-{country.lower()}"
+    out = {"proxy_host": proxy["host"], "proxy_port": proxy["port"], "proxy_user": proxy["username"]}
+    bid = pw = browser = None
+    try:
+        async with httpx.AsyncClient(timeout=45) as client:
+            resp = await client.post(
+                "https://api.browser-use.com/api/v3/browsers",
+                headers={"X-Browser-Use-API-Key": settings.browser_use_api_key, "Content-Type": "application/json"},
+                json={"timeout": 5, "customProxy": proxy},
+            )
+            out["provision_status"] = resp.status_code
+            if resp.status_code != 201:
+                out["provision_body"] = resp.text[:300]
+                return out
+            data = resp.json()
+            bid = data["id"]
+            cdp_url = data["cdpUrl"]
+
+        from playwright.async_api import async_playwright
+        pw = await async_playwright().start()
+        browser = await pw.chromium.connect_over_cdp(cdp_url.replace("https://", "wss://"), timeout=30000)
+        ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        try:
+            await page.goto(
+                "http://ip-api.com/json/?fields=status,country,countryCode,city,isp,as,mobile,proxy,hosting,query",
+                wait_until="domcontentloaded", timeout=30000)
+            body = await page.evaluate("() => document.body.innerText")
+            try:
+                out["ip_info"] = json.loads(body)
+            except Exception:
+                out["ip_info_raw"] = (body or "")[:400]
+        except Exception as e:
+            out["lookup_error"] = str(e)[:200]
+    except Exception as e:
+        out["error"] = str(e)[:250]
+    finally:
+        if browser:
+            try: await browser.close()
+            except Exception: pass
+        if pw:
+            try: await pw.stop()
+            except Exception: pass
+        if bid:
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    await client.delete(
+                        f"https://api.browser-use.com/api/v3/browsers/{bid}",
+                        headers={"X-Browser-Use-API-Key": settings.browser_use_api_key})
+            except Exception:
+                pass
+    return out
+
 @app.get("/debug/check-plan")
 async def debug_check_plan():
     """Check Browser Use Cloud account plan info."""
