@@ -166,7 +166,7 @@ function agentLabel(a,i){
   }
   if(p==='recovery_failed') return `Agent ${i+1} &bull; ❌ Recovery failed`;
   if(p==='logging_in'||p==='login_wait_room'||p==='login_nav') return `Agent ${i+1} &bull; ⏳ Logging in…`;
-  if(p==='captcha_detected') return `Agent ${i+1} &bull; 🔄 Captcha — rotating IP…`;
+  if(p==='captcha_detected'||p==='ip_blocked') return `Agent ${i+1} &bull; 🔄 IP blocked — rotating…`;
   return `Agent ${i+1} &bull; ${escHtml(rooms)}`;
 }
 

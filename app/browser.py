@@ -413,8 +413,28 @@ class BotOrchestrator:
             worker.live_url = ""
         return False
 
+    async def _is_blocked_page(self, page) -> bool:
+        """Return True if the page is a Cloudflare or FCN IP-block page."""
+        try:
+            result = await page.evaluate("""() => {
+                const t = (document.title || '').toLowerCase();
+                const b = document.body ? document.body.innerText.toLowerCase() : '';
+                return (
+                    b.includes('you have been blocked') ||
+                    b.includes('unable to access') ||
+                    b.includes('ip has been banned') ||
+                    t.includes('attention required') ||
+                    t.includes('just a moment') ||
+                    t.includes('access denied') ||
+                    !!document.querySelector('#cf-error-details, .cf-error-code, #challenge-error-title')
+                );
+            }""")
+            return bool(result)
+        except Exception:
+            return False
+
     async def _looks_banned(self, worker: BotWorker) -> bool:
-        """Detect a kick/ban: the room URL was left, or a ban message is shown."""
+        """Detect a kick/ban: left the site, IP-blocked, or in-room ban message."""
         page = worker._page
         if not page:
             return False
@@ -422,6 +442,8 @@ class BotOrchestrator:
             url = page.url or ""
             if "freechatnow" not in url:
                 return True  # kicked off the site entirely (DM views stay on freechatnow)
+            if await self._is_blocked_page(page):
+                return True
             body = await page.evaluate("() => document.body ? document.body.innerText.slice(0,800) : ''")
             return bool(re.search(
                 r"you (have been|were|are) (banned|kicked)|been removed from|kicked from|"
@@ -773,8 +795,13 @@ class BotOrchestrator:
             await page.goto(self.FCN_BASE + "/", wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] homepage nav failed: {e}")
-        # Human dwell on the homepage before clicking anything
         await page.wait_for_timeout(random.randint(1800, 4000))
+
+        # IP block check — Cloudflare "Sorry, you have been blocked" page
+        if await self._is_blocked_page(page):
+            logger.warning(f"[{worker.agent_id}] IP blocked on homepage — rotating IP")
+            worker.phase = "ip_blocked"
+            return False
 
         # ── Step 2: click the target room from the homepage room grid ─────────
         worker.phase = "login_room_select"
@@ -790,11 +817,8 @@ class BotOrchestrator:
         }""", slug)
 
         if clicked:
-            # Wait for the room page to load after the click
             await page.wait_for_timeout(random.randint(2000, 3500))
         else:
-            # Room not found in grid (e.g. homepage structure different than expected)
-            # — navigate directly as fallback so login still proceeds
             logger.info(f"[{worker.agent_id}] room '{room}' not in homepage grid, navigating directly")
             worker.phase = "login_nav"
             try:
@@ -802,6 +826,12 @@ class BotOrchestrator:
             except Exception as e:
                 logger.warning(f"[{worker.agent_id}] room nav failed: {e}")
             await page.wait_for_timeout(random.randint(1500, 2500))
+
+        # Block check again after room navigation (block page can appear here too)
+        if await self._is_blocked_page(page):
+            logger.warning(f"[{worker.agent_id}] IP blocked on room page — rotating IP")
+            worker.phase = "ip_blocked"
+            return False
 
         gval = self._GENDER_MAP.get((persona.get("gender") or "f").lower(), "female")
         age = random.randint(23, 30)
