@@ -27,10 +27,10 @@ from typing import Optional
 from app.config import settings
 import app.database as db
 
-# A user confirming they added her elsewhere = a conversion
+# A user confirming they FOUND her elsewhere = a conversion ("did you find me?" → "yes")
 _CONFIRM_RE = re.compile(
-    r"\b(added (you|u|ya|her)|found (you|u)|messaged (you|u)|i('?ve)? added|just added|"
-    r"add(ed)? you there|hit you up|in your dm|texted you|added u there)\b", re.I)
+    r"\b(found (you|u|ya|her)|i found you|got you|i see you|see you (there|now)|there now|"
+    r"messaged (you|u)|in your (dm|inbox)|texted you|added (you|u|ya))\b", re.I)
 
 logger = logging.getLogger(__name__)
 
@@ -924,11 +924,13 @@ class BotOrchestrator:
         if handle:
             where = "this private DM" if is_dm else "the room"
             system += (
-                f"GOAL: flirt and build a little rapport in {where}, then get them to add you on "
-                f"your private app as '{handle}' (you send pics / chat 1-on-1 there). Pitch once "
-                f"there's some interest — and VARY how you say it every time, casual and human, "
-                f"never the same canned line. 🛑 NEVER write 'telegram','tg','kik','snap','whatsapp' "
-                f"or a URL — convey '{handle}' your own way. Sometimes ask if they added you."
+                f"GOAL: flirt, build rapport in {where}, then get them onto your private app as "
+                f"'{handle}' to chat/send pics 1-on-1. Frame it as 'come FIND me' — share '{handle}' "
+                f"in your own sneaky, varied way (never the same canned line). AFTER you've shared it, "
+                f"follow up by asking if they FOUND you — vary it sneakily: 'did you find me?', "
+                f"'you see me over there?', 'find me yet babe?'. A 'yes I found you' is the win. "
+                f"🛑 NEVER write 'telegram','tg','kik','snap','whatsapp','add me', or a URL — those get "
+                f"you BANNED. Always say 'find me', NEVER 'add me'."
             )
         prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
         response = await llm.chat(system, prompt)
