@@ -469,6 +469,31 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 results["all_pages_error"] = str(e)[:150]
             results["all_pages"] = all_pages
 
+            # Probe the conversation tab bar (rooms + DMs) for selectors
+            try:
+                results["tab_probe"] = await page.evaluate("""
+                    (() => {
+                        const out = {tabClassEls: [], headerHTML: ''};
+                        document.querySelectorAll('[class*=tab i], [class*=conversation i], [class*=channel i], [class*=dm i], [class*=pm i]').forEach(e => {
+                            const t = (e.textContent || '').trim();
+                            if (t && t.length < 30)
+                                out.tabClassEls.push({tag: e.tagName.toLowerCase(), cls: (e.className + '').slice(0,75), text: t.slice(0,25)});
+                        });
+                        for (const el of document.querySelectorAll('button, a, div, span')) {
+                            const t = (el.textContent || '').trim();
+                            if (t === 'Rooms' || t === 'Leave') {
+                                let box = el;
+                                for (let i = 0; i < 4 && box.parentElement; i++) box = box.parentElement;
+                                out.headerHTML = box.outerHTML.slice(0, 2800);
+                                break;
+                            }
+                        }
+                        return out;
+                    })()
+                """)
+            except Exception as e:
+                results["tab_probe_error"] = str(e)[:150]
+
         # 4. Snapshot main page + same-origin iframes
         results["dom"] = await page.evaluate(_SNAP_JS)
         frames = []
