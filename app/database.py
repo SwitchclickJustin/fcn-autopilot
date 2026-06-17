@@ -163,7 +163,16 @@ async def _fetchall(db, query, params=None):
         return [dict(r) for r in rows]
 
 async def _execute(db, query, params=None):
-    """Execute write query and commit."""
+    """Execute write query and commit.
+
+    Coerce Python bools to ints: every boolean-ish column in this schema is
+    declared INTEGER, and asyncpg (Neon) rejects a bool for an INTEGER column
+    (sqlite is indifferent). This is the single write choke point, so doing it
+    here fixes every INSERT/UPDATE (sessions.auto_pilot, personas.auto_reply_dms,
+    llm_providers.enabled, ...).
+    """
+    if params:
+        params = [int(p) if isinstance(p, bool) else p for p in params]
     if USE_NEON:
         await db.execute(query, *(params or []))
     else:
