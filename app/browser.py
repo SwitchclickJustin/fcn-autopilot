@@ -1150,25 +1150,31 @@ class BotOrchestrator:
                 await page.wait_for_timeout(random.randint(200, 500))
 
             # ── Checkbox ──────────────────────────────────────────────────────
-            # Use check(force=True): the checkbox is a hidden Vue-backed field
-            # (same pattern as the date input), so standard visibility checks fail.
-            # Form-scoped selector avoids hitting cookie-consent checkboxes elsewhere.
+            # FCN's checkbox has an onclick that auto-submits the form (and may open
+            # a popup) when checked with all fields filled.  no_wait_after=True prevents
+            # Playwright from hanging 30 s waiting for the resulting popup/navigation to
+            # settle — we handle that ourselves in the wait loop below.
             logger.info(f"[{worker.agent_id}] ticking checkbox…")
-            await page.locator("form[action*='login'] input[type=checkbox]").check(force=True)
+            await page.locator("form[action*='login'] input[type=checkbox]").check(
+                force=True, no_wait_after=True)
             logger.info(f"[{worker.agent_id}] ✓ checkbox")
-            await page.wait_for_timeout(random.randint(700, 1600))
 
-            # ── Submit via button click ───────────────────────────────────────
-            # Enter key on the username field does NOT submit FCN's form — Vue's
-            # @submit.prevent intercepts the form submit event and the onclick handler
-            # on the button is the only code path that triggers the actual login.
-            # Small pre-click delay + move to button coords before clicking looks human.
-            logger.info(f"[{worker.agent_id}] clicking Chat As Guest…")
-            btn = page.locator("form[action*='login'] button[type=submit]")
-            await btn.wait_for(state="attached", timeout=6000)
-            await page.wait_for_timeout(random.randint(300, 700))
-            await btn.click()
-            logger.info(f"[{worker.agent_id}] ✓ button clicked")
+            # Brief pause — gives the checkbox onclick time to fire and open any popup
+            # before we decide whether the submit button is still needed.
+            await page.wait_for_timeout(1500)
+
+            # ── Submit via button click (if form not yet submitted) ───────────
+            # If the checkbox onclick already submitted the form, a popup will have
+            # been captured.  Skip the button click in that case to avoid re-submit.
+            if not _fcn_popup:
+                logger.info(f"[{worker.agent_id}] clicking Chat As Guest…")
+                btn = page.locator("form[action*='login'] button[type=submit]")
+                await btn.wait_for(state="attached", timeout=6000)
+                await page.wait_for_timeout(random.randint(300, 700))
+                await btn.click(no_wait_after=True)
+                logger.info(f"[{worker.agent_id}] ✓ button clicked")
+            else:
+                logger.info(f"[{worker.agent_id}] checkbox submitted form — skipping button")
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] form step failed: {e}")
             page.context.remove_listener("page", _handle_new_page)
@@ -1184,12 +1190,23 @@ class BotOrchestrator:
         for _ in range(15):
             await page.wait_for_timeout(2000)
 
-            # Popup case: FCN opened room in a new window → switch to it
+            # Popup case: FCN opened room in a new window → switch to it and
+            # wait for the popup to finish redirecting to schat.freechatnow.com.
+            # The popup URL starts at freechatnow.com/chat/sex (form POST landing)
+            # before a server-side redirect takes it to schat.*.
             if _fcn_popup:
                 chat_page = _fcn_popup[0]
                 worker._page = chat_page
                 page = chat_page
                 logger.info(f"[{worker.agent_id}] switched to FCN room popup @ {page.url}")
+                for _ in range(12):
+                    if "schat." in page.url or "/room/" in page.url or "alert=" in page.url:
+                        break
+                    if await self._is_blocked_page(page):
+                        logger.warning(f"[{worker.agent_id}] Cloudflare in popup — rotating IP")
+                        worker.phase = "cf_blocked_popup"
+                        return False
+                    await page.wait_for_timeout(2000)
                 break
 
             # Main-page navigation case
