@@ -277,60 +277,87 @@ class BotOrchestrator:
             self._workers[username] = worker
             client = await self._get_client()
 
-            # Step 1 — Profile (fast)
-            worker.profile_id = await self.get_or_create_profile(f"fcn-{username}")
-            logger.info(f"Profile: {worker.profile_id}")
-
-            # Step 2 — Provision a browser whose US proxy ACTUALLY routes. Decodo
-            # IPs/ports can transiently 403 ("Upstream proxy error") — so connect
-            # CDP and verify routing, rotating to a different port on failure. We
-            # return only a verified-working browser (its live_url is then valid).
+            # Provision a verified-working US browser (NO profile → no cookies carry
+            # over, so a ban can't follow us into the next session).
             worker.status = "connecting"
-            connected = False
-            for attempt in range(5):
-                proxy = random.choice(DECODA_PROXIES)
-                try:
-                    browser = await client.browsers.create(
-                        profile_id=worker.profile_id,
-                        timeout=60,
-                        browser_screen_width=1280,
-                        browser_screen_height=720,
-                        enable_recording=False,
-                        customProxy=proxy,
-                    )
-                except Exception as e:
-                    logger.warning(f"[{username}] provision failed (try {attempt + 1}): {e}")
-                    continue
-
-                worker.browser_id = str(browser.id)
-                worker.live_url = browser.live_url or ""
-                cdp_url = browser.cdp_url or ""
-
-                if cdp_url and await self._connect_cdp(worker, cdp_url) and await self._check_us_proxy(worker):
-                    logger.info(f"[{username}] US proxy OK on port {proxy['port']} — {worker.proxy_location}")
-                    connected = True
-                    break
-
-                # Bad/interrupted proxy — tear down and rotate to another port
-                logger.warning(f"[{username}] proxy failed on port {proxy['port']} (try {attempt + 1}); rotating")
-                await worker.disconnect_cdp()
-                try:
-                    await client.browsers.stop(worker.browser_id)
-                except Exception:
-                    pass
-                worker.browser_id = ""
-                worker.live_url = ""
-
-            if not connected:
+            if not await self._provision_and_connect(worker):
                 logger.error(f"[{username}] no working US proxy after retries")
                 worker.status = "error"
                 self._workers.pop(username, None)
                 return None
 
-            # Step 3-5 run in background (CDP is already connected + verified)
+            # Login + auto-pilot loop run in background (CDP already connected)
             worker.status = "running"
             worker._task = asyncio.create_task(self._finish_bot_setup(worker, username))
             return worker
+
+    async def _provision_and_connect(self, worker: BotWorker) -> bool:
+        """Provision a FRESH BU browser (new IP via a random US Decodo port, and NO
+        profile so no cookies carry over), connect CDP, verify it exits in the US.
+        Rotates ports up to 5x. Returns True on a verified-working browser."""
+        client = await self._get_client()
+        for attempt in range(5):
+            proxy = random.choice(DECODA_PROXIES)
+            try:
+                browser = await client.browsers.create(
+                    timeout=60, browser_screen_width=1280, browser_screen_height=720,
+                    enable_recording=False, customProxy=proxy,
+                )
+            except Exception as e:
+                logger.warning(f"[{worker.username}] provision failed (try {attempt + 1}): {e}")
+                continue
+            worker.browser_id = str(browser.id)
+            worker.live_url = browser.live_url or ""
+            cdp_url = browser.cdp_url or ""
+            if cdp_url and await self._connect_cdp(worker, cdp_url) and await self._check_us_proxy(worker):
+                logger.info(f"[{worker.username}] US proxy OK on port {proxy['port']} — {worker.proxy_location}")
+                return True
+            logger.warning(f"[{worker.username}] proxy failed on port {proxy['port']} (try {attempt + 1}); rotating")
+            await worker.disconnect_cdp()
+            try:
+                await client.browsers.stop(worker.browser_id)
+            except Exception:
+                pass
+            worker.browser_id = ""
+            worker.live_url = ""
+        return False
+
+    async def _looks_banned(self, worker: BotWorker) -> bool:
+        """Detect a kick/ban: the room URL was left, or a ban message is shown."""
+        page = worker._page
+        if not page:
+            return False
+        try:
+            url = page.url or ""
+            if "schat." not in url and "/room/" not in url:
+                return True  # kicked out of the room
+            body = await page.evaluate("() => document.body ? document.body.innerText.slice(0,800) : ''")
+            return bool(re.search(
+                r"you (have been|were|are) (banned|kicked)|been removed from|kicked from|"
+                r"access denied|your ip|temporarily blocked", body or "", re.I))
+        except Exception:
+            return False
+
+    async def _recover(self, worker: BotWorker) -> bool:
+        """After a ban: tear down the banned browser and come back with a FRESH IP,
+        no cookies, and a new guest identity."""
+        logger.warning(f"[{worker.username}] BAN detected ({worker.proxy_ip}) — recovering fresh")
+        worker.phase = "recovering"
+        worker.handle_shared = False
+        await worker.disconnect_cdp()
+        if worker.browser_id:
+            try:
+                await (await self._get_client()).browsers.stop(worker.browser_id)
+            except Exception:
+                pass
+            worker.browser_id = ""
+        if not await self._provision_and_connect(worker):
+            logger.error(f"[{worker.username}] recovery failed: no working proxy")
+            return False
+        await self._cdp_guest_login(worker)  # mints a new login_name, no cookies
+        worker.phase = "loop_running"
+        logger.info(f"[{worker.username}] recovered as {worker.login_name} on {worker.proxy_ip}")
+        return True
 
     async def _check_us_proxy(self, worker: BotWorker) -> bool:
         """Confirm the proxy routes AND exits in the USA before touching FCN.
@@ -689,9 +716,11 @@ class BotOrchestrator:
         Falls back to SDK agent for recovery if CDP is unavailable.
         """
         username = worker.username
+        persona_id = worker.persona.get("id", "")
         client = await self._get_client()
 
         tick = 0
+        ban_strikes = 0
         next_send = 0.0  # human-pace gate (monotonic seconds)
         while self._auto_pilot_enabled.get(username, False):
             try:
@@ -699,9 +728,26 @@ class BotOrchestrator:
                 if worker._page:
                     tick += 1
                     worker.loop_ticks = tick
+
+                    # Ban/kick detection → recover with a fresh IP + identity
+                    if await self._looks_banned(worker):
+                        ban_strikes += 1
+                        if ban_strikes >= 2:
+                            try:
+                                await db.log_event(persona_id, "ban", room=worker.room,
+                                                   content=worker.last_response or "")
+                            except Exception:
+                                pass
+                            ban_strikes = 0
+                            if not await self._recover(worker):
+                                worker.status = "error"
+                                break
+                            next_send = time.monotonic() + 15  # settle before posting
+                        await asyncio.sleep(3)
+                        continue
+                    ban_strikes = 0
+
                     # Clean ad popups/overlays only periodically (ads refresh ~30s).
-                    # Doing this every tick churns the DOM and destabilizes FCN's
-                    # chat WebSocket. Also keep the room tab foregrounded.
                     if tick % 5 == 1:
                         await self._close_popups(worker)
                         await self._dismiss_overlays(worker._page)
@@ -709,13 +755,13 @@ class BotOrchestrator:
                             await worker._page.bring_to_front()
                         except Exception:
                             pass
-                    # Human pace: reply at most once every ~30-75s, not every tick.
+                    # Human pace in group rooms: ~30s between replies (DMs will use 5-10s).
                     now = time.monotonic()
                     if now >= next_send:
                         messages = await worker.read_chat()
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
-                            next_send = now + random.randint(30, 75)
+                            next_send = now + random.randint(25, 40)
 
                 # ── SDK fallback (if no CDP) ──
                 elif worker.session_id:

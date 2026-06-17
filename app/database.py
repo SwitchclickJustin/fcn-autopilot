@@ -379,6 +379,13 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
         "bans": counts.get("ban", 0),
     }
 
+async def get_recent_events(limit=40):
+    db = await get_db()
+    q = "SELECT * FROM bot_events ORDER BY id DESC LIMIT $1" if USE_NEON else "SELECT * FROM bot_events ORDER BY id DESC LIMIT ?"
+    rows = await _fetchall(db, q, [limit])
+    await close_db(db)
+    return rows
+
 # ─── Ban Events ───
 async def log_ban_event(entry: dict):
     cols = ", ".join(entry.keys())

@@ -18,7 +18,7 @@ from app.database import (
     get_providers, create_provider, delete_provider,
     create_session, update_session, get_active_session, get_session,
     log_chat, get_chat_log, get_ban_events, get_rules,
-    get_stats, log_event,
+    get_stats, log_event, get_recent_events,
 )
 from app.models import PersonaCreate, PersonaUpdate, LLMProviderCreate, new_id
 from app.providers import provider_registry
@@ -879,6 +879,13 @@ async def cleanup_browsers():
         await browser_manager.stop_session()
     
     return results
+
+@app.get("/debug/events")
+async def debug_events(limit: int = 40):
+    """Recent bot events (messages/handle_shares/conversions/bans) for diagnosis."""
+    rows = await get_recent_events(limit)
+    return [{"type": r.get("event_type"), "room": r.get("room"), "user": r.get("other_user"),
+             "content": r.get("content"), "at": str(r.get("created_at"))} for r in rows]
 
 @app.get("/debug/screenshot")
 async def debug_screenshot():
