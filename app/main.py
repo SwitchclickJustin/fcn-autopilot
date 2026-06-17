@@ -261,6 +261,22 @@ _SNAP_JS = """
     cls: (e.className && e.className.toString ? e.className.toString() : ''),
     placeholder: e.getAttribute('data-placeholder') || e.getAttribute('placeholder')
   }));
+  const closeButtons = (() => {
+    const out = [];
+    document.querySelectorAll('*').forEach(e => {
+      if (e.children.length > 0) return;               // leaf nodes only
+      const t = (e.textContent || '').trim();
+      const c = (e.className && e.className.toString) ? e.className.toString() : '';
+      const aria = (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '');
+      if (/^(\\[?x\\]?|×|✕|✖|✗|⨯|╳)$/i.test(t)
+          || /close|dismiss|cross|exit/i.test(c)
+          || /close|dismiss/i.test(aria)) {
+        out.push({tag: e.tagName.toLowerCase(), cls: c, id: e.id,
+                  text: t.slice(0,15), aria: aria.trim().slice(0,30)});
+      }
+    });
+    return out.slice(0, 30);
+  })();
   const msgCandidates = (() => {
     const hits = {};
     document.querySelectorAll('[class]').forEach(e => {
@@ -275,7 +291,8 @@ _SNAP_JS = """
     return Object.entries(hits).map(([k,v]) => ({sel:k, count:v.count, sample:v.sample}))
       .sort((a,b)=>b.count-a.count).slice(0,20);
   })();
-  return {inputs, selects, buttons, forms, iframes, links, textareas, editables, msgCandidates,
+  return {inputs, selects, buttons, forms, iframes, links, textareas, editables,
+          msgCandidates, closeButtons,
           bodyText: (document.body ? document.body.innerText : '').slice(0,1800)};
 })()
 """
