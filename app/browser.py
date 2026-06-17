@@ -1101,15 +1101,47 @@ class BotOrchestrator:
             await page.wait_for_timeout(random.randint(400, 950))
 
             # ── Birthdate ─────────────────────────────────────────────────────
-            # form_info confirms: input[name=birthdate][type=date] — a single native
-            # date input expecting YYYY-MM-DD.  The 3 unnamed selects are custom UI
-            # widgets with no name attr; they don't get submitted and can't be targeted
-            # by select[name*='month'] etc.
-            logger.info(f"[{worker.agent_id}] filling birthdate={birthdate}…")
-            await page.wait_for_selector("input[name=birthdate]", state="attached", timeout=5000)
-            await page.fill("input[name=birthdate]", birthdate)
-            logger.info(f"[{worker.agent_id}] ✓ birthdate {birthdate}")
-            await page.wait_for_timeout(random.randint(400, 900))
+            # input[name=birthdate] has hidden="" (Vue backing field) — not fillable.
+            # The actual UI is 3 unnamed <select> controls at form-select positions
+            # 1, 2, 3 (0 = gender).  We log option previews first so we know the
+            # exact value format (e.g. "5" vs "05" vs "May").
+            year_str, month_str, day_str = birthdate.split("-")
+            month_int = int(month_str)
+            day_int   = int(day_str)
+            year_int  = int(year_str)
+            logger.info(f"[{worker.agent_id}] filling birthdate {month_int}/{day_int}/{year_int}…")
+
+            try:
+                sel_opts = await page.evaluate("""() => {
+                    const f = document.querySelector('form[action*="login"]');
+                    return Array.from(f.querySelectorAll('select')).map((s, i) => ({
+                        i, name: s.name,
+                        opts: Array.from(s.options).slice(0,5).map(o=>o.value)
+                    }));
+                }""")
+                logger.info(f"[{worker.agent_id}] select options preview: {sel_opts}")
+            except Exception:
+                pass
+
+            form_sel = page.locator("form[action*='login'] select")
+            # nth(0)=gender (already done), nth(1)=month, nth(2)=day, nth(3)=year
+            for label, locator, values in [
+                ("month", form_sel.nth(1), [str(month_int), f"{month_int:02d}"]),
+                ("day",   form_sel.nth(2), [str(day_int),   f"{day_int:02d}"]),
+                ("year",  form_sel.nth(3), [str(year_int)]),
+            ]:
+                picked = False
+                for v in values:
+                    try:
+                        await locator.select_option(value=v)
+                        logger.info(f"[{worker.agent_id}] ✓ birth {label} ({v})")
+                        picked = True
+                        break
+                    except Exception:
+                        pass
+                if not picked:
+                    logger.warning(f"[{worker.agent_id}] birth {label} select failed for values {values}")
+                await page.wait_for_timeout(random.randint(200, 500))
 
             # ── Checkbox ──────────────────────────────────────────────────────
             logger.info(f"[{worker.agent_id}] ticking checkbox…")
