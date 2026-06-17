@@ -687,6 +687,31 @@ class BotOrchestrator:
             pass
         return total
 
+    async def _kill_ads(self, page):
+        """Lightweight, every-tick removal of the ad iframe + its overlay wrapper
+        (the gray broken-image '[x]' modal). Only touches ad iframes — cheap and
+        won't churn the chat DOM/WS — and never removes a wrapper holding the chat."""
+        try:
+            await page.evaluate("""
+                (() => {
+                    document.querySelectorAll('iframe').forEach(f => {
+                        const s = (f.src || '') + ' ' + (f.id || '');
+                        if (!/12chats|\\/afr|exoclick|popads|propeller|adsterra|doubleclick|trafficjunky/i.test(s)) return;
+                        // remove the iframe AND its positioned overlay wrapper (box + backdrop)
+                        let p = f, cont = f;
+                        for (let i = 0; i < 5 && p; i++) {
+                            const st = getComputedStyle(p);
+                            if (st.position === 'fixed' || st.position === 'absolute') cont = p;
+                            p = p.parentElement;
+                        }
+                        if (cont !== f && cont.querySelector('.room-messages-container, .writer-input')) cont = f;
+                        try { cont.remove(); } catch(_) { try { f.remove(); } catch(_) {} }
+                    });
+                })()
+            """)
+        except Exception:
+            pass
+
     async def _close_popups(self, worker: BotWorker):
         """Close any ad popup windows, keeping only the room page foregrounded."""
         try:
@@ -797,7 +822,11 @@ class BotOrchestrator:
                         continue
                     ban_strikes = 0
 
-                    # Clean ad popups/overlays only periodically (ads refresh ~30s).
+                    # Kill the ad modal/iframe every tick (cheap, targeted) so the
+                    # gray "[x]" box never lingers in the live view.
+                    await self._kill_ads(worker._page)
+
+                    # Heavier cleanup (tip dismiss, popups, refocus) only periodically.
                     if tick % 5 == 1:
                         await self._close_popups(worker)
                         await self._dismiss_overlays(worker._page)
