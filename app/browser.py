@@ -1164,17 +1164,30 @@ class BotOrchestrator:
             await page.wait_for_timeout(1500)
 
             # ── Submit via button click (if form not yet submitted) ───────────
-            # If the checkbox onclick already submitted the form, a popup will have
-            # been captured.  Skip the button click in that case to avoid re-submit.
-            if not _fcn_popup:
+            # Two reasons to skip the button:
+            #   a) _fcn_popup already populated — checkbox onclick submitted the form
+            #   b) the form is no longer in the DOM — main page already navigated
+            #      (checkbox onclick fires window.location to 12chats.com while the
+            #      popup for schat.* is still loading, so _fcn_popup may lag behind).
+            # In both cases, fall through to the wait loop and let _handle_new_page
+            # capture the popup asynchronously.
+            _form_gone = False
+            try:
+                _form_gone = not bool(await page.query_selector("form[action*='login']"))
+            except Exception:
+                _form_gone = True   # page has navigated away; form is definitely gone
+
+            if _fcn_popup:
+                logger.info(f"[{worker.agent_id}] popup already captured — skipping button")
+            elif _form_gone:
+                logger.info(f"[{worker.agent_id}] form gone (page navigated) — skipping button, waiting for popup")
+            else:
                 logger.info(f"[{worker.agent_id}] clicking Chat As Guest…")
                 btn = page.locator("form[action*='login'] button[type=submit]")
                 await btn.wait_for(state="attached", timeout=6000)
                 await page.wait_for_timeout(random.randint(300, 700))
                 await btn.click(no_wait_after=True)
                 logger.info(f"[{worker.agent_id}] ✓ button clicked")
-            else:
-                logger.info(f"[{worker.agent_id}] checkbox submitted form — skipping button")
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] form step failed: {e}")
             page.context.remove_listener("page", _handle_new_page)
