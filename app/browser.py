@@ -1125,6 +1125,9 @@ class BotOrchestrator:
 
             form_sel = page.locator("form[action*='login'] select")
             # nth(0)=gender (already done), nth(1)=month, nth(2)=day, nth(3)=year
+            # force=True skips Playwright's visibility check — these selects are
+            # rendered as custom Vue UI (often opacity/z-index tricks) so they pass
+            # DOM-attached checks but fail standard visibility/actionability checks.
             for label, locator, values in [
                 ("month", form_sel.nth(1), [str(month_int), f"{month_int:02d}"]),
                 ("day",   form_sel.nth(2), [str(day_int),   f"{day_int:02d}"]),
@@ -1133,20 +1136,24 @@ class BotOrchestrator:
                 picked = False
                 for v in values:
                     try:
-                        await locator.select_option(value=v)
+                        await locator.select_option(value=v, force=True)
                         logger.info(f"[{worker.agent_id}] ✓ birth {label} ({v})")
                         picked = True
                         break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"[{worker.agent_id}] birth {label} value '{v}' failed: {e}")
                 if not picked:
-                    logger.warning(f"[{worker.agent_id}] birth {label} select failed for values {values}")
+                    logger.warning(f"[{worker.agent_id}] birth {label} — all values failed")
                 await page.wait_for_timeout(random.randint(200, 500))
 
             # ── Checkbox ──────────────────────────────────────────────────────
+            # Use focus()+Space instead of click() to avoid triggering FCN's
+            # document-level onclick ad-redirect handler.
             logger.info(f"[{worker.agent_id}] ticking checkbox…")
             await page.wait_for_selector("input[type=checkbox]", state="attached", timeout=5000)
-            await page.click("input[type=checkbox]")
+            await page.focus("input[type=checkbox]")
+            await page.wait_for_timeout(random.randint(200, 500))
+            await page.keyboard.press("Space")
             logger.info(f"[{worker.agent_id}] ✓ checkbox")
             await page.wait_for_timeout(random.randint(700, 1600))
 
