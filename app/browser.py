@@ -51,6 +51,12 @@ class BotWorker:
         self.proxy_ip: str = ""        # confirmed exit IP
         self.proxy_location: str = ""  # "City, State, US"
         self.status: str = "created"  # created | connecting | logging_in | running | error
+        # diagnostics
+        self.loop_ticks: int = 0
+        self.send_attempts: int = 0
+        self.send_oks: int = 0
+        self.last_response: str = ""
+        self.last_error: str = ""
 
         # CDP connection (for fast JS-based auto-pilot)
         self._page = None
@@ -173,6 +179,11 @@ class BotWorker:
             "proxy_ip": self.proxy_ip,
             "proxy_location": self.proxy_location,
             "status": self.status,
+            "loop_ticks": self.loop_ticks,
+            "send_attempts": self.send_attempts,
+            "send_oks": self.send_oks,
+            "last_response": self.last_response,
+            "last_error": self.last_error,
         }
 
 
@@ -623,15 +634,16 @@ class BotOrchestrator:
         client = await self._get_client()
 
         tick = 0
+        next_send = 0.0  # human-pace gate (monotonic seconds)
         while self._auto_pilot_enabled.get(username, False):
             try:
                 # ── CDP path (fast, zero cost) ──
                 if worker._page:
                     tick += 1
+                    worker.loop_ticks = tick
                     # Clean ad popups/overlays only periodically (ads refresh ~30s).
                     # Doing this every tick churns the DOM and destabilizes FCN's
-                    # chat WebSocket. Also keep the room tab foregrounded so the
-                    # live view stays on the room (not a closing popup tab).
+                    # chat WebSocket. Also keep the room tab foregrounded.
                     if tick % 5 == 1:
                         await self._close_popups(worker)
                         await self._dismiss_overlays(worker._page)
@@ -639,16 +651,20 @@ class BotOrchestrator:
                             await worker._page.bring_to_front()
                         except Exception:
                             pass
-                    messages = await worker.read_chat()
-                    if messages:
-                        # Generate response and send it
-                        await self._auto_pilot_tick(worker, messages, client)
+                    # Human pace: reply at most once every ~30-75s, not every tick.
+                    now = time.monotonic()
+                    if now >= next_send:
+                        messages = await worker.read_chat()
+                        if messages:
+                            await self._auto_pilot_tick(worker, messages, client)
+                            next_send = now + random.randint(30, 75)
 
                 # ── SDK fallback (if no CDP) ──
                 elif worker.session_id:
                     await self._sdk_auto_pilot_tick(worker, client)
 
             except Exception as e:
+                worker.last_error = f"{type(e).__name__}: {e}"[:200]
                 logger.error(f"Auto-pilot tick error for {username}: {e}")
 
             await asyncio.sleep(3)
@@ -691,10 +707,14 @@ class BotOrchestrator:
         )
         prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
         response = await llm.chat(system, prompt)
+        worker.last_response = (response or "")[:200]
 
         if response:
             if worker._page:
+                worker.send_attempts += 1
                 sent = await worker.send_message(response)
+                if sent:
+                    worker.send_oks += 1
             elif worker.session_id:
                 # Fallback: SDK agent sends the message
                 await client.run(
