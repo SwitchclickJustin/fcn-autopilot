@@ -452,6 +452,56 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 pass
     return results
 
+@app.get("/debug/start-trace")
+async def debug_start_trace(persona_id: str = ""):
+    """Run the real start path (auto_pilot.start) and return the full traceback.
+
+    Diagnoses the 500 on /api/session/start. Stops the bot immediately after so it
+    does not chat. Pass ?persona_id= or it uses the first persona.
+    """
+    import traceback
+    out = {}
+    try:
+        personas = await get_personas()
+        if not persona_id:
+            persona_id = personas[0]["id"] if personas else ""
+        persona = await get_persona(persona_id)
+        if not persona:
+            return {"error": "persona not found", "persona_id": persona_id}
+        for field in ["selected_rooms", "dm_gender_filter", "dm_blocklist"]:
+            if isinstance(persona.get(field), str):
+                try:
+                    persona[field] = json.loads(persona[field])
+                except (json.JSONDecodeError, TypeError):
+                    persona[field] = []
+        out["persona_ok"] = True
+
+        sess = await create_session({
+            "id": new_id(), "persona_id": persona_id,
+            "username": persona.get("username", ""),
+            "room_ids": persona.get("selected_rooms", ["SextChat"]),
+            "status": "connecting",
+        })
+        out["session_created"] = sess["id"]
+
+        worker = await auto_pilot.start(sess["id"], persona)
+        out["worker"] = worker.to_dict() if worker else None
+        out["start_returned_worker"] = worker is not None
+
+        # Immediately stop so it doesn't chat
+        await auto_pilot.stop()
+        await browser_manager.stop_session()
+        out["stopped"] = True
+    except Exception as e:
+        out["EXCEPTION"] = f"{type(e).__name__}: {e}"
+        out["traceback"] = traceback.format_exc()
+        try:
+            await auto_pilot.stop()
+            await browser_manager.stop_session()
+        except Exception:
+            pass
+    return out
+
 @app.get("/debug/check-plan")
 async def debug_check_plan():
     """Check Browser Use Cloud account plan info."""
