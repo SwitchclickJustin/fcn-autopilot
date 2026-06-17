@@ -422,28 +422,45 @@ class BotOrchestrator:
         return in_room
 
     async def _dismiss_overlays(self, page) -> int:
-        """Dismiss FCN's welcome/tip overlay via direct DOM clicks.
+        """Clear FCN's overlays: dismiss the welcome/tip, and REMOVE ad iframes.
 
-        The dismiss control is `.action.dismiss` ("I'm already familiar") — not a
-        <button>, label has a curly apostrophe, and Playwright treats it as
-        not-visible so a normal .click() is skipped. A direct DOM .click() inside
-        page.evaluate fires the handler regardless. Looped for the tip carousel.
+        - Welcome/tip dismiss control is `.action.dismiss` ("I'm already familiar")
+          — not a <button>, curly apostrophe, Playwright sees it as not-visible, so
+          a direct DOM .click() in evaluate fires the handler.
+        - The "I AM 18+" age-gate is a cross-origin 12chats ad IFRAME. Network
+          blocking is unreliable (iframe doc loads look top-level to Playwright), so
+          we just remove the ad <iframe> elements from the DOM. They refresh every
+          30s, so this runs every auto-pilot tick.
         """
         total = 0
         try:
-            for _ in range(6):
+            for _ in range(4):
                 n = await page.evaluate("""
                     (() => {
                         let n = 0;
+                        // 1. Welcome / tip dismiss
                         document.querySelectorAll('.action.dismiss, [class*=tip] [class*=dismiss], [class*=tip] [class*=close], [class*=welcome] [class*=close]')
                             .forEach(e => { try { e.click(); n++; } catch(_){} });
+                        // 2. Remove ad iframes (the "I AM 18+" age-gate lives in one)
+                        document.querySelectorAll('iframe').forEach(f => {
+                            const s = (f.src || '') + ' ' + (f.id || '');
+                            if (/12chats|\\/afr|exoclick|popads|propeller|adsterra|doubleclick|trafficjunky/i.test(s)) {
+                                try { f.remove(); n++; } catch(_){}
+                            }
+                        });
+                        // 3. Remove the leftover [x] ad-banner close + its container
+                        document.querySelectorAll('div, a, span').forEach(e => {
+                            if (e.children.length === 0 && (e.textContent||'').trim().toLowerCase() === '[x]') {
+                                try { (e.parentElement || e).remove(); n++; } catch(_){}
+                            }
+                        });
                         return n;
                     })()
                 """)
                 total += (n or 0)
                 if not n:
                     break
-                await page.wait_for_timeout(600)
+                await page.wait_for_timeout(500)
         except Exception:
             pass
         return total
