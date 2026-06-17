@@ -1155,31 +1155,24 @@ class BotOrchestrator:
             logger.info(f"[{worker.agent_id}] ✓ checkbox")
             await page.wait_for_timeout(random.randint(700, 1600))
 
-            # ── Submit ────────────────────────────────────────────────────────
-            logger.info(f"[{worker.agent_id}] clicking Chat As Guest…")
-            await page.click("input[value*='Chat As Guest'], button:has-text('Chat As Guest')", timeout=5000)
+            # ── Submit via Enter key (not button click) ───────────────────────
+            # Clicking "Chat As Guest" fires the button's onclick handler which:
+            #   1. Opens a 12chats.com ad popup
+            #   2. Does programmatic window.location navigation → Cloudflare blocks it
+            # Pressing Enter on a focused text field triggers a native HTML form POST
+            # with no onclick, no ad popup, and standard browser navigation that
+            # Cloudflare treats as legitimate.
+            logger.info(f"[{worker.agent_id}] submitting via Enter…")
+            await page.focus("input[name=username]")
+            await page.wait_for_timeout(random.randint(200, 500))
+            await page.keyboard.press("Enter")
             logger.info(f"[{worker.agent_id}] ✓ submitted")
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] form step failed: {e}")
             page.context.remove_listener("page", _handle_new_page)
             return False
 
-        # FCN opens the chat room as a popup while redirecting the current page to
-        # an ad. Wait up to 20s for the popup then switch worker._page to it.
-        for _ in range(10):
-            if _fcn_popup:
-                break
-            await page.wait_for_timeout(2000)
-
         page.context.remove_listener("page", _handle_new_page)
-
-        if _fcn_popup:
-            new_p = _fcn_popup[0]
-            worker._page = new_p
-            page = new_p
-            logger.info(f"[{worker.agent_id}] switched to chat popup @ {page.url}")
-        else:
-            logger.info(f"[{worker.agent_id}] no popup captured — checking current page: {page.url}")
 
         # Wait for the room SPA to sign in and load (also watch for captcha)
         worker.phase = "login_wait_room"
