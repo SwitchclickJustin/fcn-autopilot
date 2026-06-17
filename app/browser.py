@@ -1160,14 +1160,17 @@ class BotOrchestrator:
 
         # Wait for the server to redirect the main window to schat.freechatnow.com.
         # form.submit() keeps navigation in the CF-cleared main window — no popup.
+        # CF may show a "Just a moment…" soft challenge on /api/chat/login which
+        # BU Cloud's stealth browser auto-resolves in ~4s — give it 3 ticks (6s)
+        # before declaring a hard block and rotating IP.
         worker.phase = "login_wait_room"
-        for _ in range(15):
+        for _tick in range(15):
             await page.wait_for_timeout(2000)
             url_now = page.url or ""
             if "schat." in url_now or "/room/" in url_now or "alert=" in url_now:
                 break
-            if await self._is_blocked_page(page):
-                logger.warning(f"[{worker.agent_id}] Cloudflare block — rotating IP")
+            if _tick >= 3 and await self._is_blocked_page(page):
+                logger.warning(f"[{worker.agent_id}] Cloudflare block tick={_tick} — rotating IP")
                 worker.phase = "cf_blocked_post"
                 page.context.remove_listener("page", _close_all_popups)
                 return False
