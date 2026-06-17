@@ -133,48 +133,52 @@ class BotWorker:
         message = " ".join(message.split())[:300].strip()
         if not message:
             return False
-        try:
-            inp = await self._page.query_selector('input[placeholder="Type to chat"]')
-            if inp is None:
-                for s in ('textarea', '[contenteditable]', 'input[type=search]', 'input[type=text]'):
-                    inp = await self._page.query_selector(s)
-                    if inp is not None:
-                        break
-            if inp is None:
-                return False
-            # focus() (not click) so an ad overlay covering the input doesn't block
-            # us, then type real keystrokes (Vue v-model picks them up) + Enter.
+        inp = await self._page.query_selector('input.writer-input, input[placeholder="Type to chat"]')
+        if inp is None:
+            for s in ('textarea', '[contenteditable]', 'input[type=search]', 'input[type=text]'):
+                inp = await self._page.query_selector(s)
+                if inp is not None:
+                    break
+        if inp is None:
+            return False
+
+        async def _sent() -> bool:
             try:
-                await inp.scroll_into_view_if_needed(timeout=3000)
+                return not (await inp.input_value())
             except Exception:
-                pass
-            await inp.focus()
-            await self._page.keyboard.type(message, delay=12)
-            await self._page.keyboard.press("Enter")
-            await asyncio.sleep(0.7)
-            return True
-        except Exception as e:
-            logger.warning(f"[{self.username}] send (keyboard) failed: {e}; trying JS")
-            # JS fallback: native value setter (Vue-safe) + Enter + send button
+                return False
+
+        # Type via real keystrokes + Enter, then VERIFY the input cleared (FCN
+        # clears it on a successful send). Retry / try a send button if not.
+        for attempt in range(2):
             try:
-                ok = await self._page.evaluate("""(msg) => {
-                    const inp = document.querySelector('input[placeholder="Type to chat"]')
-                        || document.querySelector('textarea')
-                        || document.querySelector('input[type=search]');
-                    if (!inp) return false;
-                    inp.focus();
-                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                    setter.call(inp, msg);
-                    inp.dispatchEvent(new Event('input', {bubbles: true}));
-                    inp.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
-                    const btn = document.querySelector('button[class*=send i], [class*=send-message i], [class*=composer i] button');
-                    if (btn) btn.click();
-                    return true;
-                }""", message)
+                try:
+                    await inp.scroll_into_view_if_needed(timeout=2000)
+                except Exception:
+                    pass
+                await inp.focus()
+                await inp.fill("")  # clear any stale text
+                await self._page.keyboard.type(message, delay=10)
+                await self._page.keyboard.press("Enter")
                 await asyncio.sleep(0.7)
-                return bool(ok)
-            except Exception:
-                return False
+                if await _sent():
+                    return True
+                # Enter didn't submit — try clicking a send control
+                for bsel in ("form.writer [class*=send i]", ".writer-message [class*=send i]",
+                             "[aria-label*=send i]", "form.writer button[type=submit]"):
+                    try:
+                        btn = await self._page.query_selector(bsel)
+                        if btn:
+                            await btn.click(timeout=2000)
+                            await asyncio.sleep(0.5)
+                            if await _sent():
+                                return True
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"[{self.username}] send attempt {attempt + 1} failed: {e}")
+            await asyncio.sleep(0.5)
+        return await _sent()
 
     def to_dict(self):
         return {
