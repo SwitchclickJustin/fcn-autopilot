@@ -1219,15 +1219,21 @@ class BotOrchestrator:
                 worker._page = chat_page
                 page = chat_page
                 logger.info(f"[{worker.agent_id}] switched to FCN room popup @ {page.url}")
-                for _ in range(12):
-                    if "schat." in page.url or "/room/" in page.url or "alert=" in page.url:
+                # Give BU Cloud's browser ~10s to auto-resolve Cloudflare's
+                # "Just a moment…" soft challenge before we bail.  Only hard-block
+                # pages ("Attention Required" / "You have been blocked") warrant an
+                # immediate IP rotation; soft challenges usually self-resolve.
+                for _tick in range(15):
+                    cur = page.url or ""
+                    if "schat." in cur or "/room/" in cur or "alert=" in cur:
                         break
-                    if await self._is_blocked_page(page):
+                    if _tick >= 5 and await self._is_blocked_page(page):
                         logger.warning(f"[{worker.agent_id}] Cloudflare in popup — rotating IP")
                         worker.phase = "cf_blocked_popup"
                         page.context.remove_listener("page", _handle_new_page)
                         return False
                     await page.wait_for_timeout(2000)
+                    logger.info(f"[{worker.agent_id}] popup tick={_tick} url={cur[:60]}")
                 break
 
             # Main-page navigation case
