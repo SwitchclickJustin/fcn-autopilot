@@ -879,6 +879,19 @@ async def cleanup_browsers():
     
     return results
 
+@app.get("/debug/screenshot")
+async def debug_screenshot():
+    """Real CDP screenshot of the live session's page (vs the live-view stream)."""
+    from fastapi.responses import Response
+    cs = browser_manager.current_session
+    if not cs or not cs._page:
+        return JSONResponse({"error": "no session"}, status_code=404)
+    try:
+        png = await cs._page.screenshot(type="png", timeout=15000)
+        return Response(content=png, media_type="image/png")
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:200]}, status_code=500)
+
 @app.get("/debug/browser-status")
 async def debug_browser_status():
     """Check the in-memory browser session status."""
