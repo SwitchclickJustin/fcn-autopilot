@@ -995,7 +995,7 @@ class BotOrchestrator:
         await page.wait_for_timeout(random.randint(600, 1300))
 
         gval = self._GENDER_MAP.get((persona.get("gender") or "f").lower(), "female")
-        age = random.randint(23, 30)
+        age = random.randint(20, 26)
         birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
 
         # Wait for the login form to be visible — with 4 agents starting
