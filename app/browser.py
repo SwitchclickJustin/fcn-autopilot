@@ -1128,8 +1128,11 @@ class BotOrchestrator:
             # force=True skips Playwright's visibility check — these selects are
             # rendered as custom Vue UI (often opacity/z-index tricks) so they pass
             # DOM-attached checks but fail standard visibility/actionability checks.
+            # Month select is 0-indexed: value "0"=January, "1"=February, etc.
+            # month_int is 1-indexed (from the birthdate YYYY-MM-DD), so subtract 1.
+            month_val_0 = str(month_int - 1)
             for label, locator, values in [
-                ("month", form_sel.nth(1), [str(month_int), f"{month_int:02d}"]),
+                ("month", form_sel.nth(1), [month_val_0, f"{month_int - 1:02d}"]),
                 ("day",   form_sel.nth(2), [str(day_int),   f"{day_int:02d}"]),
                 ("year",  form_sel.nth(3), [str(year_int)]),
             ]:
@@ -1155,18 +1158,17 @@ class BotOrchestrator:
             logger.info(f"[{worker.agent_id}] ✓ checkbox")
             await page.wait_for_timeout(random.randint(700, 1600))
 
-            # ── Submit via Enter key (not button click) ───────────────────────
-            # Clicking "Chat As Guest" fires the button's onclick handler which:
-            #   1. Opens a 12chats.com ad popup
-            #   2. Does programmatic window.location navigation → Cloudflare blocks it
-            # Pressing Enter on a focused text field triggers a native HTML form POST
-            # with no onclick, no ad popup, and standard browser navigation that
-            # Cloudflare treats as legitimate.
-            logger.info(f"[{worker.agent_id}] submitting via Enter…")
-            await page.focus("input[name=username]")
-            await page.wait_for_timeout(random.randint(200, 500))
-            await page.keyboard.press("Enter")
-            logger.info(f"[{worker.agent_id}] ✓ submitted")
+            # ── Submit via button click ───────────────────────────────────────
+            # Enter key on the username field does NOT submit FCN's form — Vue's
+            # @submit.prevent intercepts the form submit event and the onclick handler
+            # on the button is the only code path that triggers the actual login.
+            # Small pre-click delay + move to button coords before clicking looks human.
+            logger.info(f"[{worker.agent_id}] clicking Chat As Guest…")
+            btn = page.locator("form[action*='login'] button[type=submit]")
+            await btn.wait_for(state="attached", timeout=6000)
+            await page.wait_for_timeout(random.randint(300, 700))
+            await btn.click()
+            logger.info(f"[{worker.agent_id}] ✓ button clicked")
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] form step failed: {e}")
             page.context.remove_listener("page", _handle_new_page)
@@ -1174,14 +1176,33 @@ class BotOrchestrator:
 
         page.context.remove_listener("page", _handle_new_page)
 
-        # Wait for the room SPA to sign in and load (also watch for captcha)
+        # Wait for the chat room to appear — either the main page navigates to
+        # schat.freechatnow.com OR the room opened as a popup (_fcn_popup).
+        # Also watch for Cloudflare "Attention Required" (IP/fingerprint block)
+        # and captcha iframes; rotate IP immediately if detected.
         worker.phase = "login_wait_room"
-        for _ in range(12):
+        for _ in range(15):
             await page.wait_for_timeout(2000)
+
+            # Popup case: FCN opened room in a new window → switch to it
+            if _fcn_popup:
+                chat_page = _fcn_popup[0]
+                worker._page = chat_page
+                page = chat_page
+                logger.info(f"[{worker.agent_id}] switched to FCN room popup @ {page.url}")
+                break
+
+            # Main-page navigation case
             if "schat." in page.url or "/room/" in page.url or "alert=" in page.url:
                 break
-            # Captcha check — hCaptcha / reCAPTCHA / Cloudflare challenge.
-            # Don't try to solve it; a fresh Decoda IP almost never triggers one.
+
+            # Cloudflare hard-block ("Attention Required" / "You have been blocked")
+            if await self._is_blocked_page(page):
+                logger.warning(f"[{worker.agent_id}] Cloudflare block on form POST — rotating IP")
+                worker.phase = "cf_blocked_post"
+                return False
+
+            # Captcha challenge (hCaptcha / reCAPTCHA / CF interactive challenge)
             try:
                 has_captcha = await page.evaluate("""() => {
                     const sels = [
