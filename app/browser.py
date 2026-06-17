@@ -823,11 +823,27 @@ class BotOrchestrator:
             await worker._page.set_extra_http_headers({"User-Agent": ua})
             worker._ua = ua
 
+            # Derive consistent platform/vendor from the chosen UA so Cloudflare's
+            # cross-signal checks don't see a mismatch (e.g. Android UA + Win32 platform).
+            if "iPhone" in ua:
+                _plat, _vendor = "iPhone", "Apple Computer, Inc."
+            elif "iPad" in ua:
+                _plat, _vendor = "iPad", "Apple Computer, Inc."
+            elif "Android" in ua:
+                _plat, _vendor = "Linux armv8l", "Google Inc."
+            elif "Macintosh" in ua:
+                _plat, _vendor = "MacIntel", "Apple Computer, Inc."
+            elif "Linux" in ua:
+                _plat, _vendor = "Linux x86_64", "Google Inc."
+            else:
+                _plat, _vendor = "Win32", "Google Inc."
+            _hw = random.choice([4, 6, 8])
+            _dm = random.choice([4, 8])
+
             # Stealth patches — injected before any page script on every navigation.
-            # navigator.webdriver=true is the #1 Playwright/CDP bot signal; FCN's
-            # detection checks it immediately. Patch it (and related signals) here so
-            # they're already gone when FCN's JS runs.
-            await worker._page.add_init_script("""
+            # Covers the main Cloudflare fingerprint signals: webdriver flag, plugins,
+            # platform, hardware concurrency, device memory, vendor, and permissions API.
+            _stealth_js = """
                 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
                 Object.defineProperty(navigator, 'plugins', {get: () => {
                     const p = [1,2,3,4,5];
@@ -835,12 +851,25 @@ class BotOrchestrator:
                     return p;
                 }});
                 Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
-                if (!window.chrome) {
+                Object.defineProperty(navigator, 'platform', {get: () => 'PLATFORM'});
+                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => HW_CONC});
+                Object.defineProperty(navigator, 'deviceMemory', {get: () => DEV_MEM});
+                Object.defineProperty(navigator, 'vendor', {get: () => 'VENDOR'});
+                if (!window.chrome && 'VENDOR'.includes('Google')) {
                     window.chrome = {runtime:{}, loadTimes:()=>{}, csi:()=>{}, app:{}};
                 }
                 delete window.__playwright;
                 delete window.__pw_manual;
-            """)
+                try {
+                    const _oq = window.navigator.permissions.query.bind(window.navigator.permissions);
+                    window.navigator.permissions.query = (p) => {
+                        if (p.name === 'notifications') return Promise.resolve({state:'default',onchange:null});
+                        return _oq(p);
+                    };
+                } catch(e) {}
+            """.replace("PLATFORM", _plat).replace("VENDOR", _vendor) \
+               .replace("HW_CONC", str(_hw)).replace("DEV_MEM", str(_dm))
+            await worker._page.add_init_script(_stealth_js)
 
             # Ad guard: block ONLY known ad/pop networks by exact domain.
             # Do NOT use broad wildcards like "**traffic**" — that matches FCN's own
@@ -949,7 +978,9 @@ class BotOrchestrator:
             await page.goto(room_url, wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] room nav failed: {e}")
-        await page.wait_for_timeout(random.randint(1500, 3000))
+        # Longer dwell — Cloudflare's JS needs a few seconds to "pass" the visitor.
+        # Bots hit the form immediately; real users read the page first.
+        await page.wait_for_timeout(random.randint(3000, 5500))
 
         # IP block check — Cloudflare "Sorry, you have been blocked"
         if await self._is_blocked_page(page):
@@ -957,35 +988,84 @@ class BotOrchestrator:
             worker.phase = "ip_blocked"
             return False
 
+        # Human mouse settle + gentle scroll before touching any form field
+        await page.mouse.move(random.randint(250, 850), random.randint(100, 420))
+        await page.wait_for_timeout(random.randint(400, 900))
+        await page.mouse.wheel(0, random.randint(60, 180))
+        await page.wait_for_timeout(random.randint(600, 1300))
+
         gval = self._GENDER_MAP.get((persona.get("gender") or "f").lower(), "female")
         age = random.randint(23, 30)
         birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
 
-        # Fill form fields with small human-like delays between each one,
-        # then submit via native form.submit() (NOT the button — it fires ad redirects).
+        # Check form is present before touching it
+        form_exists = await page.evaluate(
+            "() => !!document.querySelector(\"form[action*='chat/login']\")")
+        if not form_exists:
+            logger.warning(f"guest form not found for {worker.username} @ {page.url}")
+            return False
+
         try:
-            form_exists = await page.evaluate(
-                "() => !!document.querySelector(\"form[action*='chat/login']\")")
-            if not form_exists:
-                logger.warning(f"guest form not found for {worker.username} @ {page.url}")
-                return False
-            await page.evaluate(
-                "(v) => { const u=document.querySelector(\"input[name=username]\"); if(u)u.value=v; }",
-                worker.login_name)
-            await page.wait_for_timeout(random.randint(250, 600))
-            await page.evaluate(
-                "(v) => { const g=document.querySelector(\"select[name=gender]\"); if(g)g.value=v; }",
-                gval)
-            await page.wait_for_timeout(random.randint(150, 400))
-            await page.evaluate(
-                "(v) => { const b=document.querySelector(\"input[name=birthdate]\"); if(b)b.value=v; }",
-                birthdate)
-            await page.wait_for_timeout(random.randint(200, 500))
-            await page.evaluate(
-                "() => { const c=document.querySelector(\"input[type=checkbox]\"); if(c)c.checked=true; }")
-            await page.wait_for_timeout(random.randint(300, 700))
+            # ── Username: real click → char-by-char keyboard type ─────────────
+            # JS .value= sets the field silently with no input/keydown events.
+            # Real typing fires focus → keydown/keypress/input/keyup per char,
+            # which is what Cloudflare expects from a human.
+            try:
+                await page.click("input[name=username]", timeout=5000)
+            except Exception:
+                await page.evaluate("() => document.querySelector('input[name=username]')?.focus()")
+            await page.wait_for_timeout(random.randint(300, 800))
+            for ch in worker.login_name:
+                await page.keyboard.type(ch)
+                await page.wait_for_timeout(random.randint(65, 215))
+
+            # ── Gender: mouse to element → select_option (fires change events) ─
+            await page.wait_for_timeout(random.randint(500, 1100))
+            try:
+                sel_el = await page.query_selector("select[name=gender]")
+                if sel_el:
+                    bb = await sel_el.bounding_box()
+                    if bb:
+                        await page.mouse.move(
+                            bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+                        await page.wait_for_timeout(random.randint(200, 500))
+                await page.select_option("select[name=gender]", gval, timeout=5000)
+            except Exception:
+                await page.evaluate(
+                    "(v) => { const g=document.querySelector('select[name=gender]'); if(g)g.value=v; }",
+                    gval)
+            await page.wait_for_timeout(random.randint(400, 950))
+
+            # ── Birthdate: click → fill (fires focus + change events) ─────────
+            try:
+                await page.click("input[name=birthdate]", timeout=5000)
+                await page.wait_for_timeout(random.randint(300, 700))
+                await page.fill("input[name=birthdate]", birthdate, timeout=5000)
+            except Exception:
+                await page.evaluate(
+                    "(v) => { const b=document.querySelector('input[name=birthdate]'); if(b)b.value=v; }",
+                    birthdate)
+            await page.wait_for_timeout(random.randint(400, 900))
+
+            # ── Checkbox: mouse to element → real click ───────────────────────
+            try:
+                chk_el = await page.query_selector("input[type=checkbox]")
+                if chk_el:
+                    bb = await chk_el.bounding_box()
+                    if bb:
+                        await page.mouse.move(
+                            bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+                        await page.wait_for_timeout(random.randint(200, 500))
+                await page.click("input[type=checkbox]", timeout=5000)
+            except Exception:
+                await page.evaluate(
+                    "() => { const c=document.querySelector('input[type=checkbox]'); if(c)c.checked=true; }")
+            await page.wait_for_timeout(random.randint(700, 1600))
+
+            # ── Submit via form.submit() (NOT the button — it fires ad redirects)
             res = await page.evaluate(
-                "() => { const f=document.querySelector(\"form[action*='chat/login']\"); if(!f) return 'no-form'; f.submit(); return 'submitted'; }")
+                "() => { const f=document.querySelector(\"form[action*='chat/login']\"); "
+                "if(!f) return 'no-form'; f.submit(); return 'submitted'; }")
         except Exception as e:
             logger.warning(f"guest-form submit failed ({worker.username}): {e}")
             return False
