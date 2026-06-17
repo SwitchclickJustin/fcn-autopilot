@@ -515,6 +515,8 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 w = _BW3({"username": username, "gender": gender, "selected_rooms": [room]})
                 w._page = page
                 try:
+                    # wait for the WS-driven chat input to load (reload once if stalled)
+                    results["chat_ready"] = await browser_manager._wait_chat_ready(page, w)
                     results["read_before"] = (await w.read_chat())[-5:]
                     results["send_ok"] = await w.send_message("hey everyone, how is your night going?")
                     await page.wait_for_timeout(2500)

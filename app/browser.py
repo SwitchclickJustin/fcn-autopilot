@@ -486,14 +486,42 @@ class BotOrchestrator:
                 return await self._cdp_guest_login(worker, _attempt + 1)
             return False
 
+        in_room = "schat." in url_now or "/room/" in url_now
+
+        # Wait for the WS-driven chat UI (message input) to actually load before
+        # the loop starts. The room SPA often loads the shell but stalls on the
+        # chat (WS flap) — reload once if so.
+        if in_room:
+            await self._wait_chat_ready(page, worker)
+
         # Close ad popups + dismiss the welcome/tip overlay
         await self._close_popups(worker)
         await self._dismiss_overlays(page)
 
-        in_room = "schat." in url_now or "/room/" in url_now
         logger.info(f"Guest login {'OK' if in_room else 'UNCERTAIN'} for "
                     f"{worker.username} (room={room}) @ {url_now}")
         return in_room
+
+    async def _wait_chat_ready(self, page, worker) -> bool:
+        """Wait for FCN's WS-driven chat input to load; reload the room once if it
+        stalls (the shell loads but the chat hangs on a WebSocket flap)."""
+        for _reload in range(2):
+            for _ in range(12):
+                await page.wait_for_timeout(2000)
+                try:
+                    if await page.query_selector('input[placeholder="Type to chat"]'):
+                        logger.info(f"[{worker.username}] chat UI ready")
+                        return True
+                except Exception:
+                    pass
+            logger.warning(f"[{worker.username}] chat UI not ready — reloading room")
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=30000)
+                await page.wait_for_timeout(3000)
+            except Exception:
+                pass
+        logger.warning(f"[{worker.username}] chat UI never loaded")
+        return False
 
     async def _dismiss_overlays(self, page) -> int:
         """Clear FCN's overlays: dismiss the welcome/tip, and REMOVE ad iframes.
