@@ -1028,34 +1028,16 @@ class BotOrchestrator:
             logger.warning(f"[{worker.agent_id}] no login form found @ {page.url}")
             return False
 
-        # FCN submit fires TWO things simultaneously:
-        #   1. current page → ad redirect
-        #   2. new popup → schat.freechatnow.com (the actual chat room)
-        # Also, ad popups may fire on any form interaction before submit.
-        # Strategy: capture any new page that contains freechatnow.com; close the rest.
-        _fcn_popup: list = []
-
-        async def _handle_new_page(new_page):
+        # Suppress all popups opened during form filling (ad popups, etc.)
+        # form.submit() bypasses Vue's @submit.prevent so no chat-room popup is
+        # opened — navigation happens in the main (CF-cleared) window instead.
+        async def _close_all_popups(new_page):
             try:
-                await new_page.wait_for_load_state("domcontentloaded", timeout=8000)
+                await new_page.close()
             except Exception:
                 pass
-            url = new_page.url
-            try:
-                title = await new_page.title()
-            except Exception:
-                title = "?"
-            if "freechatnow.com" in url:
-                logger.info(f"[{worker.agent_id}] FCN popup captured: {url} | title={title!r}")
-                _fcn_popup.append(new_page)
-            else:
-                logger.info(f"[{worker.agent_id}] closing ad popup: {url} | title={title!r}")
-                try:
-                    await new_page.close()
-                except Exception:
-                    pass
 
-        page.context.on("page", _handle_new_page)
+        page.context.on("page", _close_all_popups)
 
         try:
             # ── Username ──────────────────────────────────────────────────────
@@ -1153,133 +1135,42 @@ class BotOrchestrator:
                     logger.warning(f"[{worker.agent_id}] birth {label} — all values failed")
                 await page.wait_for_timeout(random.randint(200, 500))
 
-            # ── Checkbox ──────────────────────────────────────────────────────
-            # FCN's checkbox has an onclick that auto-submits the form (and may open
-            # a popup) when checked with all fields filled.  no_wait_after=True prevents
-            # Playwright from hanging 30 s waiting for the resulting popup/navigation to
-            # settle — we handle that ourselves in the wait loop below.
-
-            # Diagnostic: log form target + checkbox onclick to understand submission mechanism
+            # ── Submit via form.submit() — bypasses Vue's @submit.prevent ─────
+            # Vue controls submission via @submit.prevent (no onclick attrs visible).
+            # form.submit() does NOT fire the submit event so Vue cannot intercept
+            # it — the browser POSTs directly to /api/chat/login in the main
+            # (CF-cleared) window and follows the server redirect to schat.*.
+            # The checkbox has no `name` attribute (pure Vue gate, not sent in POST),
+            # so we only need to call submit(); no checkbox manipulation required.
+            logger.info(f"[{worker.agent_id}] submitting login form…")
             try:
-                form_info = await page.evaluate("""() => {
+                await page.evaluate("""() => {
                     const f = document.querySelector('form[action*="login"]');
-                    if (!f) return {error: 'no form'};
-                    const cb = f.querySelector('input[type=checkbox]');
-                    const btn = f.querySelector('button[type=submit]');
-                    return {
-                        action: f.action,
-                        method: f.method,
-                        target: f.target || '',
-                        cb_onclick: cb ? (cb.getAttribute('onclick') || cb.onclick?.toString()?.slice(0,200) || '') : 'none',
-                        btn_onclick: btn ? (btn.getAttribute('onclick') || btn.onclick?.toString()?.slice(0,200) || '') : 'none',
-                        cb_name: cb ? cb.name : 'none',
-                        cb_value: cb ? cb.value : 'none',
-                    };
+                    if (!f) throw new Error('no login form');
+                    f.submit();
                 }""")
-                logger.info(f"[{worker.agent_id}] form_info: {form_info}")
             except Exception as e:
-                logger.warning(f"[{worker.agent_id}] form_info eval failed: {e}")
-
-            logger.info(f"[{worker.agent_id}] ticking checkbox…")
-            # Playwright 1.50 removed no_wait_after from check(); use click() instead.
-            # click(force=True, no_wait_after=True) toggles the unchecked box and
-            # returns immediately without waiting for the resulting popup/navigation.
-            await page.locator("form[action*='login'] input[type=checkbox]").click(
-                force=True, no_wait_after=True)
-            logger.info(f"[{worker.agent_id}] ✓ checkbox")
-
-            # Brief pause — gives the checkbox onclick time to fire and open any popup
-            # before we decide whether the submit button is still needed.
-            await page.wait_for_timeout(1500)
-
-            # ── Submit via button click (if form not yet submitted) ───────────
-            # Two reasons to skip the button:
-            #   a) _fcn_popup already populated — checkbox onclick submitted the form
-            #   b) the form is no longer in the DOM — main page already navigated
-            #      (checkbox onclick fires window.location to 12chats.com while the
-            #      popup for schat.* is still loading, so _fcn_popup may lag behind).
-            # In both cases, fall through to the wait loop and let _handle_new_page
-            # capture the popup asynchronously.
-            _form_gone = False
-            try:
-                _form_gone = not bool(await page.query_selector("form[action*='login']"))
-            except Exception:
-                _form_gone = True   # page has navigated away; form is definitely gone
-
-            if _fcn_popup:
-                logger.info(f"[{worker.agent_id}] popup already captured — skipping button")
-            elif _form_gone:
-                logger.info(f"[{worker.agent_id}] form gone (page navigated) — skipping button, waiting for popup")
-            else:
-                logger.info(f"[{worker.agent_id}] clicking Chat As Guest…")
-                btn = page.locator("form[action*='login'] button[type=submit]")
-                await btn.wait_for(state="attached", timeout=6000)
-                await page.wait_for_timeout(random.randint(300, 700))
-                await btn.click(no_wait_after=True)
-                logger.info(f"[{worker.agent_id}] ✓ button clicked")
+                _emsg = str(e).lower()
+                if not any(k in _emsg for k in ("closed", "navigation", "detach", "destroyed")):
+                    raise   # real error — rethrow to outer except
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] form step failed: {e}")
-            page.context.remove_listener("page", _handle_new_page)
+            page.context.remove_listener("page", _close_all_popups)
             return False
 
-        # Keep the listener active through the wait loop — the button onclick fires
-        # asynchronously AFTER click() returns (no_wait_after=True), so the popup
-        # event can arrive any time during the first few seconds of the loop.
-        # Removing the listener here (before the loop) was swallowing the popup.
-
-        # Wait for the chat room to appear — either the main page navigates to
-        # schat.freechatnow.com OR the room opened as a popup (_fcn_popup).
-        # Also watch for Cloudflare "Attention Required" (IP/fingerprint block)
-        # and captcha iframes; rotate IP immediately if detected.
+        # Wait for the server to redirect the main window to schat.freechatnow.com.
+        # form.submit() keeps navigation in the CF-cleared main window — no popup.
         worker.phase = "login_wait_room"
         for _ in range(15):
             await page.wait_for_timeout(2000)
-
-            # Popup case: FCN opened room in a new window → switch to it and
-            # wait for the popup to finish redirecting to schat.freechatnow.com.
-            # The popup URL starts at freechatnow.com/chat/sex (form POST landing)
-            # before a server-side redirect takes it to schat.*.
-            if _fcn_popup:
-                page.context.remove_listener("page", _handle_new_page)
-                chat_page = _fcn_popup[0]
-                worker._page = chat_page
-                page = chat_page
-                logger.info(f"[{worker.agent_id}] switched to FCN room popup @ {page.url}")
-                # Give BU Cloud's browser ~10s to auto-resolve Cloudflare's
-                # "Just a moment…" soft challenge before we bail.  Only hard-block
-                # pages ("Attention Required" / "You have been blocked") warrant an
-                # immediate IP rotation; soft challenges usually self-resolve.
-                for _tick in range(15):
-                    cur = page.url or ""
-                    if "schat." in cur or "/room/" in cur or "alert=" in cur:
-                        break
-                    # Log title + body snippet to diagnose CF vs login-form-reload
-                    try:
-                        _ptitle = await page.title()
-                        _pbody  = await page.evaluate("() => (document.body?.innerText||'').slice(0,150)")
-                    except Exception:
-                        _ptitle, _pbody = "?", "?"
-                    logger.info(f"[{worker.agent_id}] popup tick={_tick} url={cur[:60]} title={_ptitle!r} body={_pbody!r}")
-                    if _tick >= 5 and await self._is_blocked_page(page):
-                        logger.warning(f"[{worker.agent_id}] Cloudflare in popup — rotating IP")
-                        worker.phase = "cf_blocked_popup"
-                        page.context.remove_listener("page", _handle_new_page)
-                        return False
-                    await page.wait_for_timeout(2000)
+            url_now = page.url or ""
+            if "schat." in url_now or "/room/" in url_now or "alert=" in url_now:
                 break
-
-            # Main-page navigation case
-            if "schat." in page.url or "/room/" in page.url or "alert=" in page.url:
-                break
-
-            # Cloudflare hard-block ("Attention Required" / "You have been blocked")
             if await self._is_blocked_page(page):
-                logger.warning(f"[{worker.agent_id}] Cloudflare block on form POST — rotating IP")
+                logger.warning(f"[{worker.agent_id}] Cloudflare block — rotating IP")
                 worker.phase = "cf_blocked_post"
-                page.context.remove_listener("page", _handle_new_page)
+                page.context.remove_listener("page", _close_all_popups)
                 return False
-
-            # Captcha challenge (hCaptcha / reCAPTCHA / CF interactive challenge)
             try:
                 has_captcha = await page.evaluate("""() => {
                     const sels = [
@@ -1290,13 +1181,13 @@ class BotOrchestrator:
                     return sels.some(s => !!document.querySelector(s));
                 }""")
                 if has_captcha:
-                    logger.warning(f"[{worker.agent_id}] captcha detected — rotating to fresh IP")
+                    logger.warning(f"[{worker.agent_id}] captcha — rotating IP")
                     worker.phase = "captcha_detected"
-                    page.context.remove_listener("page", _handle_new_page)
+                    page.context.remove_listener("page", _close_all_popups)
                     return False
             except Exception:
                 pass
-        page.context.remove_listener("page", _handle_new_page)
+        page.context.remove_listener("page", _close_all_popups)
         await page.wait_for_timeout(2500)
         url_now = page.url
 
