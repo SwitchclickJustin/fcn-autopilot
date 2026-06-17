@@ -514,33 +514,23 @@ class BotOrchestrator:
         return workers
 
     async def _provision_and_connect(self, worker: BotWorker) -> bool:
-        """Provision a FRESH BU browser (new IP via a unique US Decoda port, no
-        cookies). Picks a port not already held by another live agent, then rotates
-        up to 5x on failure. Each agent is guaranteed a distinct residential IP."""
+        """Provision a FRESH BU browser on BU Cloud's native residential proxy.
+
+        BU Cloud's built-in residential IPs pass Cloudflare's Bot Management on
+        freechatnow.com. Decoda proxies were getting CF 522s (IP-level blocks) on
+        /api/chat/login. Native proxy = no customProxy in the API call; BU Cloud
+        selects the exit IP automatically.
+
+        Rotates up to 3 browser instances on transient API failures.
+        """
         client = await self._get_client()
-        in_use = {(w.proxy_host, w.proxy_port) for w in self._workers.values() if w.proxy_port}
-        available = [p for p in DECODA_PROXIES if (p["host"], p["port"]) not in in_use]
-        if not available:
-            available = list(DECODA_PROXIES)
-        # Weighted sampling — US/CA are 3× more likely than GB/AU (fewer Cloudflare blocks).
-        # Draw 10 candidates, deduplicate, keep first 5 unique ones.
-        weights = [_PROXY_WEIGHTS.get(p["host"], 1) for p in available]
-        candidates = random.choices(available, weights=weights, k=min(10, len(available)))
-        seen, pool = set(), []
-        for p in candidates:
-            key = (p["host"], p["port"])
-            if key not in seen:
-                seen.add(key)
-                pool.append(p)
-            if len(pool) == 5:
-                break
-        for attempt, proxy in enumerate(pool):
+        for attempt in range(3):
             try:
                 # 1280x960 (4:3) matches the dashboard's .browser-frame aspect-ratio
                 # so the live stream fills the box with no black bars.
                 browser = await client.browsers.create(
                     timeout=60, browser_screen_width=1280, browser_screen_height=960,
-                    enable_recording=False, customProxy=proxy,
+                    enable_recording=False,
                 )
             except Exception as e:
                 logger.warning(f"[{worker.username}] provision failed (try {attempt + 1}): {e}")
@@ -548,11 +538,12 @@ class BotOrchestrator:
             worker.browser_id = str(browser.id)
             worker.live_url = browser.live_url or ""
             cdp_url = browser.cdp_url or ""
-            if cdp_url and await self._connect_cdp(worker, cdp_url) and self._record_proxy_info(worker, proxy):
-                worker.proxy_port = proxy["port"]
-                worker.proxy_host = proxy["host"]
+            if cdp_url and await self._connect_cdp(worker, cdp_url):
+                worker.proxy_ip = "bu-cloud-native"
+                worker.proxy_location = "US"
+                logger.info(f"[{worker.username}] provisioned on BU Cloud native proxy (try {attempt + 1})")
                 return True
-            logger.warning(f"[{worker.username}] proxy failed on port {proxy['port']} (try {attempt + 1}); rotating")
+            logger.warning(f"[{worker.username}] CDP connect failed (try {attempt + 1}); retrying")
             await worker.disconnect_cdp()
             try:
                 await client.browsers.stop(worker.browser_id)
@@ -630,8 +621,7 @@ class BotOrchestrator:
         client-side fingerprint signal FCN may have recorded.
         """
         agent_id = worker.agent_id
-        banned_ip = worker.proxy_ip
-        logger.warning(f"[{agent_id}] BAN confirmed ({banned_ip}) — recovery loop starting")
+        logger.warning(f"[{agent_id}] BAN confirmed — recovery loop starting")
         worker.phase = "recovering"
         worker.handle_shared = False
         worker.in_dm = False
@@ -657,14 +647,12 @@ class BotOrchestrator:
             if ok:
                 worker.phase = "loop_running"
                 logger.info(f"[{agent_id}] ✅ recovered on attempt {attempt} "
-                             f"as {worker.login_name} @ {worker.proxy_ip} "
-                             f"(was banned on {banned_ip})")
+                             f"as {worker.login_name}")
                 return True
 
-            # Login failed (FCN still rejecting this IP, captcha, or form error).
-            # Tear down and try a completely fresh IP next iteration.
-            logger.warning(f"[{agent_id}] login failed on attempt {attempt} "
-                            f"({worker.proxy_ip}), rotating IP…")
+            # Login failed — tear down and provision a fresh browser next iteration.
+            logger.warning(f"[{agent_id}] login failed on attempt {attempt}, "
+                            f"provisioning fresh browser…")
             await self._teardown_browser(worker)
             # Brief pause so FCN's rate-limiter doesn't chain-ban consecutive IPs
             await asyncio.sleep(random.uniform(6, 15))
