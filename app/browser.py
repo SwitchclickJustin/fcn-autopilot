@@ -38,10 +38,15 @@ logger = logging.getLogger(__name__)
 # US-only residential, sticky ~10 min per port. us.decodo.com is the country-
 # specific endpoint (Decodo geo-targets by HOSTNAME, not a username suffix).
 # 50 ports (10001-10050) → up to 50 distinct sticky US IPs, one per bot.
-DECODA_PROXIES = [
-    {"host": "us.decodo.com", "port": p, "username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"}
-    for p in range(10001, 10051)
-]
+_DCREDS = {"username": "sp2ihy1g3e", "password": "8tjpKDcFwLem7j5v+2"}
+DECODA_PROXIES = (
+    [{"host": "us.decodo.com", "port": p, **_DCREDS} for p in range(10001, 10051)] +
+    [{"host": "ca.decodo.com", "port": p, **_DCREDS} for p in range(20001, 20051)] +
+    [{"host": "gb.decodo.com", "port": p, **_DCREDS} for p in range(30001, 30051)] +
+    [{"host": "au.decodo.com", "port": p, **_DCREDS} for p in range(30001, 30051)]
+)
+# All four are English-speaking markets — FCN traffic looks natural from any of them.
+_PROXY_ALLOWED_CC = {"US", "CA", "GB", "AU"}
 
 # ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
 FCN_ROOMS = [
@@ -107,8 +112,9 @@ class BotWorker:
         self.browser_id: str = ""
         self.live_url: str = ""
         self.proxy_port: int = 0       # Decoda port in use (unique per agent)
+        self.proxy_host: str = ""      # Decoda host (us/ca/gb/au.decodo.com)
         self.proxy_ip: str = ""        # confirmed exit IP
-        self.proxy_location: str = ""  # "City, State, US"
+        self.proxy_location: str = ""  # "City, Region, CC"
         self.status: str = "created"  # created | connecting | logging_in | running | error
         # diagnostics
         self.phase: str = "init"
@@ -372,10 +378,12 @@ class BotOrchestrator:
         cookies). Picks a port not already held by another live agent, then rotates
         up to 5x on failure. Each agent is guaranteed a distinct residential IP."""
         client = await self._get_client()
-        in_use = {w.proxy_port for w in self._workers.values() if w.proxy_port}
-        available = [p for p in DECODA_PROXIES if p["port"] not in in_use] or list(DECODA_PROXIES)
+        in_use = {(w.proxy_host, w.proxy_port) for w in self._workers.values() if w.proxy_port}
+        available = [p for p in DECODA_PROXIES if (p["host"], p["port"]) not in in_use]
+        if not available:
+            available = list(DECODA_PROXIES)
         random.shuffle(available)
-        pool = (available + [p for p in DECODA_PROXIES if p not in available])[:5]
+        pool = available[:5]
         for attempt, proxy in enumerate(pool):
             try:
                 # 1280x960 (4:3) matches the dashboard's .browser-frame aspect-ratio
@@ -392,7 +400,8 @@ class BotOrchestrator:
             cdp_url = browser.cdp_url or ""
             if cdp_url and await self._connect_cdp(worker, cdp_url) and await self._check_us_proxy(worker):
                 worker.proxy_port = proxy["port"]
-                logger.info(f"[{worker.username}] US proxy OK on port {proxy['port']} — {worker.proxy_location}")
+                worker.proxy_host = proxy["host"]
+                logger.info(f"[{worker.username}] proxy OK {proxy['host']}:{proxy['port']} — {worker.proxy_location}")
                 return True
             logger.warning(f"[{worker.username}] proxy failed on port {proxy['port']} (try {attempt + 1}); rotating")
             await worker.disconnect_cdp()
@@ -430,7 +439,8 @@ class BotOrchestrator:
                 pass
             worker.browser_id = ""
             worker.live_url = ""
-            worker.proxy_port = 0  # free the port for other agents
+            worker.proxy_port = 0   # free the slot for other agents
+            worker.proxy_host = ""
 
     async def _recover(self, worker: BotWorker, max_attempts: int = 8) -> bool:
         """Ban recovery: loop until we land in the room or exhaust attempts.
@@ -494,11 +504,11 @@ class BotOrchestrator:
         return False
 
     async def _check_us_proxy(self, worker: BotWorker) -> bool:
-        """Confirm the proxy routes AND exits in the USA before touching FCN.
+        """Confirm the proxy routes and exits in an allowed country (US/CA/GB/AU).
 
-        Loads ip-api.com (clean JSON IP geolocation) through the proxied browser,
-        captures IP + City, State, Country onto the worker, and returns True only
-        when countryCode == 'US'. A non-US or non-routing exit → rotate the port.
+        Loads ip-api.com through the proxied browser, captures IP + location onto
+        the worker, and returns True only for the four English-speaking markets FCN
+        serves. A bad exit or wrong country → rotate to a different proxy.
         """
         page = worker._page
         if not page:
@@ -521,10 +531,10 @@ class BotOrchestrator:
             worker.proxy_ip = info.get("query", "")
             cc = info.get("countryCode", "")
             worker.proxy_location = f"{info.get('city', '?')}, {info.get('regionName', '?')}, {cc}"
-            if cc != "US":
-                logger.warning(f"[{worker.username}] proxy NOT US ({worker.proxy_ip} {worker.proxy_location}) — rotating")
+            if cc not in _PROXY_ALLOWED_CC:
+                logger.warning(f"[{worker.username}] proxy exit not allowed: {worker.proxy_ip} {worker.proxy_location} — rotating")
                 return False
-            logger.info(f"[{worker.username}] ✅ US proxy: {worker.proxy_ip} ({worker.proxy_location})")
+            logger.info(f"[{worker.username}] ✅ proxy OK ({cc}): {worker.proxy_ip} — {worker.proxy_location}")
             return True
         except Exception as e:
             logger.warning(f"[{worker.username}] IP check failed: {e}")
