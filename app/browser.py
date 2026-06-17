@@ -56,25 +56,14 @@ _PROXY_WEIGHTS = {
 _PROXY_ALLOWED_CC = {"US", "CA", "GB", "AU"}
 
 # ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
-FCN_ROOMS = [
-    "AdultChat", "SextChat", "SextChat2", "YoungerforOlder",
-    "Roleplay", "SextChat3", "Boobs", "AdultChat2", "Kink", "BBCchat",
-]
+# Verified working FCN room slugs (confirmed URLs 2026-06-17)
+FCN_ROOMS = ["sex", "adult", "singles", "sext"]
 
-# Explicit slug map — the heuristic (room.lower().replace("chat","")) fails for
-# numbered variants and rooms whose FCN URL slug doesn't match the display name.
-# Map key = room name lowercased, value = the FCN /chat/<slug>/ path segment.
 FCN_SLUG_MAP: dict[str, str] = {
-    "adultchat":       "adult",
-    "sextchat":        "sext",
-    "sextchat2":       "sext2",
-    "sextchat3":       "sext3",
-    "youngerforolder": "youngerforolder",
-    "roleplay":        "roleplay",
-    "boobs":           "boobs",
-    "adultchat2":      "adult2",
-    "kink":            "kink",
-    "bbcchat":         "bbc",
+    "sex":     "sex",
+    "adult":   "adult",
+    "singles": "singles",
+    "sext":    "sext",
 }
 
 
