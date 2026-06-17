@@ -55,6 +55,143 @@ _PROXY_WEIGHTS = {
 }
 _PROXY_ALLOWED_CC = {"US", "CA", "GB", "AU"}
 
+
+def _build_ua_pool() -> list:
+    """Build a 500+ entry UA pool spanning desktop, tablet, and mobile devices."""
+    uas = []
+
+    # ── Desktop Chrome — Windows ───────────────────────────────────────────────
+    _CV = ["126","125","124","123","122","121","120","119","118","117","116","115","114","113","112"]
+    _CF = {"126":"126.0.6478.114","125":"125.0.6422.142","124":"124.0.6367.118",
+           "123":"123.0.6312.122","122":"122.0.6261.128","121":"121.0.6167.140",
+           "120":"120.0.6099.130","119":"119.0.6045.160","118":"118.0.5993.88",
+           "117":"117.0.5938.150","116":"116.0.5845.187","115":"115.0.5790.173",
+           "114":"114.0.5735.199","113":"113.0.5672.126","112":"112.0.5615.138"}
+    for cv in _CV:
+        uas.append(f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36")
+        uas.append(f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_CF[cv]} Safari/537.36")
+    for cv in _CV[:8]:
+        uas.append(f"Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36")
+        uas.append(f"Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36")
+
+    # ── Desktop Chrome — macOS ─────────────────────────────────────────────────
+    _MV = ["10_15_7","14_5","14_4_1","14_3","14_2","14_1","14_0",
+           "13_6","13_5_2","13_5","13_4","12_7","12_6","11_7","11_6"]
+    for cv in _CV:
+        for mv in _MV[:6]:
+            uas.append(f"Mozilla/5.0 (Macintosh; Intel Mac OS X {mv}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36")
+
+    # ── Desktop Chrome — Linux ─────────────────────────────────────────────────
+    for cv in _CV:
+        uas.append(f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36")
+    for cv in _CV[:6]:
+        uas.append(f"Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36")
+
+    # ── Edge — Windows & macOS ─────────────────────────────────────────────────
+    for cv in _CV[:8]:
+        uas.append(f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36 Edg/{cv}.0.0.0")
+    for cv in _CV[:4]:
+        uas.append(f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36 Edg/{cv}.0.0.0")
+
+    # ── Firefox — Windows, macOS, Linux ───────────────────────────────────────
+    _FV = ["127","126","125","124","123","122","121","120","119","118","117","116","115"]
+    for fv in _FV:
+        uas.append(f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{fv}.0) Gecko/20100101 Firefox/{fv}.0")
+        uas.append(f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:{fv}.0) Gecko/20100101 Firefox/{fv}.0")
+        uas.append(f"Mozilla/5.0 (X11; Linux x86_64; rv:{fv}.0) Gecko/20100101 Firefox/{fv}.0")
+    for fv in _FV[:6]:
+        uas.append(f"Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:{fv}.0) Gecko/20100101 Firefox/{fv}.0")
+
+    # ── Safari — macOS ─────────────────────────────────────────────────────────
+    _SV = [("17.5","14_5"),("17.4.1","14_4_1"),("17.4","14_4"),("17.3","14_3"),
+           ("17.2","14_2"),("17.1","14_1"),("17.0","13_6"),("16.6","13_5_2"),
+           ("16.5","13_4"),("16.4","13_3"),("16.3","12_7"),("16.2","12_6"),("16.1","12_5")]
+    for sv, mv in _SV:
+        uas.append(f"Mozilla/5.0 (Macintosh; Intel Mac OS X {mv}) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{sv} Safari/605.1.15")
+
+    # ── iPhone — Safari ────────────────────────────────────────────────────────
+    _IOS = ["17_5","17_4_1","17_4","17_3","17_2","17_1","17_0",
+            "16_7","16_6","16_5","16_4","16_3","16_2","16_1","16_0",
+            "15_8","15_7","15_6","15_5","15_4","15_3","15_2","15_1","15_0"]
+    _IOS_SV = {"17_5":"17.5","17_4_1":"17.4.1","17_4":"17.4","17_3":"17.3",
+               "17_2":"17.2","17_1":"17.1","17_0":"17.0","16_7":"16.6",
+               "16_6":"16.6","16_5":"16.5","16_4":"16.4","16_3":"16.3",
+               "16_2":"16.2","16_1":"16.1","16_0":"16.0","15_8":"15.6.1",
+               "15_7":"15.6.1","15_6":"15.6","15_5":"15.5","15_4":"15.4",
+               "15_3":"15.3","15_2":"15.2","15_1":"15.1","15_0":"15.0"}
+    for iosv in _IOS:
+        sv = _IOS_SV.get(iosv, "17.0")
+        uas.append(f"Mozilla/5.0 (iPhone; CPU iPhone OS {iosv} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{sv} Mobile/15E148 Safari/604.1")
+
+    # ── iPhone — Chrome (CriOS) ────────────────────────────────────────────────
+    for cv in _CV[:10]:
+        for iosv in _IOS[:10]:
+            uas.append(f"Mozilla/5.0 (iPhone; CPU iPhone OS {iosv} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/{cv}.0.0.0 Mobile/15E148 Safari/604.1")
+
+    # ── iPhone — Firefox ───────────────────────────────────────────────────────
+    for fv in _FV[:6]:
+        for iosv in _IOS[:6]:
+            uas.append(f"Mozilla/5.0 (iPhone; CPU iPhone OS {iosv} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/{fv}.0 Mobile/15E148 Safari/604.1")
+
+    # ── iPad — Safari ──────────────────────────────────────────────────────────
+    _IPAD_IOS = ["17_5","17_4","17_3","17_2","17_1","17_0","16_7","16_6","16_5","16_4","16_3","16_2"]
+    for iosv in _IPAD_IOS:
+        sv = _IOS_SV.get(iosv, "17.0")
+        uas.append(f"Mozilla/5.0 (iPad; CPU OS {iosv} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{sv} Mobile/15E148 Safari/604.1")
+
+    # ── iPad — Chrome ──────────────────────────────────────────────────────────
+    for cv in _CV[:6]:
+        for iosv in _IPAD_IOS[:6]:
+            uas.append(f"Mozilla/5.0 (iPad; CPU OS {iosv} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/{cv}.0.0.0 Mobile/15E148 Safari/604.1")
+
+    # ── Android phones — Chrome ────────────────────────────────────────────────
+    _ANDROID_PHONES = [
+        ("14","Pixel 8 Pro"),("14","Pixel 8"),("14","SM-S928B"),("14","SM-S918B"),
+        ("14","SM-A546B"),("14","SM-A346B"),("13","Pixel 7 Pro"),("13","Pixel 7"),
+        ("13","Pixel 6a"),("13","SM-S911B"),("13","SM-S908B"),("13","SM-A536B"),
+        ("13","SM-G998B"),("12","Pixel 6"),("12","SM-S906B"),("12","SM-G991B"),
+        ("11","Pixel 5"),("11","SM-G996B"),("10","SM-G985F"),("10","SM-N981B"),
+        ("14","OnePlus 12"),("13","OnePlus 11"),("13","OnePlus Nord 3"),
+        ("14","Xiaomi 14"),("13","Xiaomi 13"),("13","Xiaomi 12T"),
+        ("14","POCO X6 Pro"),("13","Redmi Note 13 Pro"),
+        ("14","Moto G84"),("13","Moto G73"),
+    ]
+    for cv in _CV[:10]:
+        for av, dev in _ANDROID_PHONES:
+            uas.append(f"Mozilla/5.0 (Linux; Android {av}; {dev}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Mobile Safari/537.36")
+
+    # ── Android tablets — Chrome ───────────────────────────────────────────────
+    _ANDROID_TABLETS = [
+        ("14","SM-X916B"),("14","SM-X810"),("13","SM-X706B"),("13","SM-T870"),
+        ("12","SM-T975"),("13","Lenovo TB-X306X"),("12","SM-P615"),("13","SM-X200"),
+    ]
+    for cv in _CV[:6]:
+        for av, dev in _ANDROID_TABLETS:
+            uas.append(f"Mozilla/5.0 (Linux; Android {av}; {dev}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{cv}.0.0.0 Safari/537.36")
+
+    # ── Samsung Internet ───────────────────────────────────────────────────────
+    _SAMSUNG_PHONES = [("14","SM-S928B"),("14","SM-S918B"),("13","SM-S911B"),("13","SM-A546B")]
+    for bv in ["24.0","23.0","22.0","21.0","20.0"]:
+        for av, dev in _SAMSUNG_PHONES:
+            uas.append(f"Mozilla/5.0 (Linux; Android {av}; {dev}) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/{bv} Chrome/117.0.0.0 Mobile Safari/537.36")
+
+    # ── Firefox on Android ─────────────────────────────────────────────────────
+    for fv in _FV[:8]:
+        uas.append(f"Mozilla/5.0 (Android 14; Mobile; rv:{fv}.0) Gecko/20100101 Firefox/{fv}.0")
+        uas.append(f"Mozilla/5.0 (Android 13; Mobile; rv:{fv}.0) Gecko/20100101 Firefox/{fv}.0")
+
+    # Deduplicate while preserving order
+    seen, unique = set(), []
+    for ua in uas:
+        if ua not in seen:
+            seen.add(ua)
+            unique.append(ua)
+    return unique
+
+
+UA_POOL = _build_ua_pool()
+
+
 # ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
 # Verified working FCN room slugs (confirmed URLs 2026-06-17)
 FCN_ROOMS = ["sex", "adult", "singles", "sext"]
@@ -649,124 +786,9 @@ class BotOrchestrator:
             logger.warning(f"[{worker.agent_id}] join second room error: {e}")
             return False
 
-    # 100 realistic desktop UAs — Chrome/Edge/Firefox across Windows/Mac/Linux.
-    # Weighted toward Chrome (real-world ~65% share) with Edge and Firefox for
-    # diversity. Rotated randomly per agent so the fleet never shares a fingerprint.
-    _USER_AGENTS = [
-        # ── Chrome on Windows ──────────────────────────────────────────────────
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.62 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.112 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.86 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.94 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
-        # ── Chrome on macOS ────────────────────────────────────────────────────
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        # ── Chrome on Linux ────────────────────────────────────────────────────
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        # ── Microsoft Edge on Windows ──────────────────────────────────────────
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.2592.61",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.2535.92",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.2478.105",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.2420.97",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.2365.92",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.2277.128",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.2210.144",
-        # ── Edge on macOS ──────────────────────────────────────────────────────
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.2592.61",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.2535.92",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.2478.105",
-        # ── Firefox on Windows ─────────────────────────────────────────────────
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0",
-        "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
-        # ── Firefox on macOS ───────────────────────────────────────────────────
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:127.0) Gecko/20100101 Firefox/127.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:126.0) Gecko/20100101 Firefox/126.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.0; rv:126.0) Gecko/20100101 Firefox/126.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13.5; rv:125.0) Gecko/20100101 Firefox/125.0",
-        # ── Firefox on Linux ───────────────────────────────────────────────────
-        "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0",
-        "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
-        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
-        "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
-        # ── Safari on macOS ────────────────────────────────────────────────────
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_7_10) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-        # ── Chrome with full build version strings ─────────────────────────────
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.114 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.142 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.118 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.122 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.128 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.114 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.142 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.118 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.114 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.142 Safari/537.36",
-        # ── Brave (Chrome-based, common on privacy-conscious users) ───────────
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Brave/126",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Brave/125",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Brave/126",
-        # ── Opera ──────────────────────────────────────────────────────────────
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 OPR/112.0.0.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 OPR/110.0.0.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 OPR/111.0.0.0",
-        # ── Additional Windows Chrome variants ─────────────────────────────────
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
-    ]
+    # 500+ UA pool generated at module load — desktop, tablet, and mobile across
+    # Chrome/Edge/Firefox/Safari on Windows/Mac/Linux/iOS/Android.
+    _USER_AGENTS = UA_POOL
 
     async def _connect_cdp(self, worker: BotWorker, cdp_url: str) -> bool:
         """Connect Playwright CDP to the running browser for fast JS auto-pilot."""
