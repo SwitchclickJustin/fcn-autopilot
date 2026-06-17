@@ -1055,57 +1055,60 @@ class BotOrchestrator:
 
         try:
             # ── Username ──────────────────────────────────────────────────────
+            # Use focus() not click() — page.click() fires mousedown/mouseup/click
+            # which may trigger FCN's document-level onclick ad-redirect handler,
+            # navigating the current page away before we can fill gender/birthdate.
             logger.info(f"[{worker.agent_id}] filling username…")
             await page.wait_for_selector("input[name=username]", state="attached", timeout=8000)
-            await page.click("input[name=username]")
+            await page.focus("input[name=username]")
             await page.wait_for_timeout(random.randint(300, 800))
             for ch in worker.login_name:
                 await page.keyboard.type(ch)
                 await page.wait_for_timeout(random.randint(65, 215))
             logger.info(f"[{worker.agent_id}] ✓ username '{worker.login_name}'")
 
+            # Diagnostic: re-check form DOM after username entry so we can see if
+            # FCN has mutated or removed any fields.
+            await page.wait_for_timeout(300)
+            try:
+                form_info2 = await page.evaluate("""() => {
+                    const f = document.querySelector('form[action*="login"]');
+                    if (!f) return {found: false, url: location.href};
+                    return {found: true, url: location.href,
+                        inputs: Array.from(f.querySelectorAll('input,select'))
+                            .map(e=>({tag:e.tagName,name:e.name,type:e.type}))};
+                }""")
+                logger.info(f"[{worker.agent_id}] form_info_post_username: {form_info2}")
+            except Exception:
+                pass
+
             # ── Gender ────────────────────────────────────────────────────────
-            await page.wait_for_timeout(random.randint(500, 1100))
+            await page.wait_for_timeout(random.randint(400, 800))
             logger.info(f"[{worker.agent_id}] selecting gender={gval}…")
-            await page.wait_for_selector("select[name=gender]", state="attached", timeout=10000)
-            await page.select_option("select[name=gender]", gval)
-            logger.info(f"[{worker.agent_id}] ✓ gender")
+            # Fallback: if named select disappears, target first select in form by position
+            gender_selected = False
+            for gender_sel in ["select[name=gender]", "form[action*='login'] select"]:
+                try:
+                    await page.wait_for_selector(gender_sel, state="attached", timeout=6000)
+                    await page.select_option(gender_sel, gval)
+                    logger.info(f"[{worker.agent_id}] ✓ gender (sel={gender_sel})")
+                    gender_selected = True
+                    break
+                except Exception as e:
+                    logger.warning(f"[{worker.agent_id}] gender try '{gender_sel}' failed: {e}")
+            if not gender_selected:
+                raise Exception("gender select not found by any selector")
             await page.wait_for_timeout(random.randint(400, 950))
 
-            # ── Birthdate — 3 separate <select> dropdowns (Month / Day / Year)
-            # The form uses selects, not a single date input.
-            year_str, month_str, day_str = birthdate.split("-")
-            month_int = int(month_str)   # 1-12
-            day_int   = int(day_str)     # 1-28
-            year_int  = int(year_str)    # e.g. 2001
-
-            logger.info(f"[{worker.agent_id}] filling birthdate selects {month_int}/{day_int}/{year_int}…")
-            # Month — try value as int string, then as zero-padded, then by label
-            await page.wait_for_selector("select[name*='month']", state="attached", timeout=5000)
-            for mv in [str(month_int), f"{month_int:02d}"]:
-                try:
-                    await page.select_option("select[name*='month']", value=mv)
-                    break
-                except Exception:
-                    pass
-            logger.info(f"[{worker.agent_id}] ✓ birth month")
-            await page.wait_for_timeout(random.randint(200, 500))
-
-            # Day
-            await page.wait_for_selector("select[name*='day']", state="attached", timeout=5000)
-            for dv in [str(day_int), f"{day_int:02d}"]:
-                try:
-                    await page.select_option("select[name*='day']", value=dv)
-                    break
-                except Exception:
-                    pass
-            logger.info(f"[{worker.agent_id}] ✓ birth day")
-            await page.wait_for_timeout(random.randint(200, 500))
-
-            # Year
-            await page.wait_for_selector("select[name*='year']", state="attached", timeout=5000)
-            await page.select_option("select[name*='year']", value=str(year_int))
-            logger.info(f"[{worker.agent_id}] ✓ birth year")
+            # ── Birthdate ─────────────────────────────────────────────────────
+            # form_info confirms: input[name=birthdate][type=date] — a single native
+            # date input expecting YYYY-MM-DD.  The 3 unnamed selects are custom UI
+            # widgets with no name attr; they don't get submitted and can't be targeted
+            # by select[name*='month'] etc.
+            logger.info(f"[{worker.agent_id}] filling birthdate={birthdate}…")
+            await page.wait_for_selector("input[name=birthdate]", state="attached", timeout=5000)
+            await page.fill("input[name=birthdate]", birthdate)
+            logger.info(f"[{worker.agent_id}] ✓ birthdate {birthdate}")
             await page.wait_for_timeout(random.randint(400, 900))
 
             # ── Checkbox ──────────────────────────────────────────────────────
