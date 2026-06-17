@@ -43,7 +43,8 @@ class BotWorker:
 
     def __init__(self, persona: dict):
         self.persona = persona
-        self.username: str = persona.get("username", "ChatBot_42")
+        self.username: str = persona.get("username", "ChatBot_42")  # STABLE key (dict/flag)
+        self.login_name: str = self.username  # generated FCN chat identity (per session)
         self.profile_id: str = ""
         self.session_id: str = ""
         self.browser_id: str = ""
@@ -173,6 +174,7 @@ class BotWorker:
     def to_dict(self):
         return {
             "username": self.username,
+            "login_name": self.login_name,
             "profile_id": self.profile_id,
             "session_id": self.session_id,
             "browser_id": self.browser_id,
@@ -461,9 +463,11 @@ class BotOrchestrator:
         page = worker._page
         persona = worker.persona
 
-        # Mint a fresh unique female username for this attempt (guest names must be
-        # unique while active). worker.username drives the bot's in-room identity.
-        worker.username = self._unique_username()
+        # Mint a fresh unique female name for the FCN form (guest names must be
+        # unique while active). This goes in login_name — NOT worker.username,
+        # which is the stable key for the _workers dict + _auto_pilot_enabled flag
+        # (overwriting it makes the auto-pilot loop's flag lookup miss and exit).
+        worker.login_name = self._unique_username()
 
         rooms = persona.get("selected_rooms") or ["SextChat"]
         if isinstance(rooms, str):
@@ -498,7 +502,7 @@ class BotOrchestrator:
                     f.submit();
                     return 'submitted';
                 }""",
-                {"username": worker.username, "gender": gval, "birthdate": birthdate},
+                {"username": worker.login_name, "gender": gval, "birthdate": birthdate},
             )
         except Exception as e:
             logger.warning(f"guest-form submit failed ({worker.username}): {e}")
@@ -678,7 +682,7 @@ class BotOrchestrator:
 
     async def _auto_pilot_tick(self, worker: BotWorker, messages: list, client):
         """One auto-pilot tick: close ads, check messages, generate, send."""
-        username = worker.username
+        username = worker.login_name  # the bot's in-room chat identity
         persona = worker.persona
 
         # Close ad popups via SDK agent (one-shot)

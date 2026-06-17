@@ -857,6 +857,7 @@ async def debug_browser_status():
     if browser_manager.current_session:
         info = {
             "status": browser_manager.current_session.status,
+            "login_name": browser_manager.current_session.login_name,
             "browser_id": browser_manager.current_session.browser_id,
             "proxy_ip": browser_manager.current_session.proxy_ip,
             "proxy_location": browser_manager.current_session.proxy_location,
