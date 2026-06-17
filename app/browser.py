@@ -329,8 +329,8 @@ class BotOrchestrator:
             return False
         try:
             url = page.url or ""
-            if "schat." not in url and "/room/" not in url:
-                return True  # kicked out of the room
+            if "freechatnow" not in url:
+                return True  # kicked off the site entirely (DM views stay on freechatnow)
             body = await page.evaluate("() => document.body ? document.body.innerText.slice(0,800) : ''")
             return bool(re.search(
                 r"you (have been|were|are) (banned|kicked)|been removed from|kicked from|"
@@ -709,6 +709,46 @@ class BotOrchestrator:
         except Exception:
             pass
 
+    async def _list_conversations(self, page) -> list:
+        """List open conversation tabs (rooms + DMs) from nav.roomlist.
+        Each: {href, target, text, unseen, active, is_dm}. A tab is a DM when its
+        link isn't a room (data-target != 'room' and href not /room/)."""
+        try:
+            return await page.evaluate("""
+                (() => {
+                    const out = [];
+                    document.querySelectorAll('.roomlist-room').forEach(d => {
+                        const a = d.querySelector('a.roomlist-link, a[href]');
+                        if (!a) return;
+                        const href = a.getAttribute('href') || '';
+                        const target = a.getAttribute('data-target') || '';
+                        const cls = (d.className || '').toString();
+                        out.push({
+                            href, target, text: (a.textContent || '').trim().slice(0,30),
+                            unseen: /unseen/.test(cls), active: /\\bactive\\b/.test(cls),
+                            is_dm: target !== 'room' && !href.startsWith('/room/'),
+                        });
+                    });
+                    return out;
+                })()
+            """)
+        except Exception:
+            return []
+
+    async def _open_conversation(self, page, href: str) -> bool:
+        """Click a conversation tab (room or DM) to make it the active thread."""
+        if not href:
+            return False
+        try:
+            el = await page.query_selector(f'.roomlist-room a[href="{href}"]')
+            if el is None:
+                return False
+            await el.click(timeout=4000)
+            await page.wait_for_timeout(1200)
+            return True
+        except Exception:
+            return False
+
     async def _run_auto_pilot(self, worker: BotWorker):
         """Fast JS-based auto-pilot loop for a single bot.
         
@@ -721,7 +761,8 @@ class BotOrchestrator:
 
         tick = 0
         ban_strikes = 0
-        next_send = 0.0  # human-pace gate (monotonic seconds)
+        next_send = 0.0  # group-room pace gate (monotonic seconds)
+        dm_next = 0.0    # DM pace gate (faster)
         while self._auto_pilot_enabled.get(username, False):
             try:
                 # ── CDP path (fast, zero cost) ──
@@ -764,13 +805,33 @@ class BotOrchestrator:
                             await worker._page.bring_to_front()
                         except Exception:
                             pass
-                    # Human pace in group rooms: ~30s between replies (DMs will use 5-10s).
+                    # DMs-FIRST round-robin: handle an unread DM (5-10s pace), else
+                    # the group room (~30s pace). Switch tabs before read+respond.
                     now = time.monotonic()
-                    if now >= next_send:
+                    convos = await self._list_conversations(worker._page)
+                    unread_dms = [c for c in convos if c["is_dm"] and c["unseen"]]
+                    rooms = [c for c in convos if not c["is_dm"]]
+
+                    if unread_dms and now >= dm_next:
+                        c = unread_dms[0]
+                        if await self._open_conversation(worker._page, c["href"]):
+                            worker.in_dm = True
+                            worker.room = c["text"] or "DM"
+                            msgs = await worker.read_chat()
+                            if msgs:
+                                await self._auto_pilot_tick(worker, msgs, client)
+                        dm_next = now + random.randint(5, 10)
+                    elif now >= next_send:
+                        # Group room: make sure we're on the room tab, then reply
+                        if rooms and not rooms[0]["active"]:
+                            await self._open_conversation(worker._page, rooms[0]["href"])
+                        worker.in_dm = False
+                        if rooms:
+                            worker.room = rooms[0]["text"] or worker.room
                         messages = await worker.read_chat()
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
-                            next_send = now + random.randint(25, 40)
+                        next_send = now + random.randint(25, 40)
 
                 # ── SDK fallback (if no CDP) ──
                 elif worker.session_id:
