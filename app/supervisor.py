@@ -56,41 +56,10 @@ class SupervisorEngine:
                             await self._increment_rule(rule["id"])
                             return False, f"Blocked by rule '{rule['rule_name']}': keyword '{kw}'"
 
-        # 2. If a supervisor LLM is configured, do a deeper check
-        supervisor = await self._get_supervisor()
-        if supervisor:
-            username = persona.get("username", "User")
-            tone = persona.get("default_tone", "casual")
-
-            system = (
-                "You are a safety supervisor for an adult chat room. "
-                "Review the proposed message and the recent chat context.\n"
-                f"Current persona tone: {tone}\n\n"
-                "Respond with exactly one of:\n"
-                "APPROVED - message is fine to send\n"
-                "BLOCKED:<reason> - message would get the user kicked/banned\n"
-                "MODIFY:<suggestion> - message needs changes, suggest what to say instead\n\n"
-                "Check for: too fast, repetitive patterns, direct solicitation, "
-                "aggressive language, spam behavior."
-            )
-
-            result = await supervisor.chat(
-                system,
-                f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nProposed message:\n\"{message}\""
-            )
-
-            if result:
-                result = result.strip().upper()
-                if result.startswith("APPROVED"):
-                    return True, ""
-                elif result.startswith("BLOCKED:"):
-                    reason = result[8:].strip()
-                    return False, f"Supervisor blocked: {reason}"
-                elif result.startswith("MODIFY:"):
-                    suggestion = result[7:].strip()
-                    return False, f"Supervisor suggests: {suggestion}"
-
-        # No supervisor or inconclusive — allow
+        # We intentionally do NOT run a generic "block all solicitation" LLM check —
+        # the bot is *meant* to pitch. pre_flight only enforces phrasings the
+        # supervisor LEARNED got us banned (the keyword rules above), so the bot
+        # keeps pitching but stops repeating the exact lines that triggered bans.
         return True, ""
 
     async def analyze_ban(self, session_id: str, persona_id: str, context_before: list, context_after: str) -> dict:
@@ -108,16 +77,16 @@ class SupervisorEngine:
 
         if supervisor:
             system = (
-                "You are a forensic analyst for chat accounts. "
-                "A user account was just banned or kicked from a chat room. "
-                "Analyze the last messages before the ban and the ban page content. "
+                "You are a forensic analyst for a flirty chat bot that pitches its private "
+                "contact handle. It just got banned/kicked. Identify the SPECIFIC short phrasings "
+                "in its last messages that most likely triggered the moderation ban (e.g. overt "
+                "solicitation like 'private pics', 'send you pics', 'add me on'). Do NOT list the "
+                "contact handle itself or generic flirting — only the risky phrasings to STOP using. "
                 "Return JSON only:\n"
                 "{\n"
                 '  "likely_reason": "why they were banned",\n'
-                '  "cooldown_adjustment": 0-300 (seconds to add), \n'
-                '  "needs_proxy_rotation": true/false,\n'
-                '  "needs_username_change": true/false,\n'
-                '  "rule_name": "suggested rule name for this pattern",\n'
+                '  "avoid_phrases": ["short phrase 1", "short phrase 2"],\n'
+                '  "rule_name": "short snake_case name for this pattern",\n'
                 '  "severity": 1-10\n'
                 "}"
             )
@@ -134,27 +103,24 @@ class SupervisorEngine:
                     try:
                         parsed = json.loads(json_match.group())
                         adjustments["likely_reason"] = parsed.get("likely_reason", "unknown")
-                        adjustments["cooldown_adjustment"] = parsed.get("cooldown_adjustment", 60)
                         adjustments["severity"] = parsed.get("severity", 5)
-                        if parsed.get("needs_proxy_rotation", False):
-                            adjustments["proxy_adjustment"] = "rotate"
-                        adjustments["fingerprint_adjustment"] = {
-                            "rotate_ua": parsed.get("needs_username_change", False)
-                        }
-
-                        # Create/update rule
-                        rule_name = parsed.get("rule_name", f"learned_pattern_{int(time.time())}")
-                        await db.upsert_rule({
-                            "persona_id": persona_id,
-                            "rule_name": rule_name,
-                            "description": adjustments["likely_reason"],
-                            "trigger_pattern": json.dumps({"keywords": [], "learned": True}),
-                            "action": "slow_down",
-                            "severity": adjustments["severity"],
-                            "enabled": True,
-                            "trigger_count": 1,
-                            "last_triggered": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                        })
+                        # Phrasings to STOP using → pre_flight blocks any message containing them
+                        avoid = [p.strip() for p in parsed.get("avoid_phrases", []) if p and len(p.strip()) >= 3][:6]
+                        adjustments["avoid_phrases"] = avoid
+                        if avoid:
+                            rule_name = parsed.get("rule_name") or f"banned_phrasing_{int(time.time())}"
+                            await db.upsert_rule({
+                                "persona_id": persona_id,
+                                "rule_name": rule_name,
+                                "description": adjustments["likely_reason"],
+                                "trigger_pattern": json.dumps({"keywords": avoid, "learned": True}),
+                                "action": "block",
+                                "severity": adjustments["severity"],
+                                "enabled": True,
+                                "trigger_count": 1,
+                                "last_triggered": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                            })
+                            logger.info(f"supervisor learned to avoid: {avoid}")
                     except json.JSONDecodeError:
                         pass
 

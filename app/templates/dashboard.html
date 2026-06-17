@@ -49,19 +49,13 @@
   <div>
     <div class="card" style="margin-bottom:0">
       <div class="card-title">Live Browser</div>
-      {% if browser_live_url %}
-      <div class="browser-frame">
-        <iframe src="{{ browser_live_url }}" allow="clipboard-read; clipboard-write"></iframe>
-      </div>
-      {% else %}
-      <div class="browser-frame" id="browser-placeholder">
-        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);flex-direction:column;gap:.5rem;font-size:.9rem">
+      <div class="browser-frame" id="live-browser">
+        <div id="live-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);flex-direction:column;gap:.5rem;font-size:.9rem">
           <span style="font-size:2rem">🌐</span>
           <span>Start a session to see the live browser.</span>
-          <span class="text-sm">Auto-starting — check the status bar above.</span>
         </div>
       </div>
-      {% endif %}
+      <script>window.__initialLiveUrl = "{{ browser_live_url|default('') }}";</script>
     </div>
   </div>
 
@@ -162,15 +156,23 @@ function startPolling() {
       const r = await fetch('/api/session/state');
       const data = await r.json();
       if (data.messages) updateChatFeed(data.messages);
-      if (data.live_url) {
-        const ph = document.getElementById('browser-placeholder');
-        if (ph) {
-          ph.innerHTML = `<iframe src="${data.live_url}" allow="clipboard-read; clipboard-write" style="width:100%;height:100%;border:none"></iframe>`;
-          ph.id = 'browser-frame-active';
-        }
-      }
+      setLiveBrowser(data.live_url);
     } catch(e) {}
   }, 3000);
+}
+
+// Update the embedded live browser — only when the URL actually changes (so we
+// don't reload the iframe every poll), so a NEW session swaps to its new browser.
+function setLiveBrowser(url) {
+  const box = document.getElementById('live-browser');
+  if (!box) return;
+  if (url && url !== window.__liveUrl) {
+    window.__liveUrl = url;
+    box.innerHTML = `<iframe src="${url}" allow="clipboard-read; clipboard-write" style="width:100%;height:100%;border:none"></iframe>`;
+  } else if (!url && window.__liveUrl) {
+    window.__liveUrl = "";
+    box.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);flex-direction:column;gap:.5rem;font-size:.9rem"><span style="font-size:2rem">🌐</span><span>Start a session to see the live browser.</span></div>`;
+  }
 }
 
 // ─── Session ───
@@ -195,13 +197,7 @@ async function startSession() {
     document.getElementById('btn-start').style.display = 'none';
     document.getElementById('btn-stop').style.display = 'inline-flex';
 
-    if (data.live_url) {
-      const ph = document.getElementById('browser-placeholder');
-      if (ph) {
-        ph.innerHTML = `<iframe src="${data.live_url}" allow="clipboard-read; clipboard-write" style="width:100%;height:100%;border:none"></iframe>`;
-        ph.id = 'browser-frame-active';
-      }
-    }
+    setLiveBrowser(data.live_url);
 
     toast('Session started!');
     // Auto-pilot is ON by default — sync the toggle UI
@@ -223,6 +219,7 @@ async function stopSession() {
   document.getElementById('btn-start').style.display = 'inline-flex';
   document.getElementById('btn-stop').style.display = 'none';
   if (pollTimer) clearInterval(pollTimer);
+  setLiveBrowser("");
   toast('Session stopped');
 }
 
@@ -335,6 +332,7 @@ function onStatsRange() {
 
 // ─── Init ───
 connectWS();
+if (window.__initialLiveUrl) setLiveBrowser(window.__initialLiveUrl);
 loadStats();
 setInterval(loadStats, 20000);
 

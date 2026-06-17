@@ -831,21 +831,14 @@ class BotOrchestrator:
             f"Reply with ONE short, natural, flirty single-line message — no line breaks, "
             f"no lists, no quotes. Vary your replies. Never prefix your username. "
         )
-        if is_dm and handle:
-            # PRIVATE DM: after rapport, share the handle casually (no salesy spam)
+        if handle:
+            where = "this private DM" if is_dm else "the room"
             system += (
-                f"This is a private 1-on-1 DM and you've chatted a bit. When it feels natural "
-                f"(not the first line), casually invite them to add you on your private app as "
-                f"'{handle}' so you two can keep going there. Be smooth, not salesy. "
-                f"🛑 NEVER write 'telegram','tg','kik','snap','whatsapp' or a URL."
-            )
-        else:
-            # PUBLIC room: NEVER share a handle or offer pics — that = instant ban.
-            system += (
-                f"This is a PUBLIC room. Be magnetic and flirty to make people want you, and "
-                f"tease them to message/DM you ('dm me','msg me let's talk more'). 🛑 NEVER share "
-                f"a contact handle, username, link, or offer 'pics' here — that gets you BANNED. "
-                f"Just pull them into DMs; the private stuff happens there."
+                f"GOAL: flirt and build a little rapport in {where}, then get them to add you on "
+                f"your private app as '{handle}' (you send pics / chat 1-on-1 there). Pitch once "
+                f"there's some interest — and VARY how you say it every time, casual and human, "
+                f"never the same canned line. 🛑 NEVER write 'telegram','tg','kik','snap','whatsapp' "
+                f"or a URL — convey '{handle}' your own way. Sometimes ask if they added you."
             )
         prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
         response = await llm.chat(system, prompt)
@@ -855,12 +848,8 @@ class BotOrchestrator:
 
         shares_handle = bool(handle) and handle.lower().lstrip("@") in response.lower()
 
-        # Hard guard: NEVER post a handle in a public room (the #1 ban trigger)
-        if shares_handle and not is_dm:
-            logger.info(f"[{worker.username}] dropped public handle-share (ban risk)")
-            return
-
-        # Supervisor pre-flight: blocks ban-worthy messages (learns from past bans)
+        # Supervisor pre-flight: blocks only phrasings LEARNED to get us banned (so
+        # we keep pitching, just avoid the exact lines that triggered past bans)
         try:
             from app.supervisor import supervisor_engine
             approved, note = await supervisor_engine.pre_flight(response, context, persona)
