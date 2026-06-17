@@ -406,25 +406,9 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                 except Exception as e:
                     results["login_error"] = str(e)[:250]
             await page.wait_for_timeout(max(1, wait) * 1000)
-            # Dismiss the first-run tip carousel (may be several tips in sequence)
-            dismissed = 0
-            for _ in range(6):
-                clicked = False
-                for sel in [".action.dismiss", "[class*=tip] [class*=close]",
-                            "[class*=welcome] [class*=close]", "[class*=tip] [class*=dismiss]"]:
-                    try:
-                        el = await page.query_selector(sel)
-                        if el and await el.is_visible():
-                            await el.click(timeout=1500)
-                            clicked = True
-                            dismissed += 1
-                            break
-                    except Exception:
-                        pass
-                if not clicked:
-                    break
-                await page.wait_for_timeout(800)
-            results["tips_dismissed"] = dismissed
+            # Dismiss tips using the REAL production method (DOM-click based)
+            from app.browser import browser_manager as _bm2
+            results["tips_dismissed"] = await _bm2._dismiss_overlays(page)
             results["post_login_url"] = page.url
             try:
                 results["post_login_title"] = await page.title()

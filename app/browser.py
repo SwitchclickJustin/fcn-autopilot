@@ -414,30 +414,31 @@ class BotOrchestrator:
         return in_room
 
     async def _dismiss_overlays(self, page) -> int:
-        """Dismiss FCN's welcome/tip overlay + any tip-carousel.
+        """Dismiss FCN's welcome/tip overlay via direct DOM clicks.
 
-        The dismiss control is `.action.dismiss` ("I'm already familiar") — NOT a
-        <button>, and its label uses a curly apostrophe, so match by class only.
-        May be several tips in sequence.
+        The dismiss control is `.action.dismiss` ("I'm already familiar") — not a
+        <button>, label has a curly apostrophe, and Playwright treats it as
+        not-visible so a normal .click() is skipped. A direct DOM .click() inside
+        page.evaluate fires the handler regardless. Looped for the tip carousel.
         """
-        dismissed = 0
-        for _ in range(6):
-            clicked = False
-            for sel in [".action.dismiss", "[class*=tip] [class*=close]",
-                        "[class*=welcome] [class*=close]", "[class*=tip] [class*=dismiss]"]:
-                try:
-                    el = await page.query_selector(sel)
-                    if el and await el.is_visible():
-                        await el.click(timeout=1500)
-                        clicked = True
-                        dismissed += 1
-                        break
-                except Exception:
-                    pass
-            if not clicked:
-                break
-            await page.wait_for_timeout(600)
-        return dismissed
+        total = 0
+        try:
+            for _ in range(6):
+                n = await page.evaluate("""
+                    (() => {
+                        let n = 0;
+                        document.querySelectorAll('.action.dismiss, [class*=tip] [class*=dismiss], [class*=tip] [class*=close], [class*=welcome] [class*=close]')
+                            .forEach(e => { try { e.click(); n++; } catch(_){} });
+                        return n;
+                    })()
+                """)
+                total += (n or 0)
+                if not n:
+                    break
+                await page.wait_for_timeout(600)
+        except Exception:
+            pass
+        return total
 
     async def _close_popups(self, worker: BotWorker):
         """Close any ad popup windows, keeping only the room page."""
