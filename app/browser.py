@@ -594,17 +594,14 @@ class BotOrchestrator:
                         // 1. Welcome / tip dismiss
                         document.querySelectorAll('.action.dismiss, [class*=tip] [class*=dismiss], [class*=tip] [class*=close], [class*=welcome] [class*=close]')
                             .forEach(e => { try { e.click(); n++; } catch(_){} });
-                        // 2. Remove ad iframes (the "I AM 18+" age-gate lives in one)
+                        // 2. Remove ad iframes (the "I AM 18+" age-gate lives in one).
+                        // Only iframes — do NOT remove parents of stray [x] text, which
+                        // can nuke chat-panel layout (the over-aggressive old rule that
+                        // whited-out the live view).
                         document.querySelectorAll('iframe').forEach(f => {
                             const s = (f.src || '') + ' ' + (f.id || '');
                             if (/12chats|\\/afr|exoclick|popads|propeller|adsterra|doubleclick|trafficjunky/i.test(s)) {
                                 try { f.remove(); n++; } catch(_){}
-                            }
-                        });
-                        // 3. Remove the leftover [x] ad-banner close + its container
-                        document.querySelectorAll('div, a, span').forEach(e => {
-                            if (e.children.length === 0 && (e.textContent||'').trim().toLowerCase() === '[x]') {
-                                try { (e.parentElement || e).remove(); n++; } catch(_){}
                             }
                         });
                         return n;

@@ -524,16 +524,17 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
                     results["read_after"] = after[-8:]
                     results["our_msg_appeared"] = any(
                         username in m and "how is your night" in m for m in after[-12:])
-                    # dump the composer (input + send button) for diagnostics
+                    # dump the FULL composer (find the send button) + input value
                     results["composer_html"] = await page.evaluate("""
                         (() => {
-                            const inp = document.querySelector('input[placeholder="Type to chat"]');
-                            if (!inp) return 'no input';
-                            let box = inp;
-                            for (let i = 0; i < 3 && box.parentElement; i++) box = box.parentElement;
-                            return box.outerHTML.slice(0, 1400);
+                            const f = document.querySelector('form.writer')
+                                || document.querySelector('[class*=writer-container i]')
+                                || document.querySelector('input[placeholder="Type to chat"]')?.closest('form');
+                            return f ? f.outerHTML.slice(0, 2600) : 'no writer form';
                         })()
                     """)
+                    results["input_value_after"] = await page.evaluate(
+                        '() => { const i=document.querySelector(\'input[placeholder="Type to chat"]\'); return i ? i.value : "no-input"; }')
                 except Exception as e:
                     results["send_error"] = str(e)[:150]
 
