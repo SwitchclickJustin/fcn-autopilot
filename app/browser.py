@@ -415,10 +415,9 @@ class BotOrchestrator:
             worker.browser_id = str(browser.id)
             worker.live_url = browser.live_url or ""
             cdp_url = browser.cdp_url or ""
-            if cdp_url and await self._connect_cdp(worker, cdp_url) and await self._check_us_proxy(worker):
+            if cdp_url and await self._connect_cdp(worker, cdp_url) and self._record_proxy_info(worker, proxy):
                 worker.proxy_port = proxy["port"]
                 worker.proxy_host = proxy["host"]
-                logger.info(f"[{worker.username}] proxy OK {proxy['host']}:{proxy['port']} — {worker.proxy_location}")
                 return True
             logger.warning(f"[{worker.username}] proxy failed on port {proxy['port']} (try {attempt + 1}); rotating")
             await worker.disconnect_cdp()
@@ -542,42 +541,29 @@ class BotOrchestrator:
         worker.phase = "recovery_failed"
         return False
 
-    async def _check_us_proxy(self, worker: BotWorker) -> bool:
-        """Confirm the proxy routes and exits in an allowed country (US/CA/GB/AU).
+    def _record_proxy_info(self, worker: BotWorker, proxy: dict) -> bool:
+        """Record proxy metadata from the config — no browser navigation needed.
 
-        Loads ip-api.com through the proxied browser, captures IP + location onto
-        the worker, and returns True only for the four English-speaking markets FCN
-        serves. A bad exit or wrong country → rotate to a different proxy.
+        We trust Decoda's geo-routing: us.decodo.com always exits in the US,
+        ca.decodo.com in Canada, etc. Visiting ip-api.com inside the browser is
+        a textbook bot fingerprint (open browser → check IP → go to site) and was
+        the primary Cloudflare trigger. Removed.
         """
-        page = worker._page
-        if not page:
+        host = proxy.get("host", "")
+        cc_map = {
+            "us.decodo.com": "US",
+            "ca.decodo.com": "CA",
+            "gb.decodo.com": "GB",
+            "au.decodo.com": "AU",
+        }
+        cc = cc_map.get(host, "??")
+        worker.proxy_ip = f"{host}:{proxy.get('port','')}"
+        worker.proxy_location = cc
+        if cc not in _PROXY_ALLOWED_CC:
+            logger.warning(f"[{worker.username}] unknown proxy host {host} — skipping")
             return False
-        try:
-            await page.goto(
-                "http://ip-api.com/json/?fields=status,country,countryCode,regionName,city,query,proxy,hosting",
-                wait_until="domcontentloaded", timeout=20000)
-            body = await page.evaluate("() => document.body.innerText || ''")
-            if "Upstream proxy error" in body or "Bad Gateway" in body:
-                logger.warning(f"[{worker.username}] proxy error during IP check")
-                return False
-            try:
-                info = json.loads(body)
-            except Exception:
-                logger.warning(f"[{worker.username}] IP check unparseable: {body[:80]}")
-                return False
-            if info.get("status") != "success":
-                return False
-            worker.proxy_ip = info.get("query", "")
-            cc = info.get("countryCode", "")
-            worker.proxy_location = f"{info.get('city', '?')}, {info.get('regionName', '?')}, {cc}"
-            if cc not in _PROXY_ALLOWED_CC:
-                logger.warning(f"[{worker.username}] proxy exit not allowed: {worker.proxy_ip} {worker.proxy_location} — rotating")
-                return False
-            logger.info(f"[{worker.username}] ✅ proxy OK ({cc}): {worker.proxy_ip} — {worker.proxy_location}")
-            return True
-        except Exception as e:
-            logger.warning(f"[{worker.username}] IP check failed: {e}")
-            return False
+        logger.info(f"[{worker.username}] proxy assigned: {host}:{proxy.get('port')} ({cc})")
+        return True
 
     async def _finish_bot_setup(self, worker: BotWorker):
         """Background (CDP already connected + proxy verified in start_bot):
@@ -674,6 +660,21 @@ class BotOrchestrator:
             logger.warning(f"[{worker.agent_id}] join second room error: {e}")
             return False
 
+    # Pool of realistic desktop Chrome UAs across Windows/Mac — rotated per agent
+    # so the fleet doesn't share a single fingerprint.
+    _USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    ]
+
     async def _connect_cdp(self, worker: BotWorker, cdp_url: str) -> bool:
         """Connect Playwright CDP to the running browser for fast JS auto-pilot."""
         try:
@@ -688,6 +689,12 @@ class BotOrchestrator:
                 worker._page = pages[0] if pages else await contexts[0].new_page()
             else:
                 worker._page = await (await worker._cdp.new_context()).new_page()
+
+            # Rotate user agent — every agent gets a different UA so the fleet
+            # doesn't share a single fingerprint that Cloudflare can block en masse.
+            ua = random.choice(self._USER_AGENTS)
+            await worker._page.set_extra_http_headers({"User-Agent": ua})
+            worker._ua = ua
 
             # Stealth patches — injected before any page script on every navigation.
             # navigator.webdriver=true is the #1 Playwright/CDP bot signal; FCN's
@@ -806,45 +813,18 @@ class BotOrchestrator:
         slug = FCN_SLUG_MAP.get(room.lower()) or room.lower().replace("chat", "").strip() or "sext"
         room_url = f"{self.FCN_BASE}/chat/{slug}/"
 
-        # ── Step 1: land on the FCN homepage ──────────────────────────────────
-        worker.phase = "login_homepage"
+        # ── Step 1: navigate directly to the room page ────────────────────────
+        # Skipping freechatnow.com/ — the homepage is Cloudflare's most guarded
+        # page and hitting it first was the primary block trigger. Room pages
+        # (/chat/<slug>/) have lighter Cloudflare rules and carry the login form.
+        worker.phase = "login_nav"
         try:
-            await page.goto(self.FCN_BASE + "/", wait_until="domcontentloaded", timeout=45000)
+            await page.goto(room_url, wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
-            logger.warning(f"[{worker.agent_id}] homepage nav failed: {e}")
-        await page.wait_for_timeout(random.randint(1800, 4000))
+            logger.warning(f"[{worker.agent_id}] room nav failed: {e}")
+        await page.wait_for_timeout(random.randint(1500, 3000))
 
-        # IP block check — Cloudflare "Sorry, you have been blocked" page
-        if await self._is_blocked_page(page):
-            logger.warning(f"[{worker.agent_id}] IP blocked on homepage — rotating IP")
-            worker.phase = "ip_blocked"
-            return False
-
-        # ── Step 2: click the target room from the homepage room grid ─────────
-        worker.phase = "login_room_select"
-        clicked = await page.evaluate("""(slug) => {
-            // FCN homepage has a room grid — try several selector patterns
-            const candidates = [
-                ...document.querySelectorAll('a[href*="/chat/'+slug+'"]'),
-                ...document.querySelectorAll('[data-room="'+slug+'"]'),
-                ...document.querySelectorAll('[href*="'+slug+'"]'),
-            ];
-            if (candidates.length) { candidates[0].click(); return true; }
-            return false;
-        }""", slug)
-
-        if clicked:
-            await page.wait_for_timeout(random.randint(2000, 3500))
-        else:
-            logger.info(f"[{worker.agent_id}] room '{room}' not in homepage grid, navigating directly")
-            worker.phase = "login_nav"
-            try:
-                await page.goto(room_url, wait_until="domcontentloaded", timeout=45000)
-            except Exception as e:
-                logger.warning(f"[{worker.agent_id}] room nav failed: {e}")
-            await page.wait_for_timeout(random.randint(1500, 2500))
-
-        # Block check again after room navigation (block page can appear here too)
+        # IP block check — Cloudflare "Sorry, you have been blocked"
         if await self._is_blocked_page(page):
             logger.warning(f"[{worker.agent_id}] IP blocked on room page — rotating IP")
             worker.phase = "ip_blocked"
