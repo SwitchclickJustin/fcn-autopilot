@@ -45,9 +45,25 @@ DECODA_PROXIES = [
 
 # ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
 FCN_ROOMS = [
-    "AdultChat", "SexChat", "SexChat2", "YoungerforOlder",
-    "Roleplay", "SexChat3", "Boobs", "AdultChat2", "Kink", "BBCchat",
+    "AdultChat", "SextChat", "SextChat2", "YoungerforOlder",
+    "Roleplay", "SextChat3", "Boobs", "AdultChat2", "Kink", "BBCchat",
 ]
+
+# Explicit slug map — the heuristic (room.lower().replace("chat","")) fails for
+# numbered variants and rooms whose FCN URL slug doesn't match the display name.
+# Map key = room name lowercased, value = the FCN /chat/<slug>/ path segment.
+FCN_SLUG_MAP: dict[str, str] = {
+    "adultchat":       "adult",
+    "sextchat":        "sext",
+    "sextchat2":       "sext2",
+    "sextchat3":       "sext3",
+    "youngerforolder": "youngerforolder",
+    "roleplay":        "roleplay",
+    "boobs":           "boobs",
+    "adultchat2":      "adult2",
+    "kink":            "kink",
+    "bbcchat":         "bbc",
+}
 
 
 def assign_rooms(count: int, pool: list = FCN_ROOMS) -> list:
@@ -517,7 +533,13 @@ class BotOrchestrator:
             worker.phase = "logging_in"
 
             # Guest login (navigate to primary room → fill form → native submit)
-            await self._cdp_guest_login(worker)
+            ok = await self._cdp_guest_login(worker)
+            if not ok:
+                logger.warning(f"[{agent_id}] initial login failed; entering recovery loop")
+                ok = await self._recover(worker)
+                if not ok:
+                    logger.error(f"[{agent_id}] all recovery attempts failed — agent offline")
+                    return
 
             # Attempt to join the second assigned room (best-effort — if the button
             # is hidden at 1280px width we still start the loop on the primary room)
@@ -711,7 +733,7 @@ class BotOrchestrator:
             worker.rooms = list(rooms) if rooms else ["SextChat"]
         room = (rooms[0] if rooms else "SextChat") or "SextChat"
         worker.room = room
-        slug = room.lower().replace("chat", "").strip() or "sext"
+        slug = FCN_SLUG_MAP.get(room.lower()) or room.lower().replace("chat", "").strip() or "sext"
         url = f"{self.FCN_BASE}/chat/{slug}/"
 
         worker.phase = "login_nav"
