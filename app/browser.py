@@ -823,26 +823,16 @@ class BotOrchestrator:
             except Exception:
                 pass
 
-            # Rotate user agent — every agent gets a different UA so the fleet
-            # doesn't share a single fingerprint that Cloudflare can block en masse.
-            ua = random.choice(self._USER_AGENTS)
-            await worker._page.set_extra_http_headers({"User-Agent": ua})
-            worker._ua = ua
+            # Do NOT set a custom User-Agent via set_extra_http_headers.
+            # CF's Bot Management compares the HTTP UA header against
+            # navigator.userAgent (JS) and the TLS ClientHello fingerprint —
+            # any mismatch is an immediate bot signal that blocks /api/chat/login.
+            # BU Cloud's native Chromium UA is already consistent across all three,
+            # so we leave it untouched and spoof only the non-UA signals below.
+            worker._ua = ""  # no custom UA
 
-            # Derive consistent platform/vendor from the chosen UA so Cloudflare's
-            # cross-signal checks don't see a mismatch (e.g. Android UA + Win32 platform).
-            if "iPhone" in ua:
-                _plat, _vendor = "iPhone", "Apple Computer, Inc."
-            elif "iPad" in ua:
-                _plat, _vendor = "iPad", "Apple Computer, Inc."
-            elif "Android" in ua:
-                _plat, _vendor = "Linux armv8l", "Google Inc."
-            elif "Macintosh" in ua:
-                _plat, _vendor = "MacIntel", "Apple Computer, Inc."
-            elif "Linux" in ua:
-                _plat, _vendor = "Linux x86_64", "Google Inc."
-            else:
-                _plat, _vendor = "Win32", "Google Inc."
+            # Platform/vendor for stealth JS — derive from actual Chromium defaults
+            _plat, _vendor = "Win32", "Google Inc."
             _hw = random.choice([4, 6, 8])
             _dm = random.choice([4, 8])
 
