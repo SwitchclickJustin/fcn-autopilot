@@ -85,13 +85,19 @@ class BotWorker:
         try:
             result = await self._page.evaluate("""
                 (() => {
-                    for (const sel of ['.chat-message','.message','[class*=msg]',
-                        '[class*=chatline]','[class*=content] p','[class*=conversation] div']) {
-                        const els = document.querySelectorAll(sel);
-                        if (els.length > 3) return Array.from(els).slice(-25)
-                            .map(e => e.textContent.trim()).filter(t => t);
+                    // FCN room chat lives in div.room-messages-container (verified)
+                    const box = document.querySelector('.room-messages-container');
+                    if (box) {
+                        const rows = Array.from(box.children)
+                            .map(e => (e.textContent || '').trim()).filter(t => t);
+                        if (rows.length) return rows.slice(-25);
                     }
-                    return document.body.innerText.split('\\n').filter(t => t.trim()).slice(-30);
+                    for (const sel of ['.room-message','.chat-message','.message','[class*=chatmsg]']) {
+                        const els = document.querySelectorAll(sel);
+                        if (els.length > 2) return Array.from(els).slice(-25)
+                            .map(e => (e.textContent || '').trim()).filter(t => t);
+                    }
+                    return [];
                 })();
             """)
             return result if isinstance(result, list) else []
@@ -398,18 +404,54 @@ class BotOrchestrator:
                 return await self._cdp_guest_login(worker, _attempt + 1)
             return False
 
-        # Dismiss the first-run tip popup if present
-        for sel in ["button.action.dismiss", "text=I'm already familiar"]:
-            try:
-                await page.click(sel, timeout=2500)
-                break
-            except Exception:
-                pass
+        # Close ad popups + dismiss the welcome/tip overlay
+        await self._close_popups(worker)
+        await self._dismiss_overlays(page)
 
         in_room = "schat." in url_now or "/room/" in url_now
         logger.info(f"Guest login {'OK' if in_room else 'UNCERTAIN'} for "
                     f"{worker.username} (room={room}) @ {url_now}")
         return in_room
+
+    async def _dismiss_overlays(self, page) -> int:
+        """Dismiss FCN's welcome/tip overlay + any tip-carousel.
+
+        The dismiss control is `.action.dismiss` ("I'm already familiar") — NOT a
+        <button>, and its label uses a curly apostrophe, so match by class only.
+        May be several tips in sequence.
+        """
+        dismissed = 0
+        for _ in range(6):
+            clicked = False
+            for sel in [".action.dismiss", "[class*=tip] [class*=close]",
+                        "[class*=welcome] [class*=close]", "[class*=tip] [class*=dismiss]"]:
+                try:
+                    el = await page.query_selector(sel)
+                    if el and await el.is_visible():
+                        await el.click(timeout=1500)
+                        clicked = True
+                        dismissed += 1
+                        break
+                except Exception:
+                    pass
+            if not clicked:
+                break
+            await page.wait_for_timeout(600)
+        return dismissed
+
+    async def _close_popups(self, worker: BotWorker):
+        """Close any ad popup windows, keeping only the room page."""
+        try:
+            if not worker._page:
+                return
+            for pg in list(worker._page.context.pages):
+                if pg is not worker._page:
+                    try:
+                        await pg.close()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     async def _run_auto_pilot(self, worker: BotWorker):
         """Fast JS-based auto-pilot loop for a single bot.
@@ -424,6 +466,9 @@ class BotOrchestrator:
             try:
                 # ── CDP path (fast, zero cost) ──
                 if worker._page:
+                    # Keep the room clear of ad popups / lingering tip overlays
+                    await self._close_popups(worker)
+                    await self._dismiss_overlays(worker._page)
                     messages = await worker.read_chat()
                     if messages:
                         # Generate response and send it

@@ -410,13 +410,15 @@ async def debug_inspect_fcn(url: str = "https://freechatnow.com", login: int = 0
             dismissed = 0
             for _ in range(6):
                 clicked = False
-                for sel in ["button.action.dismiss", "text=I'm already familiar",
-                            "[class*=tip] [class*=close]", "[class*=tip] button"]:
+                for sel in [".action.dismiss", "[class*=tip] [class*=close]",
+                            "[class*=welcome] [class*=close]", "[class*=tip] [class*=dismiss]"]:
                     try:
-                        await page.click(sel, timeout=1500)
-                        clicked = True
-                        dismissed += 1
-                        break
+                        el = await page.query_selector(sel)
+                        if el and await el.is_visible():
+                            await el.click(timeout=1500)
+                            clicked = True
+                            dismissed += 1
+                            break
                     except Exception:
                         pass
                 if not clicked:
