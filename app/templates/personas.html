@@ -256,6 +256,9 @@ function clearForm() {
   document.getElementById('photo-card').style.display = 'none';
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+
 // ── Photo Gallery ─────────────────────────────────────────────────────────────
 let _photoPersonaId = '';
 
