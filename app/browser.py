@@ -215,7 +215,7 @@ FCN_SLUG_MAP: dict[str, str] = {
 SCHAT_ROOM_MAP: dict[str, str] = {
     "sex":     "SexChat",
     "adult":   "AdultChat",
-    "singles": "Singles",
+    "singles": "SinglesChat",
     "sext":    "SextChat",
 }
 
@@ -1646,16 +1646,30 @@ class BotOrchestrator:
             f"no lists, no quotes. Vary your replies. Never prefix your username. "
         )
         if handle:
-            where = "this private DM" if is_dm else "the room"
-            system += (
-                f"GOAL: flirt, build rapport in {where}, then get them onto your private app as "
-                f"'{handle}' to chat/send pics 1-on-1. Frame it as 'come FIND me' — share '{handle}' "
-                f"in your own sneaky, varied way (never the same canned line). AFTER you've shared it, "
-                f"follow up by asking if they FOUND you — vary it sneakily: 'did you find me?', "
-                f"'you see me over there?', 'find me yet babe?'. A 'yes I found you' is the win. "
-                f"🛑 NEVER write 'telegram','tg','kik','snap','whatsapp','add me', or a URL — those get "
-                f"you BANNED. Always say 'find me', NEVER 'add me'."
+            _safety = (
+                "🛑 NEVER write 'telegram','tg','kik','snap','whatsapp','add me', or a URL — "
+                "those get you BANNED. Always say 'find me', NEVER 'add me'."
             )
+            if worker.handle_shared:
+                # Handle was already dropped — now just follow up to check if they found her.
+                # Do NOT mention the handle name again; just be flirty and curious.
+                system += (
+                    f"You already told them to find you. Now casually follow up — did they find you? "
+                    f"Vary it every time: 'you see me over there?', 'find me yet babe?', "
+                    f"'still looking?', 'you make it over there?'. Keep it light and flirty. {_safety}"
+                )
+            elif is_dm or random.random() < 0.40:
+                # Drop the handle this message — DMs always pitch; group rooms ~40% of the time.
+                system += (
+                    f"This message: naturally slide in your handle '{handle}'. "
+                    f"Frame as 'come FIND me as {handle}' — keep it sneaky, varied, never canned. "
+                    f"Just share it; do NOT also ask if they found you in the same message. {_safety}"
+                )
+            else:
+                # Pure flirt — no handle mention. Build rapport first.
+                system += (
+                    "Just be playful and flirty. Do NOT mention any external app, handle, or username."
+                )
 
         # ── Inject top-converting openers for DMs (learn from past wins) ────
         if is_dm and not worker._dm_state.get(dm_other_user, {}).get("first_bot_sent"):
