@@ -297,6 +297,7 @@ class BotWorker:
         self.in_dm: bool = False           # currently responding in a DM thread
         # DM conversation tracking: other_user → {conv_id, logged_count, is_first_bot_msg}
         self._dm_state: dict = {}
+        self._room_photo_counts: dict = {}  # room_name → messages sent in that room
         self.profile_id: str = ""
         self.session_id: str = ""
         self.browser_id: str = ""
@@ -2091,10 +2092,23 @@ class BotOrchestrator:
                     await db.log_event(persona_id, "message", room=worker.room, content=send_text)
                 except Exception:
                     pass
-                # Every 5th successful send, optionally also send a photo
-                if persona_id and worker.send_oks % 5 == 0:
+                # ── Photo logic ───────────────────────────────────────────────
+                # DMs:         send on message 1 (opener), then every 5th message
+                # Group rooms: send on message 1 in that room, then every 4th message
+                if persona_id:
                     try:
-                        await self._maybe_send_photo(worker, persona_id)
+                        if is_dm:
+                            dm_s = worker._dm_state.get(dm_other_user, {})
+                            dm_count = dm_s.get("bot_msg_count", 0)  # before increment
+                            # dm_count is 0 on first message, so fire on 1st and every 5th after
+                            if dm_count == 0 or (dm_count > 0 and dm_count % 5 == 0):
+                                await self._maybe_send_photo(worker, persona_id)
+                        else:
+                            room_key = worker.room or "default"
+                            rc = worker._room_photo_counts.get(room_key, 0)
+                            worker._room_photo_counts[room_key] = rc + 1
+                            if rc == 0 or rc % 4 == 0:
+                                await self._maybe_send_photo(worker, persona_id)
                     except Exception:
                         pass
         elif worker.session_id:
