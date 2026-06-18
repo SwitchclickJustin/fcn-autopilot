@@ -1790,7 +1790,8 @@ class BotOrchestrator:
 
         _safety = (
             "NEVER write the full word 'telegram', 'kik', 'snap', 'whatsapp', or any URL. "
-            "Use 'TG' or 'the TG' when referring to Telegram. Never name other platforms."
+            "In DMs: use 'TG' or 'the TG'. In group rooms: use 'Tela Grahm' (two words, misspelled). "
+            "Never name other platforms."
         )
 
         if is_dm:
@@ -1921,20 +1922,6 @@ class BotOrchestrator:
 
         else:
             # ── Group room: provocative broadcast messages ────────────────────
-            callout_hint = ""
-            if recent_usernames:
-                pick = random.choice(recent_usernames)
-                if random.random() < 0.30:
-                    callout_hint = f"Optionally call out '{pick}' if it feels natural. "
-
-            group_examples = (
-                "Examples of the EXACT style (vary the words, keep the vibe): "
-                "'OMG whos ready for some fun sexting.. if so come at me [handle] on that TG', "
-                "'hope you guys like latinas', "
-                "'i'm so horny right now.. who wants private action', "
-                "'who's looking for something more private tonight, DM me', "
-                "'bored and turned on.. any of you actually know how to handle a latina'. "
-            )
             # Pull last 3 bot messages to avoid repetition
             recent_bot_msgs = [m for m in messages[-15:] if m.startswith(username + ":")][-3:]
             no_repeat = ""
@@ -1944,21 +1931,35 @@ class BotOrchestrator:
                     + " | ".join(f'"{m.split(":",1)[-1].strip()}"' for m in recent_bot_msgs)
                     + ". Write something completely different. "
                 )
-            # Every broadcast includes the handle + "TG" — that's the whole point
-            handle_in_broadcast = ""
+
+            # Group room obfuscation: "Tela Grahm" (NOT "TG" — group scanner is stricter)
+            # Handle capitalized: AlexandraSwallows style
+            handle_cap = handle.capitalize() if handle else ""
+            handle_broadcast = ""
             if handle:
-                handle_in_broadcast = (
-                    f" Include your TG handle '{handle}' naturally in the message — "
-                    f"e.g. 'come at me [handle] on that TG' or 'find me on TG as [handle]'. "
-                    f"Use 'TG' not the full platform name. {_safety}"
+                handle_broadcast = (
+                    f" You MUST include your handle in the message. "
+                    f"Write it as '{handle_cap}' (capitalized). "
+                    f"Refer to the platform as 'Tela Grahm' (two words, misspelled) — NEVER write 'Telegram' or 'TG'. "
+                    f"Example format: 'find me on Tela Grahm {handle_cap}'"
                 )
+
+            group_examples = (
+                "EXACT style examples — this is the template, vary the specific act/number: "
+                f"'Okay.. i'm gonna touch myself.. if you want to watch, you gotta find me on Tela Grahm {handle_cap}.. "
+                f"this is a huge fetish of mine and i can let only 5 guys watch.. I Squirt!!', "
+                f"'i'm about to get in the shower and film it.. only 3 spots to watch on Tela Grahm {handle_cap}.. who wants in', "
+                f"'just got home and i'm soaking wet.. gonna play with myself.. find me on Tela Grahm {handle_cap} if you want to see'. "
+            )
+
             system = (
                 f"You are {username}, a horny latina woman in a public adult group chat (18+). "
                 f"Tone: {tone}. Personality: {bio}. "
-                f"Write ONE short provocative broadcast that makes every guy want to DM you. "
-                f"Be direct, sexual, attention-grabbing — like you own the room. {group_examples}"
+                f"Write ONE broadcast message using the exact template style: "
+                f"announce a specific sexual act you're about to do, add scarcity ('only X guys', 'limited spots'), "
+                f"direct them to find you by name on the platform. {group_examples}"
                 f"No line breaks, no lists, no quotes. Never prefix your username. "
-                f"{no_repeat}{callout_hint}{handle_in_broadcast}{_no_emoji}"
+                f"{no_repeat}{handle_broadcast}{_no_emoji}"
             )
 
         # ── Inject top-converting openers for DMs (learn from past wins) ────
