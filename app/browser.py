@@ -431,7 +431,7 @@ class BotWorker:
                         await self._page.keyboard.press("Backspace")
                         await asyncio.sleep(random.uniform(0.08, 0.18))
                     await self._page.keyboard.type(ch)
-                    delay = random.uniform(0.15, 0.33)   # ~50 WPM base
+                    delay = random.uniform(0.07, 0.12)   # ~120 WPM
                     if random.random() < 0.04:
                         delay += random.uniform(0.4, 1.1)  # brief "thinking" pause
                     await asyncio.sleep(delay)
@@ -1680,8 +1680,8 @@ class BotOrchestrator:
                         elif state.get("first_bot_sent", False):
                             active_dms.append(c)
 
-                    # After every 3 DMs, force a group room blast before continuing DMs
-                    force_group = worker._dms_since_group >= 3 and rooms and now >= next_send
+                    # After every 3 DMs, blast group — but ONLY if no DMs are waiting
+                    force_group = worker._dms_since_group >= 3 and rooms and now >= next_send and not active_dms
 
                     if active_dms and now >= dm_next and not force_group:
                         for c in active_dms:
@@ -1695,21 +1695,22 @@ class BotOrchestrator:
                                     info = await self._read_dm_partner_info(worker._page)
                                     dm_st["partner_age"] = info.get("age")
                                     dm_st["partner_country"] = info.get("country")
+                                # Skip expensive read if no badge and already replied
+                                already_replied = worker._dm_state.get(other_user, {}).get("first_bot_sent", False)
+                                if not c["unseen"] and already_replied:
+                                    continue  # nothing new — skip and check next DM
                                 msgs = await worker.read_chat()
                                 if msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
                                     new_count = len(msgs)
-                                    # Only reply if there are new messages since last reply
-                                    # (avoids double-sending when nothing new happened)
                                     if c["unseen"] or new_count > prev_count:
                                         await self._auto_pilot_tick(worker, msgs, client,
                                                                     dm_other_user=other_user)
                                         worker._dms_since_group += 1
-                                        # Move immediately to next DM — the unseen badge
-                                        # (blink) will bring us back when he responds
-                        dm_next = time.monotonic() + random.uniform(2, 4)
+                                        # Move immediately to next DM — blink brings us back
+                        dm_next = time.monotonic() + 0.5  # fast blink check
                     elif now >= next_send or force_group:
                         # Group room: rotate between all joined rooms on each send
                         if rooms:

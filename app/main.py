@@ -1328,7 +1328,7 @@ async def start_multi_session(data: dict):
     """Launch N agents simultaneously, each in 2 distinct rooms (max 2 agents/room)."""
     import traceback
     persona_id = data.get("persona_id", "")
-    count = max(1, min(int(data.get("count", 1)), 8))
+    count = max(1, min(int(data.get("count", 5)), 10))
     if not persona_id:
         raise HTTPException(400, "persona_id required")
     persona = await get_persona(persona_id)
