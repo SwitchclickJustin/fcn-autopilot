@@ -1590,6 +1590,56 @@ async def api_delete_photo(persona_id: str, photo_id: str):
     await delete_persona_photo(photo_id)
     return {"deleted": True}
 
+# ─── SirenDM Telegram Conversion Webhook ───
+@app.post("/api/telegram-conversion")
+async def siren_dm_webhook(request: Request):
+    """
+    Receives n8n POSTs from SirenDM every 5 minutes with new Telegram conversations.
+    Each payload = one real fan who found the TG handle and messaged.
+    We log a 'telegram_conversion' event so the dashboard shows verified conversions.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON")
+
+    fan_name = (body.get("fan_name") or "").strip()
+    fan_username = (body.get("fan_username") or "").strip()
+    conversation_started = (body.get("conversation_started") or "").strip()
+    fan_location = (body.get("fan_location") or "").strip()
+    fan_language = (body.get("fan_language") or "").strip()
+    agent_name = (body.get("agent_name") or "").strip()
+
+    if not fan_username and not fan_name:
+        return {"ok": True, "skipped": "no fan identity"}
+
+    # Map agent_name → persona_id (best-effort: match by name, fallback to first persona)
+    personas = await get_personas()
+    persona_id = ""
+    if agent_name and personas:
+        for p in personas:
+            if agent_name.lower() in (p.get("name") or "").lower():
+                persona_id = p["id"]
+                break
+    if not persona_id and personas:
+        persona_id = personas[0]["id"]
+
+    import json as _json
+    content = _json.dumps({
+        "fan_name": fan_name,
+        "fan_username": fan_username,
+        "fan_location": fan_location,
+        "fan_language": fan_language,
+        "conversation_started": conversation_started,
+        "agent_name": agent_name,
+        "source": "siren_dm",
+    })
+
+    await db.log_event(persona_id, "telegram_conversion", room="telegram", content=content)
+
+    logger.info(f"[siren_dm] telegram_conversion: @{fan_username} ({fan_name}) via {agent_name}")
+    return {"ok": True, "logged": fan_username or fan_name}
+
 # ─── Entry point ───
 if __name__ == "__main__":
     import uvicorn
