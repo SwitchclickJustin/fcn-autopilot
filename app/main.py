@@ -75,16 +75,15 @@ async def lifespan(app: FastAPI):
     await browser_manager.stop_session()
 
 app = FastAPI(title="FCN Auto-Pilot", version="0.1.0", lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, max_age=86400 * 30)
 
 # ─── Auth helpers ───
-# Public routes that never require a login
 _PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 
+# Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
+# ensuring request.session is populated before the auth check executes.
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    # Always allow: health check, login page/form, SirenDM webhook, static assets
     if path in _PUBLIC or path.startswith("/static"):
         return await call_next(request)
     if not request.session.get("authed"):
@@ -92,6 +91,9 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         return RedirectResponse("/login", status_code=302)
     return await call_next(request)
+
+# SessionMiddleware added last = outermost layer = runs first on every request
+app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, max_age=86400 * 30)
 
 def require_login(request: Request):
     pass  # kept for legacy references; middleware handles it now
