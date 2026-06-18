@@ -123,15 +123,16 @@
 
 <!-- Photo Gallery (shown when a persona is selected) -->
 <div class="card" id="photo-card" style="display:none;margin-top:.75rem">
-  <div class="flex" style="margin-bottom:.75rem;align-items:center">
+  <div class="flex" style="margin-bottom:.75rem;align-items:center;gap:.75rem">
     <div class="card-title" style="margin:0" id="photo-card-title">Photos</div>
+    <span id="photo-count" class="text-dim text-sm"></span>
   </div>
   <div class="flex" style="gap:.5rem;margin-bottom:.75rem">
     <input type="text" id="photo-url-input" placeholder="Paste Bunny.net CDN URL…" style="flex:1;font-size:.85rem">
-    <button class="btn btn-secondary btn-sm" onclick="addPhotoUrl()">Add Photo</button>
+    <button class="btn btn-primary btn-sm" onclick="addPhotoUrl()" id="add-photo-btn">+ Add</button>
   </div>
-  <div id="photo-grid" style="display:flex;flex-wrap:wrap;gap:.5rem">
-    <p class="empty" style="width:100%">No photos yet. Paste a Bunny.net URL above.</p>
+  <div id="photo-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.75rem">
+    <p class="empty" style="grid-column:1/-1">No photos yet. Paste a Bunny.net URL above.</p>
   </div>
 </div>
 
@@ -262,24 +263,35 @@ async function loadPhotos(personaId) {
   _photoPersonaId = personaId;
   document.getElementById('photo-card').style.display = 'block';
   const grid = document.getElementById('photo-grid');
-  grid.innerHTML = '<p class="text-dim text-sm">Loading…</p>';
+  const countEl = document.getElementById('photo-count');
+  grid.innerHTML = '<p class="text-dim text-sm" style="grid-column:1/-1">Loading…</p>';
   try {
     const photos = await (await fetch(`/api/personas/${personaId}/photos`)).json();
+    countEl.textContent = photos.length ? `${photos.length} photo${photos.length !== 1 ? 's' : ''}` : '';
     if (!photos.length) {
-      grid.innerHTML = '<p class="empty" style="width:100%">No photos yet. Paste a Bunny.net URL above.</p>';
+      grid.innerHTML = '<p class="empty" style="grid-column:1/-1">No photos yet. Paste a Bunny.net URL above.</p>';
       return;
     }
-    grid.innerHTML = photos.map(p => `
-      <div style="position:relative;display:inline-block" title="${esc(p.filename||p.url)}">
-        <img src="${esc(p.url)}"
-             style="width:100px;height:100px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--border)"
-             loading="lazy" onerror="this.style.opacity='.3'">
-        <button onclick="deletePhoto('${p.id}')"
-                style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:.7rem;cursor:pointer;line-height:1;padding:0"
-                title="Delete">✕</button>
-      </div>`).join('');
+    grid.innerHTML = photos.map(p => {
+      const shortUrl = (p.url || '').replace(/^https?:\/\/[^/]+\//, '').substring(0, 28);
+      return `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column">
+        <div style="position:relative">
+          <img src="${esc(p.url)}"
+               style="width:100%;height:140px;object-fit:cover;display:block"
+               loading="lazy"
+               onerror="this.parentElement.innerHTML='<div style=height:140px;display:flex;align-items:center;justify-content:center;background:var(--surface3);color:var(--text-dim);font-size:.75rem;padding:.5rem;text-align:center>Broken URL</div>'">
+          <button onclick="deletePhoto('${p.id}')"
+                  style="position:absolute;top:4px;right:4px;background:rgba(180,30,30,.85);color:#fff;border:none;border-radius:4px;padding:2px 7px;font-size:.75rem;cursor:pointer;font-weight:600"
+                  title="Delete photo">Delete</button>
+        </div>
+        <div style="padding:.4rem .5rem;font-size:.7rem;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(p.url)}">
+          ${esc(shortUrl)}…
+        </div>
+      </div>`;
+    }).join('');
   } catch(e) {
-    grid.innerHTML = `<p class="text-red text-sm">Error: ${e.message}</p>`;
+    grid.innerHTML = `<p class="text-red text-sm" style="grid-column:1/-1">Error: ${e.message}</p>`;
   }
 }
 
