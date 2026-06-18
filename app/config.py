@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     database_path: str = "fcn.db"
     session_secret: str = "change-me-in-production"
     log_level: str = "INFO"
+    capsolver_api_key: str = ""
 
     class Config:
         env_file = ".env"

@@ -1256,6 +1256,114 @@ class BotOrchestrator:
         except Exception:
             pass
 
+    async def _handle_captcha(self, page) -> bool:
+        """Detect and click through FCN's in-room captcha dialog.
+
+        FCN shows a Cloudflare Turnstile "I am human" checkbox modal while the
+        agent is active in the room. Since it's rendered in the main DOM (not a
+        cross-origin iframe), we can click the checkbox directly via CDP.
+
+        Falls back to CapSolver API for Turnstile tokens if CAPSOLVER_API_KEY is
+        set and the simple click path fails.
+
+        Returns True if a captcha was found and handled (or already gone).
+        """
+        try:
+            # Step 1 — detect any captcha overlay in the page
+            has_captcha = await page.evaluate("""() => {
+                return !!(
+                    document.querySelector('[class*=captcha i], [id*=captcha i]') ||
+                    document.querySelector('iframe[src*="challenges.cloudflare"]') ||
+                    document.querySelector('#cf-challenge-running, .cf-turnstile')
+                );
+            }""")
+            if not has_captcha:
+                return False
+
+            # Step 2 — try clicking the checkbox inside the captcha dialog
+            clicked = await page.evaluate("""() => {
+                const modal = document.querySelector('[class*=captcha i], [id*=captcha i]');
+                if (modal) {
+                    const cb = modal.querySelector('input[type=checkbox]');
+                    if (cb && !cb.checked) { cb.click(); return 'checkbox'; }
+                    const btn = modal.querySelector('button, [class*=submit i], [class*=confirm i], [class*=verify i]');
+                    if (btn) { btn.click(); return 'button'; }
+                }
+                // Also try clicking the cf-turnstile widget directly
+                const cf = document.querySelector('.cf-turnstile, [data-sitekey]');
+                if (cf) { cf.click(); return 'cf_widget'; }
+                return null;
+            }""")
+            if clicked:
+                logger.info(f"[captcha] clicked {clicked} — waiting for auto-solve…")
+                await page.wait_for_timeout(4000)
+                # Check if it's gone
+                still_there = await page.evaluate("""() => {
+                    return !!(document.querySelector('[class*=captcha i], [id*=captcha i]') &&
+                              document.querySelector('[class*=captcha i], [id*=captcha i]').offsetParent !== null);
+                }""")
+                if not still_there:
+                    logger.info("[captcha] cleared ✅")
+                    return True
+
+            # Step 3 — CapSolver API fallback (for Cloudflare Turnstile tokens)
+            if settings.capsolver_api_key:
+                try:
+                    sitekey = await page.evaluate("""() => {
+                        const el = document.querySelector('[data-sitekey], .cf-turnstile, iframe[src*="challenges.cloudflare"]');
+                        if (!el) return null;
+                        return el.getAttribute('data-sitekey') ||
+                               (el.src || '').match(/k=([^&]+)/)?.[1] || null;
+                    }""")
+                    if sitekey:
+                        import aiohttp
+                        page_url = page.url
+                        payload = {
+                            "clientKey": settings.capsolver_api_key,
+                            "task": {
+                                "type": "AntiTurnstileTaskProxyLess",
+                                "websiteURL": page_url,
+                                "websiteKey": sitekey,
+                            }
+                        }
+                        async with aiohttp.ClientSession() as sess:
+                            async with sess.post("https://api.capsolver.com/createTask",
+                                                 json=payload, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                                resp = await r.json()
+                            task_id = resp.get("taskId")
+                            if task_id:
+                                for _ in range(20):
+                                    await asyncio.sleep(3)
+                                    async with sess.post("https://api.capsolver.com/getTaskResult",
+                                                         json={"clientKey": settings.capsolver_api_key,
+                                                               "taskId": task_id},
+                                                         timeout=aiohttp.ClientTimeout(total=10)) as r2:
+                                        res = await r2.json()
+                                    if res.get("status") == "ready":
+                                        token = res["solution"]["token"]
+                                        await page.evaluate("""(tok) => {
+                                            // Inject token into turnstile response field
+                                            const inp = document.querySelector('[name="cf-turnstile-response"], input[name*=turnstile]');
+                                            if (inp) inp.value = tok;
+                                            // Fire the callback if exposed
+                                            if (window.onTurnstileSuccess) window.onTurnstileSuccess(tok);
+                                            if (window.turnstileCallback) window.turnstileCallback(tok);
+                                            // Submit any captcha form
+                                            const f = document.querySelector('form[id*=captcha i], form[class*=captcha i]');
+                                            if (f) f.submit();
+                                        }""", token)
+                                        logger.info("[captcha] CapSolver token injected ✅")
+                                        return True
+                                    if res.get("status") == "failed":
+                                        break
+                except Exception as e:
+                    logger.warning(f"[captcha] CapSolver error: {e}")
+
+            return False
+        except Exception as e:
+            logger.warning(f"[captcha] handler error: {e}")
+            return False
+
     async def _close_popups(self, worker: BotWorker):
         """Close any ad popup windows, keeping only the room page foregrounded."""
         try:
@@ -1431,6 +1539,9 @@ class BotOrchestrator:
                     # Kill the ad modal/iframe every tick (cheap, targeted) so the
                     # gray "[x]" box never lingers in the live view.
                     await self._kill_ads(worker._page)
+
+                    # Click through any in-room captcha dialog every tick.
+                    await self._handle_captcha(worker._page)
 
                     # Heavier cleanup (tip dismiss, popups, refocus) only periodically.
                     if tick % 5 == 1:
