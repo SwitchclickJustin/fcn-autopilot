@@ -241,7 +241,7 @@ DESKTOP_UA_POOL = [u for u in UA_POOL if not any(t in u for t in _MOBILE_TOKENS)
 
 # ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
 # Verified working FCN room slugs (confirmed URLs 2026-06-17)
-FCN_ROOMS = ["sex", "adult", "singles", "sext"]
+FCN_ROOMS = ["sex", "adult", "singles", "sext", "chat", "cams", "mature", "gay"]
 
 FCN_SLUG_MAP: dict[str, str] = {
     "sex":     "sex",
@@ -260,23 +260,24 @@ SCHAT_ROOM_MAP: dict[str, str] = {
 }
 
 
-def assign_rooms(count: int, pool: list = FCN_ROOMS) -> list:
-    """Assign 2 rooms to each of `count` agents — max 2 agents per room.
+def assign_rooms(count: int, pool: list = FCN_ROOMS, per_agent: int = 4) -> list:
+    """Assign `per_agent` rooms to each of `count` agents — max 2 agents per room.
 
-    Returns a list of [room1, room2] pairs. With 4 agents across 10 rooms,
-    all pairs are distinct (0 room collisions). Degrades gracefully when
-    count * 2 > len(pool) * 2 by recycling least-used rooms.
+    Returns a list of room lists. Degrades gracefully when slots are exhausted
+    by recycling least-used rooms.
     """
     usage: dict = {r: 0 for r in pool}
     assignments = []
     for _ in range(count):
-        available = sorted([r for r in pool if usage[r] < 2], key=lambda r: usage[r])
-        if len(available) < 2:
+        picked = []
+        for _ in range(per_agent):
             available = sorted(pool, key=lambda r: usage[r])
-        picked = available[:2]
-        assignments.append(list(picked))
-        for r in picked:
-            usage[r] += 1
+            for r in available:
+                if r not in picked:
+                    picked.append(r)
+                    usage[r] += 1
+                    break
+        assignments.append(picked)
     return assignments
 
 
@@ -801,11 +802,10 @@ class BotOrchestrator:
                     logger.error(f"[{agent_id}] all recovery attempts failed — agent offline")
                     return
 
-            # Attempt to join the second assigned room (best-effort — if the button
-            # is hidden at 1280px width we still start the loop on the primary room)
-            if len(worker.rooms) > 1:
-                await asyncio.sleep(3)  # let the SPA settle before touching UI
-                await self._join_second_room(worker, worker.rooms[1])
+            # Join all assigned rooms beyond the first (best-effort)
+            for extra_room in worker.rooms[1:]:
+                await asyncio.sleep(3)
+                await self._join_second_room(worker, extra_room)
 
             # Start the auto-pilot loop immediately.
             worker.phase = "starting_loop"
@@ -1626,9 +1626,9 @@ class BotOrchestrator:
                             # try to re-join second room, then resume the loop
                             next_send = time.monotonic() + 20
                             dm_next = time.monotonic() + 10
-                            if len(worker.rooms) > 1:
-                                await asyncio.sleep(4)
-                                await self._join_second_room(worker, worker.rooms[1])
+                            for extra_room in worker.rooms[1:]:
+                                await asyncio.sleep(3)
+                                await self._join_second_room(worker, extra_room)
                         await asyncio.sleep(3)
                         continue
                     ban_strikes = 0
@@ -1714,7 +1714,7 @@ class BotOrchestrator:
                         messages = await worker.read_chat()
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
-                        next_send = now + random.randint(25, 35)
+                        next_send = now + random.randint(60, 120)
 
                 # ── SDK fallback (if no CDP) ──
                 elif worker.session_id:
