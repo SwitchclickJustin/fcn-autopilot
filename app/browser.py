@@ -411,7 +411,7 @@ class BotWorker:
                     pass
                 await inp.focus()
                 await inp.fill("")  # clear any stale text
-                # Human-like typing ~35 WPM. 35 WPM × 5 chars/word ÷ 60s = ~0.34s/char avg.
+                # Human-like typing ~50 WPM. 50 WPM × 5 chars/word ÷ 60s = ~0.24s/char avg.
                 # Occasional typo: type wrong char, pause, backspace, type correct char.
                 _keyboard_neighbors = {
                     'a':'sq','b':'vgn','c':'xdv','d':'sfe','e':'wrd','f':'dge','g':'fht',
@@ -428,7 +428,7 @@ class BotWorker:
                         await self._page.keyboard.press("Backspace")
                         await asyncio.sleep(random.uniform(0.08, 0.18))
                     await self._page.keyboard.type(ch)
-                    delay = random.uniform(0.22, 0.48)   # ~35 WPM base
+                    delay = random.uniform(0.15, 0.33)   # ~50 WPM base
                     if random.random() < 0.04:
                         delay += random.uniform(0.4, 1.1)  # brief "thinking" pause
                     await asyncio.sleep(delay)
@@ -1674,8 +1674,8 @@ class BotOrchestrator:
                         last_seen = state.get("logged_count", 0)
                         if c["unseen"] or last_seen == 0:
                             active_dms.append(c)
-                        # Even without badge: if we've talked before, open to check msg count
-                        elif state.get("bot_msg_count", 0) > 0:
+                        # Even without badge: if bot replied before, keep checking for new guy msgs
+                        elif state.get("first_bot_sent", False):
                             active_dms.append(c)
 
                     if active_dms and now >= dm_next:
@@ -2151,7 +2151,13 @@ class BotOrchestrator:
             sent = await worker.send_photo(b64, filename, mime_type)
             if sent:
                 logger.info(f"[{worker.agent_id}] photo sent: {filename}")
+                try:
+                    await db.log_event(persona_id, "photo_sent", room=worker.room, content=filename)
+                except Exception:
+                    pass
                 await asyncio.sleep(2)
+            else:
+                logger.warning(f"[{worker.agent_id}] send_photo returned False for {filename}")
             return sent
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] _maybe_send_photo error: {e}")
