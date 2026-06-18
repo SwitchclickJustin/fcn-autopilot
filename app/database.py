@@ -154,8 +154,7 @@ CREATE TABLE IF NOT EXISTS persona_photos (
     id TEXT PRIMARY KEY,
     persona_id TEXT REFERENCES personas(id) ON DELETE CASCADE,
     filename TEXT DEFAULT '',
-    mime_type TEXT DEFAULT 'image/jpeg',
-    data TEXT,   -- base64-encoded image data
+    url TEXT DEFAULT '',   -- Bunny.net CDN URL
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -165,6 +164,19 @@ async def get_db():
     if USE_NEON:
         conn = await asyncpg.connect(settings.neon_database_url)
         await conn.execute(SCHEMA_SQL)
+        # persona_photos migration: add url column if the table was created with the old schema
+        try:
+            await conn.execute("ALTER TABLE persona_photos ADD COLUMN IF NOT EXISTS url TEXT DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            await conn.execute("ALTER TABLE persona_photos DROP COLUMN IF EXISTS data")
+        except Exception:
+            pass
+        try:
+            await conn.execute("ALTER TABLE persona_photos DROP COLUMN IF EXISTS mime_type")
+        except Exception:
+            pass
         return conn
     else:
         os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
@@ -662,25 +674,25 @@ async def get_agent_messages(limit: int = 200, persona_id: str = "") -> list:
 
 # ─── Persona Photos ────────────────────────────────────────────────────────────
 
-async def add_persona_photo(persona_id: str, filename: str, mime_type: str, data_b64: str) -> str:
-    """Store a base64-encoded photo for a persona. Returns the new photo id."""
+async def add_persona_photo(persona_id: str, filename: str, url: str) -> str:
+    """Store a Bunny.net CDN URL photo for a persona. Returns the new photo id."""
     photo_id = str(uuid.uuid4())
     db = await get_db()
     try:
         await _execute(db,
-            f"INSERT INTO persona_photos (id, persona_id, filename, mime_type, data) "
-            f"VALUES ({_p(1)},{_p(2)},{_p(3)},{_p(4)},{_p(5)})",
-            [photo_id, persona_id, filename or "", mime_type or "image/jpeg", data_b64 or ""])
+            f"INSERT INTO persona_photos (id, persona_id, filename, url) "
+            f"VALUES ({_p(1)},{_p(2)},{_p(3)},{_p(4)})",
+            [photo_id, persona_id, filename or "", url or ""])
     finally:
         await close_db(db)
     return photo_id
 
 
 async def get_persona_photos(persona_id: str) -> list:
-    """List photos for a persona (metadata only — no data field)."""
+    """List photos for a persona."""
     db = await get_db()
     try:
-        q = (f"SELECT id, persona_id, filename, mime_type, created_at "
+        q = (f"SELECT id, persona_id, filename, url, created_at "
              f"FROM persona_photos WHERE persona_id = {_p(1)} ORDER BY created_at DESC")
         return await _fetchall(db, q, [persona_id])
     finally:
@@ -688,7 +700,7 @@ async def get_persona_photos(persona_id: str) -> list:
 
 
 async def get_persona_photo(photo_id: str) -> Optional[dict]:
-    """Fetch one photo including its base64 data field."""
+    """Fetch one photo row (includes url)."""
     db = await get_db()
     try:
         q = f"SELECT * FROM persona_photos WHERE id = {_p(1)}"

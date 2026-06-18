@@ -1784,25 +1784,32 @@ class BotOrchestrator:
                 dm_state["logged_count"] = dm_state.get("logged_count", 0) + 1
 
     async def _maybe_send_photo(self, worker: BotWorker, persona_id: str) -> bool:
-        """Optionally send a random persona photo after a text message.
+        """Send a random persona photo (Bunny.net CDN URL) after a text message.
 
-        Returns True if a photo was dispatched (regardless of success).
+        Fetches the image from the CDN server-side (Railway → Bunny), converts to
+        base64, then passes to send_photo() for the in-browser drag-drop dispatch.
+        Server-side fetch avoids any CORS issues inside the FCN browser context.
         """
         try:
             photos = await db.get_persona_photos(persona_id)
             if not photos:
                 return False
-            chosen_meta = random.choice(photos)
-            photo = await db.get_persona_photo(chosen_meta["id"])
-            if not photo or not photo.get("data"):
+            chosen = random.choice(photos)
+            url = chosen.get("url") or ""
+            if not url:
                 return False
-            sent = await worker.send_photo(
-                photo["data"],
-                photo.get("filename") or "photo.jpg",
-                photo.get("mime_type") or "image/jpeg",
-            )
+            import httpx
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                image_bytes = resp.content
+                mime_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+            import base64
+            b64 = base64.b64encode(image_bytes).decode("utf-8")
+            filename = chosen.get("filename") or url.split("/")[-1] or "photo.jpg"
+            sent = await worker.send_photo(b64, filename, mime_type)
             if sent:
-                logger.info(f"[{worker.agent_id}] photo sent: {chosen_meta.get('filename','?')}")
+                logger.info(f"[{worker.agent_id}] photo sent: {filename}")
                 await asyncio.sleep(2)
             return sent
         except Exception as e:

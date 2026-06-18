@@ -1498,21 +1498,22 @@ async def api_agent_messages(limit: int = 200, persona_id: str = ""):
 
 # ─── API: Persona Photos ───
 @app.post("/api/personas/{persona_id}/photos")
-async def api_upload_photo(persona_id: str, file: UploadFile = File(...)):
-    """Upload a photo for a persona (multipart/form-data)."""
-    import base64
+async def api_add_photo(persona_id: str, request: Request):
+    """Add a Bunny.net CDN photo URL for a persona. Body: {"url": "...", "filename": "..."}"""
     persona = await get_persona(persona_id)
     if not persona:
         raise HTTPException(404, "Persona not found")
-    data = await file.read()
-    data_b64 = base64.b64encode(data).decode("utf-8")
-    mime_type = file.content_type or "image/jpeg"
-    photo_id = await add_persona_photo(persona_id, file.filename or "", mime_type, data_b64)
-    return {"id": photo_id, "filename": file.filename, "mime_type": mime_type}
+    body = await request.json()
+    url = (body.get("url") or "").strip()
+    filename = (body.get("filename") or url.split("/")[-1] or "photo.jpg").strip()
+    if not url:
+        raise HTTPException(400, "url is required")
+    photo_id = await add_persona_photo(persona_id, filename, url)
+    return {"id": photo_id, "filename": filename, "url": url}
 
 @app.get("/api/personas/{persona_id}/photos")
 async def api_list_photos(persona_id: str):
-    """List photos for a persona (metadata only, no data)."""
+    """List photos for a persona."""
     photos = await get_persona_photos(persona_id)
     for p in photos:
         if hasattr(p.get("created_at"), "isoformat"):
@@ -1524,19 +1525,6 @@ async def api_delete_photo(persona_id: str, photo_id: str):
     """Delete a persona photo."""
     await delete_persona_photo(photo_id)
     return {"deleted": True}
-
-@app.get("/api/personas/{persona_id}/photos/{photo_id}/preview")
-async def api_photo_preview(persona_id: str, photo_id: str):
-    """Return the raw image bytes for a persona photo (for <img src=...>)."""
-    import base64
-    photo = await get_persona_photo(photo_id)
-    if not photo:
-        raise HTTPException(404, "Photo not found")
-    try:
-        data = base64.b64decode(photo["data"])
-    except Exception:
-        raise HTTPException(500, "Corrupt photo data")
-    return Response(content=data, media_type=photo.get("mime_type", "image/jpeg"))
 
 # ─── Entry point ───
 if __name__ == "__main__":

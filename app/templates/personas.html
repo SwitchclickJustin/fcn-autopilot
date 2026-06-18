@@ -125,13 +125,13 @@
 <div class="card" id="photo-card" style="display:none;margin-top:.75rem">
   <div class="flex" style="margin-bottom:.75rem;align-items:center">
     <div class="card-title" style="margin:0" id="photo-card-title">Photos</div>
-    <label class="btn btn-secondary btn-sm ml-auto" style="cursor:pointer">
-      📷 Upload Photo
-      <input type="file" id="photo-upload" accept="image/*" style="display:none" onchange="uploadPhoto(this)">
-    </label>
+  </div>
+  <div class="flex" style="gap:.5rem;margin-bottom:.75rem">
+    <input type="text" id="photo-url-input" placeholder="Paste Bunny.net CDN URL…" style="flex:1;font-size:.85rem">
+    <button class="btn btn-secondary btn-sm" onclick="addPhotoUrl()">Add Photo</button>
   </div>
   <div id="photo-grid" style="display:flex;flex-wrap:wrap;gap:.5rem">
-    <p class="empty" style="width:100%">No photos yet.</p>
+    <p class="empty" style="width:100%">No photos yet. Paste a Bunny.net URL above.</p>
   </div>
 </div>
 
@@ -260,21 +260,20 @@ let _photoPersonaId = '';
 
 async function loadPhotos(personaId) {
   _photoPersonaId = personaId;
-  const card = document.getElementById('photo-card');
-  card.style.display = 'block';
+  document.getElementById('photo-card').style.display = 'block';
   const grid = document.getElementById('photo-grid');
   grid.innerHTML = '<p class="text-dim text-sm">Loading…</p>';
   try {
     const photos = await (await fetch(`/api/personas/${personaId}/photos`)).json();
     if (!photos.length) {
-      grid.innerHTML = '<p class="empty" style="width:100%">No photos yet.</p>';
+      grid.innerHTML = '<p class="empty" style="width:100%">No photos yet. Paste a Bunny.net URL above.</p>';
       return;
     }
     grid.innerHTML = photos.map(p => `
-      <div style="position:relative;display:inline-block">
-        <img src="/api/personas/${personaId}/photos/${p.id}/preview"
+      <div style="position:relative;display:inline-block" title="${esc(p.filename||p.url)}">
+        <img src="${esc(p.url)}"
              style="width:100px;height:100px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--border)"
-             loading="lazy">
+             loading="lazy" onerror="this.style.opacity='.3'">
         <button onclick="deletePhoto('${p.id}')"
                 style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:.7rem;cursor:pointer;line-height:1;padding:0"
                 title="Delete">✕</button>
@@ -284,16 +283,20 @@ async function loadPhotos(personaId) {
   }
 }
 
-async function uploadPhoto(input) {
-  if (!_photoPersonaId || !input.files.length) return;
-  const fd = new FormData();
-  fd.append('file', input.files[0]);
+async function addPhotoUrl() {
+  const input = document.getElementById('photo-url-input');
+  const url = (input.value || '').trim();
+  if (!url || !_photoPersonaId) return;
   try {
-    const r = await fetch(`/api/personas/${_photoPersonaId}/photos`, { method: 'POST', body: fd });
-    if (r.ok) { toast('Photo uploaded!'); await loadPhotos(_photoPersonaId); }
-    else { toast('Upload failed'); }
+    const filename = url.split('/').pop().split('?')[0] || 'photo.jpg';
+    const r = await fetch(`/api/personas/${_photoPersonaId}/photos`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ url, filename }),
+    });
+    if (r.ok) { input.value = ''; toast('Photo added!'); await loadPhotos(_photoPersonaId); }
+    else { toast('Failed to add photo'); }
   } catch(e) { toast('Error: ' + e.message); }
-  input.value = '';
 }
 
 async function deletePhoto(photoId) {
