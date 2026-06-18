@@ -241,7 +241,7 @@ DESKTOP_UA_POOL = [u for u in UA_POOL if not any(t in u for t in _MOBILE_TOKENS)
 
 # ── Room pool (200+ user rooms verified from FCN room list) ───────────────────
 # Verified working FCN room slugs (confirmed URLs 2026-06-17)
-FCN_ROOMS = ["sex", "adult", "singles", "sext", "chat", "cams", "mature", "gay"]
+FCN_ROOMS = ["sex", "adult", "singles", "sext", "chat", "cams"]
 
 FCN_SLUG_MAP: dict[str, str] = {
     "sex":     "sex",
