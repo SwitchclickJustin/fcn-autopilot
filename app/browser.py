@@ -1637,26 +1637,43 @@ class BotOrchestrator:
                             await worker._page.bring_to_front()
                         except Exception:
                             pass
-                    # DMs-FIRST: blast through ALL unread DMs each tick (2-4s gate
-                    # between rounds), then fall back to group room (~25-35s pace).
+                    # DMs-FIRST: check ALL DM tabs (unseen badge OR new messages since
+                    # last reply). After the bot replies the badge clears, but the user
+                    # keeps messaging — we catch that via msg-count comparison.
                     now = time.monotonic()
                     convos = await self._list_conversations(worker._page)
-                    unread_dms = [c for c in convos if c["is_dm"] and c["unseen"]]
+                    all_dms = [c for c in convos if c["is_dm"]]
                     rooms = [c for c in convos if not c["is_dm"]]
 
-                    if unread_dms and now >= dm_next:
-                        # Handle every unread DM in one pass — no extra delay between them
-                        for c in unread_dms:
+                    # A DM needs a reply if: badge is unseen OR message count grew since last reply
+                    active_dms = []
+                    for c in all_dms:
+                        other = c.get("text") or "unknown"
+                        state = worker._dm_state.get(other, {})
+                        last_seen = state.get("logged_count", 0)
+                        if c["unseen"] or last_seen == 0:
+                            active_dms.append(c)
+                        # Even without badge: if we've talked before, open to check msg count
+                        elif state.get("bot_msg_count", 0) > 0:
+                            active_dms.append(c)
+
+                    if active_dms and now >= dm_next:
+                        for c in active_dms:
                             if await self._open_conversation(worker._page, c["href"]):
                                 worker.in_dm = True
                                 other_user = c["text"] or "unknown"
                                 worker.room = other_user
                                 msgs = await worker.read_chat()
                                 if msgs:
+                                    state = worker._dm_state.get(other_user, {})
+                                    prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
-                                    await self._auto_pilot_tick(worker, msgs, client,
-                                                                dm_other_user=other_user)
-                        # Short cooldown before next DM round (2-4s)
+                                    new_count = len(msgs)
+                                    # Only reply if there are new messages since last reply
+                                    # (avoids double-sending when nothing new happened)
+                                    if c["unseen"] or new_count > prev_count:
+                                        await self._auto_pilot_tick(worker, msgs, client,
+                                                                    dm_other_user=other_user)
                         dm_next = time.monotonic() + random.uniform(2, 4)
                     elif now >= next_send:
                         # Group room: rotate between all joined rooms on each send
@@ -1845,13 +1862,22 @@ class BotOrchestrator:
                 "'who else is touching themselves right now, just me?', "
                 "'i want someone to make me feel good tonight, any takers'. "
             )
+            # Pull last 3 bot messages to avoid repetition
+            recent_bot_msgs = [m for m in messages[-15:] if m.startswith(username + ":")][-3:]
+            no_repeat = ""
+            if recent_bot_msgs:
+                no_repeat = (
+                    f"IMPORTANT: Do NOT repeat or closely paraphrase these recent messages: "
+                    + " | ".join(f'"{m.split(":",1)[-1].strip()}"' for m in recent_bot_msgs)
+                    + ". Write something completely different. "
+                )
             system = (
                 f"You are {username}, a horny woman in a public adult group chat (18+). "
                 f"Tone: {tone}. Personality: {bio}. "
                 f"Write ONE short provocative message to the whole room that makes the guys want to DM you. "
                 f"Be direct, sexual, and attention-grabbing. {group_examples}"
                 f"No line breaks, no lists, no quotes. Never write like you're in a private chat. "
-                f"Never prefix your username. {callout_hint}{_no_emoji}"
+                f"Never prefix your username. {no_repeat}{callout_hint}{_no_emoji}"
             )
             # Group room handle: occasional organic drop only
             if handle and random.random() < 0.20:
