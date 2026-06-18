@@ -1486,6 +1486,24 @@ async def api_top_openers(persona_id: str = "", limit: int = 10):
     return await get_top_converting_openers(persona_id=persona_id, limit=limit)
 
 # ─── API: Agent Messages ───
+@app.get("/debug/test-photo-send")
+async def debug_test_photo_send(agent_id: str = ""):
+    """Force an immediate photo send on a running agent to test drag-drop."""
+    workers = list(browser_manager._workers.values())
+    if not workers:
+        return {"error": "no agents running — relaunch first"}
+    worker = next((w for w in workers if w.agent_id == agent_id), workers[0])
+    if not worker._page:
+        return {"error": f"agent {worker.agent_id} has no active page"}
+    persona_id = worker.persona.get("id", "")
+    result = await browser_manager._maybe_send_photo(worker, persona_id)
+    return {
+        "agent": worker.agent_id,
+        "persona_id": persona_id,
+        "photo_sent": result,
+        "current_url": worker._page.url if worker._page else "?",
+    }
+
 @app.get("/api/agent-messages")
 async def api_agent_messages(limit: int = 200, persona_id: str = ""):
     """Merged feed of group-room + DM messages sent by the bot, sorted newest first."""
