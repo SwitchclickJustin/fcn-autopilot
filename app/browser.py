@@ -210,6 +210,15 @@ FCN_SLUG_MAP: dict[str, str] = {
     "sext":    "sext",
 }
 
+# Map login slug → schat room display name (for second-room navigation).
+# After login, schat.freechatnow.com uses capitalised room names in the URL.
+SCHAT_ROOM_MAP: dict[str, str] = {
+    "sex":     "SexChat",
+    "adult":   "AdultChat",
+    "singles": "Singles",
+    "sext":    "SextChat",
+}
+
 
 def assign_rooms(count: int, pool: list = FCN_ROOMS) -> list:
     """Assign 2 rooms to each of `count` agents — max 2 agents per room.
@@ -726,60 +735,30 @@ class BotOrchestrator:
             worker.status = "error"
 
     async def _join_second_room(self, worker: BotWorker, room_name: str) -> bool:
-        """After initial login, join a second FCN room via the Rooms panel.
+        """Join a second FCN schat room by navigating directly to its URL.
 
-        The 'button.join' is hidden with CSS at 1280px desktop width, so we
-        force-click it via JS (bypasses display:none visibility check), wait for
-        the panel, then click the target room entry.
+        FCN's roomlist nav has `compact-hide` at 1280px desktop width — there is
+        no visible "Join Room" button to click. Navigating to the room URL on
+        schat.freechatnow.com is the reliable path; Vue Router adds it as a tab
+        in the roomlist alongside the primary room.
         """
         page = worker._page
         if not page:
             return False
         try:
-            # Force-click the hidden Join/Rooms button
-            clicked = await page.evaluate("""
-                (() => {
-                    const btn = document.querySelector('button.join, .btn-join, [data-action="join-room"], [class*=join-room i]');
-                    if (!btn) return false;
-                    // make visible for click (CSS might hide it at desktop width)
-                    const orig = btn.style.cssText;
-                    btn.style.cssText += ';display:block!important;visibility:visible!important;opacity:1!important';
-                    btn.click();
-                    btn.style.cssText = orig;
-                    return true;
-                })()
-            """)
-            if not clicked:
-                logger.info(f"[{worker.agent_id}] join button not found, skipping second room")
-                return False
-            await page.wait_for_timeout(2000)
-
-            # Find the room entry in the panel and click it
-            joined = await page.evaluate("""
-                (roomName) => {
-                    const low = roomName.toLowerCase();
-                    const sels = ['[data-room]', 'a[href*="/room/"]', '[class*=room-item i]',
-                                  '[class*=room-link i]', 'li[class*=room i]'];
-                    for (const sel of sels) {
-                        for (const el of document.querySelectorAll(sel)) {
-                            const txt = (el.textContent || el.getAttribute('data-room') || '').toLowerCase();
-                            const href = (el.getAttribute('href') || '').toLowerCase();
-                            if (txt.includes(low) || href.includes(low)) {
-                                el.click();
-                                return true;
-                            }
-                        }
-                    }
-                    return false;
-                }
-            """, room_name)
-
-            if joined:
-                await page.wait_for_timeout(3000)
-                logger.info(f"[{worker.agent_id}] joined second room: {room_name}")
-            else:
-                logger.info(f"[{worker.agent_id}] room '{room_name}' not found in panel")
-            return joined
+            schat_name = SCHAT_ROOM_MAP.get(room_name.lower(), room_name.capitalize() + "Chat")
+            room_url = f"https://schat.freechatnow.com/room/{schat_name}"
+            logger.info(f"[{worker.agent_id}] joining second room {schat_name!r} via nav")
+            await page.goto(room_url, wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(3000)
+            url_now = page.url or ""
+            if "/room/" in url_now:
+                worker.room = schat_name
+                logger.info(f"[{worker.agent_id}] ✅ second room joined: {schat_name}")
+                await self._dismiss_overlays(page)
+                return True
+            logger.warning(f"[{worker.agent_id}] second room nav ended at {url_now!r}")
+            return False
         except Exception as e:
             logger.warning(f"[{worker.agent_id}] join second room error: {e}")
             return False
@@ -964,19 +943,6 @@ class BotOrchestrator:
         age = random.randint(20, 26)
         birthdate = f"{time.localtime().tm_year - age}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
 
-        # Diagnose the form before touching it — log all selects so we can verify
-        # field names. Read-only evaluate, no injection.
-        try:
-            form_info = await page.evaluate("""() => {
-                const f = document.querySelector('form[action*="login"]');
-                if (!f) return {found: false, forms: Array.from(document.querySelectorAll('form')).map(x=>x.getAttribute('action'))};
-                return {found: true, action: f.getAttribute('action'),
-                    inputs: Array.from(f.querySelectorAll('input,select')).map(e=>({tag:e.tagName,name:e.name,type:e.type}))};
-            }""")
-            logger.info(f"[{worker.agent_id}] form_info: {form_info}")
-        except Exception:
-            pass
-
         # form[action*='login'] — broader match; the action per room is e.g.
         # /chat/sex/login which does NOT contain 'chat/login' as a substring.
         try:
@@ -1011,21 +977,6 @@ class BotOrchestrator:
                 await page.wait_for_timeout(random.randint(65, 215))
             logger.info(f"[{worker.agent_id}] ✓ username '{worker.login_name}'")
 
-            # Diagnostic: re-check form DOM after username entry so we can see if
-            # FCN has mutated or removed any fields.
-            await page.wait_for_timeout(300)
-            try:
-                form_info2 = await page.evaluate("""() => {
-                    const f = document.querySelector('form[action*="login"]');
-                    if (!f) return {found: false, url: location.href};
-                    return {found: true, url: location.href,
-                        inputs: Array.from(f.querySelectorAll('input,select'))
-                            .map(e=>({tag:e.tagName,name:e.name,type:e.type}))};
-                }""")
-                logger.info(f"[{worker.agent_id}] form_info_post_username: {form_info2}")
-            except Exception:
-                pass
-
             # ── Gender ────────────────────────────────────────────────────────
             await page.wait_for_timeout(random.randint(400, 800))
             logger.info(f"[{worker.agent_id}] selecting gender={gval}…")
@@ -1054,18 +1005,6 @@ class BotOrchestrator:
             day_int   = int(day_str)
             year_int  = int(year_str)
             logger.info(f"[{worker.agent_id}] filling birthdate {month_int}/{day_int}/{year_int}…")
-
-            try:
-                sel_opts = await page.evaluate("""() => {
-                    const f = document.querySelector('form[action*="login"]');
-                    return Array.from(f.querySelectorAll('select')).map((s, i) => ({
-                        i, name: s.name,
-                        opts: Array.from(s.options).slice(0,5).map(o=>o.value)
-                    }));
-                }""")
-                logger.info(f"[{worker.agent_id}] select options preview: {sel_opts}")
-            except Exception:
-                pass
 
             form_sel = page.locator("form[action*='login'] select")
             # nth(0)=gender (already done), nth(1)=month, nth(2)=day, nth(3)=year
@@ -1150,10 +1089,29 @@ class BotOrchestrator:
                     return sels.some(s => !!document.querySelector(s));
                 }""")
                 if has_captcha:
-                    logger.warning(f"[{worker.agent_id}] captcha — rotating IP")
-                    worker.phase = "captcha_detected"
-                    page.context.remove_listener("page", _close_all_popups)
-                    return False
+                    logger.warning(f"[{worker.agent_id}] captcha detected tick={_tick} — waiting for BU Cloud auto-solve…")
+                    worker.phase = "captcha_wait"
+                    _captcha_solved = False
+                    for _ in range(3):
+                        await page.wait_for_timeout(6000)
+                        try:
+                            still_captcha = await page.evaluate("""() => {
+                                const sels = ['iframe[src*="hcaptcha"]','iframe[src*="recaptcha"]',
+                                    '.h-captcha','.g-recaptcha','#challenge-form',
+                                    '[data-sitekey]','#cf-challenge-running'];
+                                return sels.some(s => !!document.querySelector(s));
+                            }""")
+                        except Exception:
+                            still_captcha = True
+                        if not still_captcha:
+                            logger.info(f"[{worker.agent_id}] captcha auto-solved ✅")
+                            _captcha_solved = True
+                            break
+                    if not _captcha_solved:
+                        logger.warning(f"[{worker.agent_id}] captcha not solved after 18s — rotating IP")
+                        worker.phase = "captcha_failed"
+                        page.context.remove_listener("page", _close_all_popups)
+                        return False
             except Exception:
                 pass
         page.context.remove_listener("page", _close_all_popups)
