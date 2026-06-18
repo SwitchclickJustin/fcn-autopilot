@@ -407,14 +407,17 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
             q += " AND persona_id = ?"; params.append(persona_id)
         q += " GROUP BY event_type"
     rows = await _fetchall(db, q, params)
-    # distinct DM conversations started in range (dm_conversations is the real source)
-    # started_at is stored as TEXT in dm_conversations — pass string params not datetime objects
-    if USE_NEON:
-        dq = "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations WHERE started_at >= $1 AND started_at < $2 AND other_user <> ''"
-        drows = await _fetchall(db, dq, [s, e])  # use datetime objects for Neon timestamp column
-    else:
-        dq = "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations WHERE started_at >= ? AND started_at < ? AND other_user <> ''"
+    # distinct DM conversations started in range — started_at is TEXT (ISO string), use string params
+    try:
+        dq = ("SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations "
+              "WHERE started_at >= $1 AND started_at < $2 AND other_user <> ''"
+              if USE_NEON else
+              "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations "
+              "WHERE started_at >= ? AND started_at < ? AND other_user <> ''")
         drows = await _fetchall(db, dq, [start, end])
+    except Exception as e:
+        logger.error(f"dm_conversations stats query failed: {e}")
+        drows = []
     await close_db(db)
     counts = {r["event_type"]: r["c"] for r in rows}
     return {
