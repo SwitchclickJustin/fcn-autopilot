@@ -1746,7 +1746,13 @@ class BotOrchestrator:
         persona_id = persona.get("id", "")
 
         # ── Conversion detection (DMs only — group room phrases are false positives) ──
-        recent_text = "\n".join(messages[-6:])
+        # Only scan the GUY's lines — bot's own casual phrases ("got you", "see you there")
+        # would otherwise false-trigger the conversion regex.
+        guy_lines = [
+            m for m in messages[-6:]
+            if ":" in m and m.split(":", 1)[0].strip() != worker.login_name
+        ]
+        recent_text = "\n".join(guy_lines)
         if is_dm and worker.handle_shared and _CONFIRM_RE.search(recent_text):
             try:
                 await db.log_event(persona_id, "conversion", room=worker.room,
