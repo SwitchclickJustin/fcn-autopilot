@@ -5,8 +5,9 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, UploadFile, File, Depends
+from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -74,6 +75,26 @@ async def lifespan(app: FastAPI):
     await browser_manager.stop_session()
 
 app = FastAPI(title="FCN Auto-Pilot", version="0.1.0", lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, max_age=86400 * 30)
+
+# ─── Auth helpers ───
+# Public routes that never require a login
+_PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # Always allow: health check, login page/form, SirenDM webhook, static assets
+    if path in _PUBLIC or path.startswith("/static"):
+        return await call_next(request)
+    if not request.session.get("authed"):
+        if path.startswith("/api/") or path.startswith("/ws"):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    return await call_next(request)
+
+def require_login(request: Request):
+    pass  # kept for legacy references; middleware handles it now
 
 # Static files + templates
 os.makedirs("static", exist_ok=True)
@@ -83,6 +104,51 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 from jinja2 import Environment, FileSystemLoader
 _cache_free_env = Environment(loader=FileSystemLoader("app/templates"), cache_size=0)
 templates = Jinja2Templates(env=_cache_free_env)
+
+# ─── Login / Logout ───
+_LOGIN_HTML = """<!doctype html><html><head><title>FCN Login</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d0d;color:#e8e8e8;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:2.5rem;width:100%;max-width:360px}
+h1{font-size:1.15rem;font-weight:600;margin-bottom:1.5rem;color:#fff}
+label{display:block;font-size:.8rem;color:#888;margin-bottom:.35rem}
+input{width:100%;background:#111;border:1px solid #333;border-radius:8px;padding:.65rem .85rem;color:#fff;font-size:.95rem;outline:none}
+input:focus{border-color:#555}
+.btn{width:100%;margin-top:1.25rem;padding:.7rem;background:#4f7c5f;color:#fff;border:none;border-radius:8px;font-size:.95rem;font-weight:600;cursor:pointer}
+.btn:hover{background:#3d6b4e}
+.err{color:#e05252;font-size:.82rem;margin-top:.75rem}
+.mb{margin-bottom:1rem}
+</style></head><body>
+<div class="card">
+  <h1>FCN Auto-Pilot</h1>
+  <form method="post" action="/login">
+    <div class="mb"><label>Password</label><input type="password" name="password" autofocus placeholder="••••••••"></div>
+    <button class="btn" type="submit">Sign In</button>
+    {error}
+  </form>
+</div></body></html>"""
+
+@app.get("/login")
+async def login_page(request: Request):
+    if request.session.get("authed"):
+        return RedirectResponse("/", status_code=302)
+    return HTMLResponse(_LOGIN_HTML.format(error=""))
+
+@app.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    pw = (form.get("password") or "").strip()
+    if pw == settings.admin_password:
+        request.session["authed"] = True
+        return RedirectResponse("/", status_code=302)
+    return HTMLResponse(_LOGIN_HTML.format(error='<div class="err">Incorrect password.</div>'), status_code=401)
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=302)
 
 # ─── WebSocket connections ───
 connected_websockets: set = set()
