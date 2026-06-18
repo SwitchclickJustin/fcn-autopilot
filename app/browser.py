@@ -1707,14 +1707,8 @@ class BotOrchestrator:
                                         await self._auto_pilot_tick(worker, msgs, client,
                                                                     dm_other_user=other_user)
                                         worker._dms_since_group += 1
-                                        # Wait 10s for a reply — if nothing, move to next DM
-                                        await asyncio.sleep(10)
-                                        follow_msgs = await worker.read_chat()
-                                        follow_count = len(follow_msgs) if follow_msgs else 0
-                                        if follow_count > new_count:
-                                            # He replied — do one more tick immediately
-                                            await self._auto_pilot_tick(worker, follow_msgs, client,
-                                                                        dm_other_user=other_user)
+                                        # Move immediately to next DM — the unseen badge
+                                        # (blink) will bring us back when he responds
                         dm_next = time.monotonic() + random.uniform(2, 4)
                     elif now >= next_send or force_group:
                         # Group room: rotate between all joined rooms on each send
