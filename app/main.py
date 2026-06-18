@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="FCN Auto-Pilot", version="0.1.0", lifespan=lifespan)
 
 # ─── Auth helpers ───
-_PUBLIC = {"/health", "/login", "/api/telegram-conversion", "/debug/logs"}
+_PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
 # ensuring request.session is populated before the auth check executes.
