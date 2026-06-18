@@ -217,17 +217,17 @@ function renderLog() {
     const ts = (r.created_at || '').slice(0, 19).replace('T', ' ');
     const shortTs = ts.slice(11, 19) || ts.slice(0, 16);
     const personaShort = (r.persona_id || '').slice(0, 8);
-    const where = r.msg_type === 'dm'
-      ? `<span style="color:var(--accent);font-size:.75rem">💬 DM → ${esc(r.other_user)}</span>`
-      : `<span style="color:var(--text-dim);font-size:.75rem">🏠 ${esc(r.room || 'room')}</span>`;
-    const typeStyle = r.msg_type === 'dm'
-      ? 'border-left:3px solid var(--accent);padding-left:.5rem'
-      : 'border-left:3px solid var(--border);padding-left:.5rem';
-    return `<div class="chat-msg" style="${typeStyle};margin-bottom:.4rem">
-      <div class="flex gap-1" style="margin-bottom:.2rem;flex-wrap:wrap">
-        <span class="text-sm text-dim">${esc(shortTs)}</span>
-        ${personaShort ? `<span class="text-sm text-dim" style="font-family:monospace">${esc(personaShort)}…</span>` : ''}
-        ${where}
+    const isDm = r.msg_type === 'dm';
+    const badge = isDm
+      ? `<span style="background:#3b4fd8;color:#fff;font-size:.65rem;font-weight:700;padding:.1rem .45rem;border-radius:4px;letter-spacing:.03em">DM</span> <span style="font-size:.78rem;color:#a0aaff">→ ${esc(r.other_user)}</span>`
+      : `<span style="background:#2a4a2a;color:#7dce7d;font-size:.65rem;font-weight:700;padding:.1rem .45rem;border-radius:4px;letter-spacing:.03em">ROOM</span> <span style="font-size:.78rem;color:var(--text-dim)">${esc(r.room || 'room')}</span>`;
+    const typeStyle = isDm
+      ? 'border-left:3px solid #3b4fd8;padding-left:.5rem;background:rgba(59,79,216,.06);border-radius:0 4px 4px 0'
+      : 'border-left:3px solid #2a6b2a;padding-left:.5rem;background:rgba(42,107,42,.05);border-radius:0 4px 4px 0';
+    return `<div class="chat-msg" style="${typeStyle};margin-bottom:.4rem;padding:.35rem .5rem">
+      <div class="flex gap-1" style="margin-bottom:.2rem;flex-wrap:wrap;align-items:center">
+        ${badge}
+        <span class="text-sm text-dim" style="margin-left:auto">${esc(shortTs)}</span>
       </div>
       <div style="font-size:.88rem">${esc(r.content)}</div>
     </div>`;

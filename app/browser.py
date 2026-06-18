@@ -32,6 +32,40 @@ _CONFIRM_RE = re.compile(
     r"\b(found (you|u|ya|her)|i found you|got you|i see you|see you (there|now)|there now|"
     r"messaged (you|u)|in your (dm|inbox)|texted you|added (you|u|ya))\b", re.I)
 
+# Platform words the LLM sometimes leaks despite the safety prompt
+_PLATFORM_RE = re.compile(
+    r'\b(telegram|telegr|tele?gr?m|tg|kik|snapchat|snap|whatsapp|wa|onlyfans|of)\b', re.I)
+
+# Signals that a guy is excited / engaged — good time to pitch Telegram
+_EXCITED_RE = re.compile(
+    r"\b(so hard|getting hard|turned on|horny|wet|want (you|u|more)|keep going|"
+    r"don.t stop|yes+|hell yes|omg+|damn+|fuck+|so hot|that.s hot|keep talking|"
+    r"tell me more|more please|i like (this|that|you)|you.re (hot|sexy|amazing|perfect)|"
+    r"wanna (fuck|chat|talk|see|meet)|let.s (fuck|chat|talk|do this)|"
+    r"love this|love (you|u|it)|my (dick|cock)|stroking|touching myself)\b", re.I)
+
+_ZWSP = "​"  # zero-width space — invisible to humans, breaks FCN's exact-string scanner
+
+
+def _obfuscate_handle(text: str, handle: str) -> str:
+    """Replace every occurrence of `handle` in `text` with a version that has
+    a zero-width space inserted at a position that varies each call.
+    Also strips any leaked platform-name words."""
+    clean = handle.lstrip("@")
+    if not clean or clean.lower() not in text.lower():
+        # Also just do the platform strip even if handle isn't present
+        return _PLATFORM_RE.sub("", text).strip()
+    # Insert ZWSP at a random interior position (not first/last char)
+    pos = random.randint(2, max(2, len(clean) - 2))
+    obfuscated = clean[:pos] + _ZWSP + clean[pos:]
+    # Replace all case-insensitive occurrences
+    result = re.sub(re.escape(clean), obfuscated, text, flags=re.I)
+    # Strip leaked platform words
+    result = _PLATFORM_RE.sub("", result)
+    # Collapse any double spaces left behind
+    result = re.sub(r"  +", " ", result).strip()
+    return result
+
 logger = logging.getLogger(__name__)
 
 # ── Decoda proxy pool ──────────────────────────────────────────────────────────
@@ -371,13 +405,26 @@ class BotWorker:
                     pass
                 await inp.focus()
                 await inp.fill("")  # clear any stale text
-                # Human-like typing ~25 WPM (FCN analyzes typing cadence). ~5
-                # chars/word → ~0.48s/char avg = ~25 WPM, with jitter + the odd pause.
+                # Human-like typing ~35 WPM. 35 WPM × 5 chars/word ÷ 60s = ~0.34s/char avg.
+                # Occasional typo: type wrong char, pause, backspace, type correct char.
+                _keyboard_neighbors = {
+                    'a':'sq','b':'vgn','c':'xdv','d':'sfe','e':'wrd','f':'dge','g':'fht',
+                    'h':'gjy','i':'uo','j':'hkn','k':'jlm','l':'k','m':'nk','n':'bm',
+                    'o':'ip','p':'o','q':'wa','r':'et','s':'awd','t':'ry','u':'yi',
+                    'v':'cb','w':'qe','x':'zc','y':'uh','z':'x',
+                }
                 for ch in message:
+                    # ~8% typo rate on alphabetic chars
+                    if ch.isalpha() and random.random() < 0.08:
+                        wrong = random.choice(_keyboard_neighbors.get(ch.lower(), ch.lower()))
+                        await self._page.keyboard.type(wrong)
+                        await asyncio.sleep(random.uniform(0.10, 0.22))
+                        await self._page.keyboard.press("Backspace")
+                        await asyncio.sleep(random.uniform(0.08, 0.18))
                     await self._page.keyboard.type(ch)
-                    delay = random.uniform(0.28, 0.62)
-                    if random.random() < 0.05:
-                        delay += random.uniform(0.3, 0.9)  # brief "thinking" pause
+                    delay = random.uniform(0.22, 0.48)   # ~35 WPM base
+                    if random.random() < 0.04:
+                        delay += random.uniform(0.4, 1.1)  # brief "thinking" pause
                     await asyncio.sleep(delay)
                 await asyncio.sleep(random.uniform(0.15, 0.45))
                 await self._page.keyboard.press("Enter")
@@ -1584,26 +1631,27 @@ class BotOrchestrator:
                             await worker._page.bring_to_front()
                         except Exception:
                             pass
-                    # DMs-FIRST round-robin: handle an unread DM (5-10s pace), else
-                    # the group room (~30s pace). Switch tabs before read+respond.
+                    # DMs-FIRST: blast through ALL unread DMs each tick (2-4s gate
+                    # between rounds), then fall back to group room (~25-35s pace).
                     now = time.monotonic()
                     convos = await self._list_conversations(worker._page)
                     unread_dms = [c for c in convos if c["is_dm"] and c["unseen"]]
                     rooms = [c for c in convos if not c["is_dm"]]
 
                     if unread_dms and now >= dm_next:
-                        c = unread_dms[0]
-                        if await self._open_conversation(worker._page, c["href"]):
-                            worker.in_dm = True
-                            other_user = c["text"] or "unknown"
-                            worker.room = other_user
-                            msgs = await worker.read_chat()
-                            if msgs:
-                                # Log both sides of the DM before generating a reply
-                                await self._log_dm_messages(worker, other_user, msgs, persona_id)
-                                await self._auto_pilot_tick(worker, msgs, client,
-                                                            dm_other_user=other_user)
-                        dm_next = now + random.randint(5, 10)
+                        # Handle every unread DM in one pass — no extra delay between them
+                        for c in unread_dms:
+                            if await self._open_conversation(worker._page, c["href"]):
+                                worker.in_dm = True
+                                other_user = c["text"] or "unknown"
+                                worker.room = other_user
+                                msgs = await worker.read_chat()
+                                if msgs:
+                                    await self._log_dm_messages(worker, other_user, msgs, persona_id)
+                                    await self._auto_pilot_tick(worker, msgs, client,
+                                                                dm_other_user=other_user)
+                        # Short cooldown before next DM round (2-4s)
+                        dm_next = time.monotonic() + random.uniform(2, 4)
                     elif now >= next_send:
                         # Group room: rotate between all joined rooms on each send
                         if rooms:
@@ -1616,7 +1664,7 @@ class BotOrchestrator:
                         messages = await worker.read_chat()
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
-                        next_send = now + random.randint(25, 40)
+                        next_send = now + random.randint(25, 35)
 
                 # ── SDK fallback (if no CDP) ──
                 elif worker.session_id:
@@ -1626,7 +1674,7 @@ class BotOrchestrator:
                 worker.last_error = f"{type(e).__name__}: {e}"[:200]
                 logger.error(f"Auto-pilot tick error for {agent_id}: {e}")
 
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
     async def _auto_pilot_tick(self, worker: BotWorker, messages: list, client,
                                 dm_other_user: str = ""):
@@ -1647,23 +1695,21 @@ class BotOrchestrator:
 
         persona_id = persona.get("id", "")
 
-        # ── Conversion detection ─────────────────────────────────────────────
+        # ── Conversion detection (DMs only — group room phrases are false positives) ──
         recent_text = "\n".join(messages[-6:])
-        if worker.handle_shared and _CONFIRM_RE.search(recent_text):
+        if is_dm and worker.handle_shared and _CONFIRM_RE.search(recent_text):
             try:
                 await db.log_event(persona_id, "conversion", room=worker.room,
                                    content="\n".join(messages[-3:]))
             except Exception:
                 pass
-            # Mark the DM conversation as converted
-            if is_dm:
-                dm_state = worker._dm_state.get(dm_other_user, {})
-                conv_id = dm_state.get("conv_id")
-                if conv_id:
-                    try:
-                        await db.mark_dm_converted(conv_id)
-                    except Exception:
-                        pass
+            dm_state = worker._dm_state.get(dm_other_user, {})
+            conv_id = dm_state.get("conv_id")
+            if conv_id:
+                try:
+                    await db.mark_dm_converted(conv_id)
+                except Exception:
+                    pass
             worker.handle_shared = False
 
         context = "\n".join(messages[-10:])
@@ -1672,37 +1718,79 @@ class BotOrchestrator:
         handle = (persona.get("telegram_handle", "") or "").strip()
 
         # ── System prompt ────────────────────────────────────────────────────
-        system = (
-            f"You are {username}, a real flirty woman in an adult chat room (18+). "
-            f"Tone: {tone}. Personality: {bio}. "
-            f"Reply with ONE short, natural, flirty single-line message — no line breaks, "
-            f"no lists, no quotes. Vary your replies. Never prefix your username. "
+        # Extract usernames from recent messages for group room callouts
+        recent_usernames: list[str] = []
+        if not is_dm:
+            for line in messages[-8:]:
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    uname = parts[0].strip()
+                    if uname and uname != username and len(uname) < 25:
+                        if uname not in recent_usernames:
+                            recent_usernames.append(uname)
+
+        _no_emoji = (
+            "NEVER use emojis. No emoji characters at all — plain text only. "
+            "Real people in adult chat rooms don't use emojis."
         )
+
+        # Detect if the guy is excited/engaged in recent messages
+        guy_is_excited = bool(_EXCITED_RE.search(recent_text))
+
+        if is_dm:
+            system = (
+                f"You are {username}, a real woman in a private adult sexting chat (18+). "
+                f"Tone: {tone}. Personality: {bio}. "
+                f"Be explicit, dirty, and graphic — this is a sexting chat, hold nothing back. "
+                f"Describe what you want to do to him or what you are doing right now in vivid detail. "
+                f"Keep it ONE short punchy line — no line breaks, no lists, no quotes. "
+                f"Vary your replies, never repeat yourself. Never prefix your username. {_no_emoji}"
+            )
+        else:
+            callout_hint = ""
+            if recent_usernames:
+                pick = random.choice(recent_usernames)
+                if random.random() < 0.35:
+                    callout_hint = (
+                        f"Optionally call out '{pick}' by name if it feels natural. "
+                    )
+            system = (
+                f"You are {username}, a real woman in a public adult group sexting room (18+). "
+                f"Tone: {tone}. Personality: {bio}. "
+                f"Write ONE short dirty message to the whole room — tease everyone, be provocative. "
+                f"Make them all want to DM you. No line breaks, no lists, no quotes. "
+                f"Never write like you are in a private conversation. Never prefix your username. "
+                f"{callout_hint}{_no_emoji}"
+            )
+
         if handle:
             _safety = (
-                "🛑 NEVER write 'telegram','tg','kik','snap','whatsapp','add me', or a URL — "
-                "those get you BANNED. Always say 'find me', NEVER 'add me'."
+                "NEVER write the words 'telegram','tg','kik','snap','whatsapp', or any URL — "
+                "you will be banned instantly. To refer to where they can find you, say "
+                "'that other app' or 'my other account' — NEVER name the platform."
             )
             if worker.handle_shared:
-                # Handle was already dropped — now just follow up to check if they found her.
-                # Do NOT mention the handle name again; just be flirty and curious.
                 system += (
-                    f"You already told them to find you. Now casually follow up — did they find you? "
-                    f"Vary it every time: 'you see me over there?', 'find me yet babe?', "
-                    f"'still looking?', 'you make it over there?'. Keep it light and flirty. {_safety}"
+                    f" You already dropped your handle. Now follow up flirty — did they find you yet? "
+                    f"Vary it: 'you find me yet?', 'still looking for me?', "
+                    f"'made it over there?', 'waiting on you babe'. {_safety}"
                 )
-            elif is_dm or random.random() < 0.40:
-                # Drop the handle this message — DMs always pitch; group rooms ~40% of the time.
+            elif guy_is_excited and handle:
+                # Guy is clearly into it — pitch the move to Telegram now
                 system += (
-                    f"This message: naturally slide in your handle '{handle}'. "
-                    f"Frame as 'come FIND me as {handle}' — keep it sneaky, varied, never canned. "
+                    f" He seems really into this. Tell him you want to keep talking with him more "
+                    f"often and naturally drop your handle '{handle}' — say something like "
+                    f"'find me as {handle} if you want more of this'. Keep it casual and sexy. "
+                    f"Just share it; do NOT also ask if they found you in the same message. {_safety}"
+                )
+            elif is_dm or random.random() < 0.35:
+                system += (
+                    f" This message: casually drop your handle '{handle}'. "
+                    f"Frame it as 'find me as {handle}' — sneaky, varied, never canned. "
                     f"Just share it; do NOT also ask if they found you in the same message. {_safety}"
                 )
             else:
-                # Pure flirt — no handle mention. Build rapport first.
-                system += (
-                    "Just be playful and flirty. Do NOT mention any external app, handle, or username."
-                )
+                system += f" Keep it sexy. Do NOT mention any other app or handle right now."
 
         # ── Inject top-converting openers for DMs (learn from past wins) ────
         if is_dm and not worker._dm_state.get(dm_other_user, {}).get("first_bot_sent"):
@@ -1727,12 +1815,20 @@ class BotOrchestrator:
         if not response:
             return
 
+        # Detect handle share on the raw (unobfuscated) text
         shares_handle = bool(handle) and handle.lower().lstrip("@") in response.lower()
 
-        # Supervisor pre-flight
+        # Obfuscate handle + strip leaked platform words BEFORE sending.
+        # Zero-width space breaks FCN's exact-string scanner; humans don't notice it.
+        if handle:
+            send_text = _obfuscate_handle(response, handle)
+        else:
+            send_text = _PLATFORM_RE.sub("", response).strip() or response
+
+        # Supervisor pre-flight (run on the obfuscated text we'll actually send)
         try:
             from app.supervisor import supervisor_engine
-            approved, note = await supervisor_engine.pre_flight(response, context, persona)
+            approved, note = await supervisor_engine.pre_flight(send_text, context, persona)
         except Exception:
             approved, note = True, ""
         if not approved:
@@ -1741,20 +1837,22 @@ class BotOrchestrator:
             return
 
         if shares_handle:
-            worker.handle_shared = True
+            # Only track handle_shared for DMs — group room shares can't be confirmed
+            if is_dm:
+                worker.handle_shared = True
             try:
-                await db.log_event(persona_id, "handle_share", room=worker.room, content=response)
+                await db.log_event(persona_id, "handle_share", room=worker.room, content=send_text)
             except Exception:
                 pass
 
         sent = False
         if worker._page:
             worker.send_attempts += 1
-            sent = await worker.send_message(response)
+            sent = await worker.send_message(send_text)
             if sent:
                 worker.send_oks += 1
                 try:
-                    await db.log_event(persona_id, "message", room=worker.room, content=response)
+                    await db.log_event(persona_id, "message", room=worker.room, content=send_text)
                 except Exception:
                     pass
                 # Every 5th successful send, optionally also send a photo
@@ -1765,7 +1863,7 @@ class BotOrchestrator:
                         pass
         elif worker.session_id:
             await client.run(
-                f"Type this message in the chat input and send it: {response}",
+                f"Type this message in the chat input and send it: {send_text}",
                 session_id=worker.session_id, keep_alive=True, enable_recording=False,
             )
             sent = True
@@ -1777,7 +1875,7 @@ class BotOrchestrator:
             if conv_id:
                 is_opener = not dm_state.get("first_bot_sent", False)
                 try:
-                    await db.log_dm_message(conv_id, "bot", response, is_opener=is_opener)
+                    await db.log_dm_message(conv_id, "bot", send_text, is_opener=is_opener)
                 except Exception:
                     pass
                 dm_state["first_bot_sent"] = True

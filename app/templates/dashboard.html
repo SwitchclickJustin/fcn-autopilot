@@ -358,5 +358,21 @@ function onStatsRange(){
 connectWS();
 loadStats();
 setInterval(loadStats,20000);
+
+// Restore live agents if they are already running when the page loads
+(async function initDashboard(){
+  try{
+    const d=await(await fetch('/api/session/state')).json();
+    const agents=d.agents||[];
+    if(agents.length>0){
+      buildAgentGrid(agents);
+      document.getElementById('btn-start').style.display='none';
+      document.getElementById('btn-stop').style.display='inline-flex';
+      document.getElementById('status-text').textContent=`🟢 ${agents.length} agent${agents.length>1?'s':''} live`;
+      setAutoPilotUI(true);
+      startPolling();
+    }
+  }catch(e){}
+})();
 </script>
 {% endblock %}

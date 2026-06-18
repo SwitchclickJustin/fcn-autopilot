@@ -948,6 +948,52 @@ async def debug_events(limit: int = 40):
     return [{"type": r.get("event_type"), "room": r.get("room"), "user": r.get("other_user"),
              "content": r.get("content"), "at": str(r.get("created_at"))} for r in rows]
 
+@app.get("/api/conversion-context")
+async def conversion_context():
+    """Return the most recent conversion event + full DM thread for that conversation."""
+    import app.database as _db
+    db = await _db.get_db()
+    # Get most recent conversion event
+    if _db.USE_NEON:
+        conv_rows = await _db._fetchall(db,
+            "SELECT * FROM bot_events WHERE event_type='conversion' ORDER BY id DESC LIMIT 1", [])
+    else:
+        conv_rows = await _db._fetchall(db,
+            "SELECT * FROM bot_events WHERE event_type='conversion' ORDER BY id DESC LIMIT 1", [])
+    if not conv_rows:
+        await _db.close_db(db)
+        return {"error": "no conversions yet"}
+    ev = conv_rows[0]
+    persona_id = ev.get("persona_id", "")
+    other_user = ev.get("room", "")  # room field holds the DM username at conversion time
+    # Find the dm_conversation for this pair
+    if _db.USE_NEON:
+        c_rows = await _db._fetchall(db,
+            "SELECT * FROM dm_conversations WHERE persona_id=$1 AND other_user=$2 ORDER BY started_at DESC LIMIT 1",
+            [persona_id, other_user])
+    else:
+        c_rows = await _db._fetchall(db,
+            "SELECT * FROM dm_conversations WHERE persona_id=? AND other_user=? ORDER BY started_at DESC LIMIT 1",
+            [persona_id, other_user])
+    thread = []
+    if c_rows:
+        conv_id = c_rows[0].get("id")
+        if _db.USE_NEON:
+            msg_rows = await _db._fetchall(db,
+                "SELECT sender, content, ts FROM dm_messages WHERE conv_id=$1 ORDER BY ts ASC", [conv_id])
+        else:
+            msg_rows = await _db._fetchall(db,
+                "SELECT sender, content, ts FROM dm_messages WHERE conv_id=? ORDER BY ts ASC", [conv_id])
+        thread = [{"from": r.get("sender"), "msg": r.get("content"), "at": str(r.get("ts"))} for r in msg_rows]
+    await _db.close_db(db)
+    return {
+        "conversion_at": str(ev.get("created_at")),
+        "persona_id": persona_id,
+        "other_user": other_user,
+        "conversion_snippet": ev.get("content", ""),
+        "full_thread": thread,
+    }
+
 @app.get("/debug/screenshot")
 async def debug_screenshot():
     """Real CDP screenshot of the live session's page (vs the live-view stream)."""

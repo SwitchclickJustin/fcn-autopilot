@@ -407,11 +407,11 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
             q += " AND persona_id = ?"; params.append(persona_id)
         q += " GROUP BY event_type"
     rows = await _fetchall(db, q, params)
-    # distinct DM users in range
+    # distinct DM conversations started in range (dm_conversations is the real source)
     if USE_NEON:
-        dq = "SELECT COUNT(DISTINCT other_user) AS c FROM bot_events WHERE event_type='dm' AND created_at >= $1 AND created_at < $2 AND other_user <> ''"
+        dq = "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations WHERE started_at >= $1 AND started_at < $2 AND other_user <> ''"
     else:
-        dq = "SELECT COUNT(DISTINCT other_user) AS c FROM bot_events WHERE event_type='dm' AND created_at >= ? AND created_at < ? AND other_user <> ''"
+        dq = "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations WHERE started_at >= ? AND started_at < ? AND other_user <> ''"
     drows = await _fetchall(db, dq, [s, e])
     await close_db(db)
     counts = {r["event_type"]: r["c"] for r in rows}
