@@ -1635,7 +1635,7 @@ async def siren_dm_webhook(request: Request):
         "source": "siren_dm",
     })
 
-    await db.log_event(persona_id, "telegram_conversion", room="telegram", content=content)
+    await log_event(persona_id, "telegram_conversion", room="telegram", content=content)
 
     logger.info(f"[siren_dm] telegram_conversion: @{fan_username} ({fan_name}) via {agent_name}")
     return {"ok": True, "logged": fan_username or fan_name}
