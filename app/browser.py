@@ -1884,6 +1884,15 @@ class BotOrchestrator:
                     )
 
             elif phase == "engage":
+                # Age compliment — if he's older and came in sexual, compliment the age
+                age_compliment = ""
+                if partner_age and partner_age >= 35 and guy_is_excited:
+                    age_compliment = (
+                        f"He is {partner_age} and came in hot/sexual. "
+                        f"Compliment his age first: 'okay i love that you are {partner_age}' or 'older men know what they want'. "
+                        f"Then mirror his energy back at him. "
+                    )
+
                 # Geographic connection — try to match his city/state if mentioned
                 geo_hint = (
                     "If he mentioned a state or city, respond with genuine excitement about that specific city — "
@@ -1892,10 +1901,11 @@ class BotOrchestrator:
                     "if California → 'omg i love LA', if Florida → 'florida boys are fun', etc. "
                     "Then follow with a short tease like 'not sure you can handle this though' or "
                     "'can you handle this spicy latina?' to keep him hooked. "
+                    "If no location mentioned, be flirty and ask what he wants. "
                 )
                 system = (
                     f"You are {username}, a fun flirty woman from Miami in a private chat (18+). "
-                    f"Personality: {bio}. {username_hint}{age_hint}{country_hint}"
+                    f"Personality: {bio}. {username_hint}{age_compliment}{age_hint}{country_hint}"
                     f"{geo_hint}"
                     f"ONE short punchy line — natural, playful, a little cocky. "
                     f"No line breaks, no quotes. Never prefix your username. {_no_emoji}"
