@@ -1808,17 +1808,27 @@ class BotOrchestrator:
             if bot_count >= 15 and not (guy_asking_telegram or guy_is_excited or worker.handle_shared):
                 return  # hard stop — not converting, move on
 
-            # Determine phase: pitch TG early (message 3+) when there's engagement
-            # Geography connection on message 2-3, tease on 3-4, pitch on 4-6
+            # Detect inbound-from-broadcast: guy says "can i watch", "i want to watch",
+            # "where", "found you" etc in first 1-2 messages — he came from group room ad
+            first_msgs = "\n".join(messages[:4])
+            inbound_from_broadcast = bool(re.search(
+                r"\b(can i watch|i want to watch|where can i|how do i find|found you|"
+                r"add me|i'm interested|watching|squirt|let me watch|i wanna watch)\b",
+                first_msgs, re.I
+            ))
+
+            # Determine phase
             handle_ready = bool(handle)
             if guy_asking_telegram or worker.handle_shared:
                 phase = "convert"
+            elif inbound_from_broadcast and bot_count >= 1:
+                phase = "convert"    # came from broadcast — skip warmup, push TG immediately
             elif (guy_is_excited or bot_count >= 4) and handle_ready:
-                phase = "convert"    # pitch TG as soon as he's warm
+                phase = "convert"    # warm enough — pitch TG
             elif bot_count >= 12:
-                phase = "exit"       # hard exit with final pitch
+                phase = "exit"       # final urgency pitch
             elif bot_count >= 2:
-                phase = "engage"     # geographic connection + tease + light sext
+                phase = "engage"     # geographic connection + tease
             else:
                 phase = "warmup"     # opener + location ask
 
@@ -1859,12 +1869,19 @@ class BotOrchestrator:
                 )
 
             if phase == "warmup":
-                system = (
-                    f"You are {username}, a real woman starting a private chat (18+). "
-                    f"Personality: {bio}. {username_hint}{age_hint}{country_hint}"
-                    f"Say 'hey love.. where ya from?' or a short casual flirty variation — location ask in the opener. "
-                    f"One short line only. No line breaks, no lists, no quotes. Never prefix your username. {_no_emoji}"
-                )
+                if inbound_from_broadcast:
+                    system = (
+                        f"You are {username}. He just DMed you after seeing your broadcast about watching you. "
+                        f"Respond with excitement — 'oh yeah' or 'yes baby' or 'of course' — short confirm. "
+                        f"ONE word or short phrase only. Never prefix your username. {_no_emoji}"
+                    )
+                else:
+                    system = (
+                        f"You are {username}, a real woman starting a private chat (18+). "
+                        f"Personality: {bio}. {username_hint}{age_hint}{country_hint}"
+                        f"Say 'hey love.. where ya from?' or a short casual flirty variation — location ask in the opener. "
+                        f"One short line only. No line breaks, no lists, no quotes. Never prefix your username. {_no_emoji}"
+                    )
 
             elif phase == "engage":
                 # Geographic connection — try to match his city/state if mentioned
@@ -1899,12 +1916,20 @@ class BotOrchestrator:
 
             elif phase == "convert":
                 if worker.handle_shared:
-                    system = (
-                        f"You are {username}. You already told him your TG handle. "
-                        f"Follow up — did he find you yet? Vary it: "
-                        f"'you find me yet?', 'still looking?', 'waiting on you baby', 'made it over yet?'. "
-                        f"ONE line. {_no_emoji} {_safety}"
-                    )
+                    # Escalate urgency based on how many follow-ups already sent
+                    if bot_count >= 8:
+                        system = (
+                            f"You are {username}. You gave him your TG handle and he hasn't shown up. "
+                            f"Send a final urgent message — 'last chance', 'i'm removing you', "
+                            f"'spots are filling up', 'last one i promise'. ONE line. {_no_emoji} {_safety}"
+                        )
+                    else:
+                        system = (
+                            f"You are {username}. You already told him your TG handle. "
+                            f"Follow up — did he find you yet? Vary it: "
+                            f"'you find me yet?', 'still looking?', 'waiting on you baby', 'well did you find me?'. "
+                            f"ONE line. {_no_emoji} {_safety}"
+                        )
                 else:
                     tg_phrases = [
                         f"if you want to party some time, find me on that TG — i'm {handle}",
