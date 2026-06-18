@@ -408,11 +408,13 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
         q += " GROUP BY event_type"
     rows = await _fetchall(db, q, params)
     # distinct DM conversations started in range (dm_conversations is the real source)
+    # started_at is stored as TEXT in dm_conversations — pass string params not datetime objects
     if USE_NEON:
         dq = "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations WHERE started_at >= $1 AND started_at < $2 AND other_user <> ''"
+        drows = await _fetchall(db, dq, [start, end])
     else:
         dq = "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations WHERE started_at >= ? AND started_at < ? AND other_user <> ''"
-    drows = await _fetchall(db, dq, [s, e])
+        drows = await _fetchall(db, dq, [start, end])
     await close_db(db)
     counts = {r["event_type"]: r["c"] for r in rows}
     return {
