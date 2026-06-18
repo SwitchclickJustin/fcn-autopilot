@@ -121,6 +121,20 @@
   </div>
 </div>
 
+<!-- Photo Gallery (shown when a persona is selected) -->
+<div class="card" id="photo-card" style="display:none;margin-top:.75rem">
+  <div class="flex" style="margin-bottom:.75rem;align-items:center">
+    <div class="card-title" style="margin:0" id="photo-card-title">Photos</div>
+    <label class="btn btn-secondary btn-sm ml-auto" style="cursor:pointer">
+      📷 Upload Photo
+      <input type="file" id="photo-upload" accept="image/*" style="display:none" onchange="uploadPhoto(this)">
+    </label>
+  </div>
+  <div id="photo-grid" style="display:flex;flex-wrap:wrap;gap:.5rem">
+    <p class="empty" style="width:100%">No photos yet.</p>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script>
@@ -224,8 +238,10 @@ async function editPersona(id) {
     document.getElementById('p-proxy-custom').value = p.proxy_custom || '';
     document.getElementById('p-ua').value = p.user_agent || 'random';
     if (p.default_tone) document.getElementById('p-tone').value = p.default_tone;
+    document.getElementById('photo-card-title').textContent = `Photos — ${p.name}`;
     window.scrollTo({top: 0, behavior: 'smooth'});
     toast('✏️ Editing persona');
+    await loadPhotos(p.id);
   } catch(e) {
     toast('Error loading persona: ' + e.message);
   }
@@ -236,6 +252,57 @@ function clearForm() {
   document.getElementById('p-id').value = '';
   document.getElementById('persona-form').reset();
   document.getElementById('p-gender').value = 'f';
+  document.getElementById('photo-card').style.display = 'none';
+}
+
+// ── Photo Gallery ─────────────────────────────────────────────────────────────
+let _photoPersonaId = '';
+
+async function loadPhotos(personaId) {
+  _photoPersonaId = personaId;
+  const card = document.getElementById('photo-card');
+  card.style.display = 'block';
+  const grid = document.getElementById('photo-grid');
+  grid.innerHTML = '<p class="text-dim text-sm">Loading…</p>';
+  try {
+    const photos = await (await fetch(`/api/personas/${personaId}/photos`)).json();
+    if (!photos.length) {
+      grid.innerHTML = '<p class="empty" style="width:100%">No photos yet.</p>';
+      return;
+    }
+    grid.innerHTML = photos.map(p => `
+      <div style="position:relative;display:inline-block">
+        <img src="/api/personas/${personaId}/photos/${p.id}/preview"
+             style="width:100px;height:100px;object-fit:cover;border-radius:var(--radius);border:1px solid var(--border)"
+             loading="lazy">
+        <button onclick="deletePhoto('${p.id}')"
+                style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:.7rem;cursor:pointer;line-height:1;padding:0"
+                title="Delete">✕</button>
+      </div>`).join('');
+  } catch(e) {
+    grid.innerHTML = `<p class="text-red text-sm">Error: ${e.message}</p>`;
+  }
+}
+
+async function uploadPhoto(input) {
+  if (!_photoPersonaId || !input.files.length) return;
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  try {
+    const r = await fetch(`/api/personas/${_photoPersonaId}/photos`, { method: 'POST', body: fd });
+    if (r.ok) { toast('Photo uploaded!'); await loadPhotos(_photoPersonaId); }
+    else { toast('Upload failed'); }
+  } catch(e) { toast('Error: ' + e.message); }
+  input.value = '';
+}
+
+async function deletePhoto(photoId) {
+  if (!confirm('Delete this photo?')) return;
+  try {
+    await fetch(`/api/personas/${_photoPersonaId}/photos/${photoId}`, { method: 'DELETE' });
+    await loadPhotos(_photoPersonaId);
+    toast('Photo deleted');
+  } catch(e) { toast('Error: ' + e.message); }
 }
 </script>
 {% endblock %}

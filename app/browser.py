@@ -401,6 +401,39 @@ class BotWorker:
             await asyncio.sleep(0.5)
         return await _sent()
 
+    async def send_photo(self, photo_b64: str, filename: str, mime_type: str = "image/jpeg") -> bool:
+        """Send a photo via drag-and-drop into the FCN chat area."""
+        if not photo_b64 or not self._page:
+            return False
+        try:
+            result = await self._page.evaluate("""
+                async (b64, fname, mtype) => {
+                    try {
+                        const binary = atob(b64);
+                        const bytes = new Uint8Array(binary.length);
+                        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                        const blob = new Blob([bytes], { type: mtype });
+                        const file = new File([blob], fname, { type: mtype });
+                        const dt = new DataTransfer();
+                        dt.items.add(file);
+                        const target = document.querySelector('.room-messages-container') ||
+                                       document.querySelector('.writer') ||
+                                       document.querySelector('input.writer-input');
+                        if (!target) return false;
+                        target.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true }));
+                        await new Promise(r => setTimeout(r, 200));
+                        target.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
+                        await new Promise(r => setTimeout(r, 100));
+                        target.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+                        return true;
+                    } catch(e) { return false; }
+                }
+            """, photo_b64, filename, mime_type)
+            return bool(result)
+        except Exception as e:
+            logger.warning(f"[{self.username}] send_photo failed: {e}")
+            return False
+
     def to_dict(self):
         return {
             "agent_id": self.agent_id,
@@ -1724,6 +1757,12 @@ class BotOrchestrator:
                     await db.log_event(persona_id, "message", room=worker.room, content=response)
                 except Exception:
                     pass
+                # Every 5th successful send, optionally also send a photo
+                if persona_id and worker.send_oks % 5 == 0:
+                    try:
+                        await self._maybe_send_photo(worker, persona_id)
+                    except Exception:
+                        pass
         elif worker.session_id:
             await client.run(
                 f"Type this message in the chat input and send it: {response}",
@@ -1743,6 +1782,32 @@ class BotOrchestrator:
                     pass
                 dm_state["first_bot_sent"] = True
                 dm_state["logged_count"] = dm_state.get("logged_count", 0) + 1
+
+    async def _maybe_send_photo(self, worker: BotWorker, persona_id: str) -> bool:
+        """Optionally send a random persona photo after a text message.
+
+        Returns True if a photo was dispatched (regardless of success).
+        """
+        try:
+            photos = await db.get_persona_photos(persona_id)
+            if not photos:
+                return False
+            chosen_meta = random.choice(photos)
+            photo = await db.get_persona_photo(chosen_meta["id"])
+            if not photo or not photo.get("data"):
+                return False
+            sent = await worker.send_photo(
+                photo["data"],
+                photo.get("filename") or "photo.jpg",
+                photo.get("mime_type") or "image/jpeg",
+            )
+            if sent:
+                logger.info(f"[{worker.agent_id}] photo sent: {chosen_meta.get('filename','?')}")
+                await asyncio.sleep(2)
+            return sent
+        except Exception as e:
+            logger.warning(f"[{worker.agent_id}] _maybe_send_photo error: {e}")
+            return False
 
     async def _sdk_auto_pilot_tick(self, worker: BotWorker, client):
         """SDK-agent auto-pilot fallback (when CDP is unavailable)."""

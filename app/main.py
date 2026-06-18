@@ -5,8 +5,8 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -20,6 +20,8 @@ from app.database import (
     log_chat, get_chat_log, get_ban_events, get_rules,
     get_stats, log_event, get_recent_events,
     get_dm_conversations, get_dm_thread, get_top_converting_openers,
+    get_agent_messages,
+    add_persona_photo, get_persona_photos, get_persona_photo, delete_persona_photo,
 )
 from app.models import PersonaCreate, PersonaUpdate, LLMProviderCreate, new_id
 from app.providers import provider_registry
@@ -1482,6 +1484,59 @@ async def api_dm_thread(conv_id: str):
 async def api_top_openers(persona_id: str = "", limit: int = 10):
     """Openers ranked by conversion rate — use to understand what works."""
     return await get_top_converting_openers(persona_id=persona_id, limit=limit)
+
+# ─── API: Agent Messages ───
+@app.get("/api/agent-messages")
+async def api_agent_messages(limit: int = 200, persona_id: str = ""):
+    """Merged feed of group-room + DM messages sent by the bot, sorted newest first."""
+    rows = await get_agent_messages(limit=limit, persona_id=persona_id)
+    # Stringify datetime objects for JSON serialisation
+    for r in rows:
+        if hasattr(r.get("created_at"), "isoformat"):
+            r["created_at"] = r["created_at"].isoformat()
+    return rows
+
+# ─── API: Persona Photos ───
+@app.post("/api/personas/{persona_id}/photos")
+async def api_upload_photo(persona_id: str, file: UploadFile = File(...)):
+    """Upload a photo for a persona (multipart/form-data)."""
+    import base64
+    persona = await get_persona(persona_id)
+    if not persona:
+        raise HTTPException(404, "Persona not found")
+    data = await file.read()
+    data_b64 = base64.b64encode(data).decode("utf-8")
+    mime_type = file.content_type or "image/jpeg"
+    photo_id = await add_persona_photo(persona_id, file.filename or "", mime_type, data_b64)
+    return {"id": photo_id, "filename": file.filename, "mime_type": mime_type}
+
+@app.get("/api/personas/{persona_id}/photos")
+async def api_list_photos(persona_id: str):
+    """List photos for a persona (metadata only, no data)."""
+    photos = await get_persona_photos(persona_id)
+    for p in photos:
+        if hasattr(p.get("created_at"), "isoformat"):
+            p["created_at"] = p["created_at"].isoformat()
+    return photos
+
+@app.delete("/api/personas/{persona_id}/photos/{photo_id}")
+async def api_delete_photo(persona_id: str, photo_id: str):
+    """Delete a persona photo."""
+    await delete_persona_photo(photo_id)
+    return {"deleted": True}
+
+@app.get("/api/personas/{persona_id}/photos/{photo_id}/preview")
+async def api_photo_preview(persona_id: str, photo_id: str):
+    """Return the raw image bytes for a persona photo (for <img src=...>)."""
+    import base64
+    photo = await get_persona_photo(photo_id)
+    if not photo:
+        raise HTTPException(404, "Photo not found")
+    try:
+        data = base64.b64decode(photo["data"])
+    except Exception:
+        raise HTTPException(500, "Corrupt photo data")
+    return Response(content=data, media_type=photo.get("mime_type", "image/jpeg"))
 
 # ─── Entry point ───
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import logging
 import os
 import uuid
 from datetime import datetime
+from typing import Optional
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,15 @@ CREATE TABLE IF NOT EXISTS dm_messages (
     sender TEXT,                  -- 'bot' or 'user'
     content TEXT,
     ts TEXT
+);
+
+CREATE TABLE IF NOT EXISTS persona_photos (
+    id TEXT PRIMARY KEY,
+    persona_id TEXT REFERENCES personas(id) ON DELETE CASCADE,
+    filename TEXT DEFAULT '',
+    mime_type TEXT DEFAULT 'image/jpeg',
+    data TEXT,   -- base64-encoded image data
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -569,5 +579,131 @@ async def get_dm_thread(conv_id: str) -> list:
     try:
         q = f"SELECT * FROM dm_messages WHERE conv_id = {_p(1)} ORDER BY ts ASC"
         return await _fetchall(db, q, [conv_id])
+    finally:
+        await close_db(db)
+
+
+# ─── Agent Messages (merged group + DM feed) ──────────────────────────────────
+
+async def get_agent_messages(limit: int = 200, persona_id: str = "") -> list:
+    """Return merged feed of agent-sent messages: group (bot_events event_type='message')
+    and DM (dm_messages sender='bot' with conv metadata), sorted by created_at DESC."""
+    db = await get_db()
+    try:
+        # Group room messages from bot_events
+        if USE_NEON:
+            gq = ("SELECT created_at, persona_id, room, '' AS other_user, content, 'group' AS msg_type "
+                  "FROM bot_events WHERE event_type = 'message'")
+            gparams: list = []
+            if persona_id:
+                gq += f" AND persona_id = {_p(1)}"
+                gparams.append(persona_id)
+        else:
+            gq = ("SELECT created_at, persona_id, room, '' AS other_user, content, 'group' AS msg_type "
+                  "FROM bot_events WHERE event_type = 'message'")
+            gparams = []
+            if persona_id:
+                gq += " AND persona_id = ?"
+                gparams.append(persona_id)
+
+        # DM messages from dm_messages JOIN dm_conversations (bot side only)
+        if USE_NEON:
+            dq = ("SELECT m.ts AS created_at, c.persona_id, '' AS room, c.other_user, m.content, 'dm' AS msg_type "
+                  "FROM dm_messages m JOIN dm_conversations c ON m.conv_id = c.id "
+                  "WHERE m.sender = 'bot'")
+            dparams: list = []
+            if persona_id:
+                dq += f" AND c.persona_id = {_p(1)}"
+                dparams.append(persona_id)
+        else:
+            dq = ("SELECT m.ts AS created_at, c.persona_id, '' AS room, c.other_user, m.content, 'dm' AS msg_type "
+                  "FROM dm_messages m JOIN dm_conversations c ON m.conv_id = c.id "
+                  "WHERE m.sender = 'bot'")
+            dparams = []
+            if persona_id:
+                dq += " AND c.persona_id = ?"
+                dparams.append(persona_id)
+
+        group_rows = await _fetchall(db, gq, gparams)
+        dm_rows = await _fetchall(db, dq, dparams)
+
+        # Normalise created_at to string for consistent sorting
+        def _ts(row: dict) -> str:
+            v = row.get("created_at", "")
+            if hasattr(v, "isoformat"):
+                return v.isoformat()
+            return str(v) if v else ""
+
+        combined = []
+        for r in group_rows:
+            combined.append({
+                "created_at": _ts(r),
+                "persona_id": r.get("persona_id", ""),
+                "room": r.get("room", ""),
+                "other_user": "",
+                "content": r.get("content", ""),
+                "msg_type": "group",
+            })
+        for r in dm_rows:
+            combined.append({
+                "created_at": _ts(r),
+                "persona_id": r.get("persona_id", ""),
+                "room": "",
+                "other_user": r.get("other_user", ""),
+                "content": r.get("content", ""),
+                "msg_type": "dm",
+            })
+
+        combined.sort(key=lambda x: x["created_at"], reverse=True)
+        return combined[:limit]
+    finally:
+        await close_db(db)
+
+
+# ─── Persona Photos ────────────────────────────────────────────────────────────
+
+async def add_persona_photo(persona_id: str, filename: str, mime_type: str, data_b64: str) -> str:
+    """Store a base64-encoded photo for a persona. Returns the new photo id."""
+    photo_id = str(uuid.uuid4())
+    db = await get_db()
+    try:
+        await _execute(db,
+            f"INSERT INTO persona_photos (id, persona_id, filename, mime_type, data) "
+            f"VALUES ({_p(1)},{_p(2)},{_p(3)},{_p(4)},{_p(5)})",
+            [photo_id, persona_id, filename or "", mime_type or "image/jpeg", data_b64 or ""])
+    finally:
+        await close_db(db)
+    return photo_id
+
+
+async def get_persona_photos(persona_id: str) -> list:
+    """List photos for a persona (metadata only — no data field)."""
+    db = await get_db()
+    try:
+        q = (f"SELECT id, persona_id, filename, mime_type, created_at "
+             f"FROM persona_photos WHERE persona_id = {_p(1)} ORDER BY created_at DESC")
+        return await _fetchall(db, q, [persona_id])
+    finally:
+        await close_db(db)
+
+
+async def get_persona_photo(photo_id: str) -> Optional[dict]:
+    """Fetch one photo including its base64 data field."""
+    db = await get_db()
+    try:
+        q = f"SELECT * FROM persona_photos WHERE id = {_p(1)}"
+        rows = await _fetchall(db, q, [photo_id])
+        return rows[0] if rows else None
+    finally:
+        await close_db(db)
+
+
+async def delete_persona_photo(photo_id: str) -> None:
+    """Delete a persona photo by id."""
+    db = await get_db()
+    try:
+        await _execute(db,
+            f"DELETE FROM persona_photos WHERE id = {_p(1)}",
+            [photo_id])
     finally:
         await close_db(db)

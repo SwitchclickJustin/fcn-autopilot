@@ -63,34 +63,17 @@
 <!-- Message Log tab -->
 <div class="tab-pane" id="tab-log">
   <div class="card">
-    <div class="flex" style="gap:.75rem;margin-bottom:1rem">
-      <select id="history-filter" style="width:auto">
+    <div class="flex" style="gap:.75rem;margin-bottom:1rem;flex-wrap:wrap">
+      <select id="log-type-filter" style="width:auto" onchange="renderLog()">
         <option value="all">All messages</option>
-        <option value="ai">AI sent only</option>
-        <option value="user">User sent only</option>
-        <option value="blocked">Blocked by supervisor</option>
+        <option value="group">Group room only</option>
+        <option value="dm">DM only</option>
       </select>
-      <button class="btn btn-secondary btn-sm" onclick="window.location.reload()">🔄 Refresh</button>
+      <button class="btn btn-secondary btn-sm" onclick="loadLog()">🔄 Refresh</button>
+      <span class="text-sm text-dim ml-auto" id="log-count"></span>
     </div>
-    <div id="history-log">
-      {% if logs %}
-      <div style="max-height:600px;overflow-y:auto">
-        {% for log in logs %}
-        <div class="chat-msg" style="{% if not log.supervisor_approved %}border-left:3px solid var(--red);padding-left:.5rem;{% endif %}">
-          <span class="flex gap-1" style="margin-bottom:.2rem">
-            <span class="text-sm text-dim">{{ log.created_at[11:19] if log.created_at else '' }}</span>
-            <span class="text-sm">{% if log.source == 'ai' %}🤖 AI{% elif log.source == 'user' %}👤 You{% else %}⚙️ System{% endif %}</span>
-            {% if log.chat_type == 'dm' %}<span class="text-sm text-accent">💬 DM ({{ log.other_user }})</span>{% endif %}
-            {% if not log.supervisor_approved %}<span class="text-sm text-red">🚫 BLOCKED</span>{% endif %}
-          </span>
-          <div>{{ log.message }}</div>
-          {% if log.supervisor_note %}<div class="text-sm text-dim" style="margin-top:.2rem">Note: {{ log.supervisor_note }}</div>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      {% else %}
-      <p class="empty">No message history yet.</p>
-      {% endif %}
+    <div id="history-log" style="max-height:600px;overflow-y:auto">
+      <p class="empty">Loading…</p>
     </div>
   </div>
 </div>
@@ -98,6 +81,9 @@
 {% endblock %}
 {% block scripts %}
 <script>
+let _logRows = [];
+let _logRefreshTimer = null;
+
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b,i)=>{
     b.classList.toggle('active', ['dm','openers','log'][i]===name);
@@ -107,6 +93,12 @@ function switchTab(name) {
   });
   if(name==='dm' && !window._convsLoaded) loadConvs(false);
   if(name==='openers' && !window._openersLoaded) loadOpeners();
+  if(name==='log') {
+    if(!window._logLoaded) loadLog();
+    startLogRefresh();
+  } else {
+    stopLogRefresh();
+  }
 }
 
 // ── DM Conversations ──────────────────────────────────────────────────────────
@@ -198,6 +190,57 @@ async function loadOpeners(){
   }catch(e){
     document.getElementById('openers-list').innerHTML=`<p class="text-red text-sm">Error: ${esc(e.message)}</p>`;
   }
+}
+
+// ── Message Log ───────────────────────────────────────────────────────────────
+async function loadLog() {
+  window._logLoaded = true;
+  try {
+    const rows = await (await fetch('/api/agent-messages?limit=200')).json();
+    _logRows = rows;
+    renderLog();
+  } catch(e) {
+    document.getElementById('history-log').innerHTML =
+      `<p class="text-red text-sm" style="padding:.75rem">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+function renderLog() {
+  const filter = document.getElementById('log-type-filter').value;
+  const rows = filter === 'all' ? _logRows : _logRows.filter(r => r.msg_type === filter);
+  document.getElementById('log-count').textContent = `${rows.length} messages`;
+  if (!rows.length) {
+    document.getElementById('history-log').innerHTML = '<p class="empty" style="padding:1rem">No messages yet.</p>';
+    return;
+  }
+  document.getElementById('history-log').innerHTML = rows.map(r => {
+    const ts = (r.created_at || '').slice(0, 19).replace('T', ' ');
+    const shortTs = ts.slice(11, 19) || ts.slice(0, 16);
+    const personaShort = (r.persona_id || '').slice(0, 8);
+    const where = r.msg_type === 'dm'
+      ? `<span style="color:var(--accent);font-size:.75rem">💬 DM → ${esc(r.other_user)}</span>`
+      : `<span style="color:var(--text-dim);font-size:.75rem">🏠 ${esc(r.room || 'room')}</span>`;
+    const typeStyle = r.msg_type === 'dm'
+      ? 'border-left:3px solid var(--accent);padding-left:.5rem'
+      : 'border-left:3px solid var(--border);padding-left:.5rem';
+    return `<div class="chat-msg" style="${typeStyle};margin-bottom:.4rem">
+      <div class="flex gap-1" style="margin-bottom:.2rem;flex-wrap:wrap">
+        <span class="text-sm text-dim">${esc(shortTs)}</span>
+        ${personaShort ? `<span class="text-sm text-dim" style="font-family:monospace">${esc(personaShort)}…</span>` : ''}
+        ${where}
+      </div>
+      <div style="font-size:.88rem">${esc(r.content)}</div>
+    </div>`;
+  }).join('');
+}
+
+function startLogRefresh() {
+  stopLogRefresh();
+  _logRefreshTimer = setInterval(() => { if(window._logLoaded) loadLog(); }, 15000);
+}
+
+function stopLogRefresh() {
+  if (_logRefreshTimer) { clearInterval(_logRefreshTimer); _logRefreshTimer = null; }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
