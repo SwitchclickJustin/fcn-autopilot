@@ -1002,6 +1002,37 @@ async def debug_browser_status():
         out.append(info)
     return {"agents": out, "count": len(out)}
 
+@app.get("/debug/composer-probe")
+async def debug_composer_probe():
+    """Inspect the FCN schat composer area for photo/file upload elements."""
+    workers = [w for w in browser_manager._workers.values() if w._page]
+    if not workers:
+        return {"error": "no active agents"}
+    page = workers[0]._page
+    try:
+        result = await page.evaluate("""() => {
+            const out = {};
+            // File inputs anywhere in the page
+            out.file_inputs = Array.from(document.querySelectorAll('input[type=file]')).map(el => ({
+                name: el.name, accept: el.accept, multiple: el.multiple,
+                id: el.id, cls: el.className,
+                parent_cls: el.parentElement ? el.parentElement.className : '',
+            }));
+            // Buttons near the composer
+            const composer = document.querySelector('.writer, form.writer, [class*=writer i]');
+            out.composer_html = composer ? composer.outerHTML.slice(0, 1500) : null;
+            // Any upload/photo/image buttons
+            out.upload_btns = Array.from(document.querySelectorAll(
+                'button[class*=photo i], button[class*=image i], button[class*=upload i], ' +
+                '[class*=attach i], [aria-label*=photo i], [aria-label*=image i], ' +
+                '[title*=photo i], [title*=image i], [class*=media i]'
+            )).map(el => ({tag: el.tagName, cls: el.className, aria: el.getAttribute('aria-label'), html: el.outerHTML.slice(0,200)}));
+            return out;
+        }""")
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/debug/db")
 async def debug_db():
     import os
