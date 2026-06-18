@@ -1512,6 +1512,27 @@ class BotOrchestrator:
         except Exception:
             return False
 
+    async def _read_dm_partner_info(self, page) -> dict:
+        """Scrape age + country from the active DM header. Returns {} on failure."""
+        try:
+            result = await page.evaluate("""
+                (() => {
+                    // FCN DM header: age number + country text live in the conv header
+                    const header = document.querySelector('.conv-header, .conversation-header, .dm-header, [class*="conv-header"]');
+                    const text = header ? header.innerText : document.querySelector('.roomlist-room.active')?.innerText || '';
+                    const ageMatch = text.match(/\\b(1[89]|[2-9]\\d|[1-9]\\d{2})\\b/);
+                    const countryMatch = text.match(/United States|Canada|UK|Australia|Germany|France|Mexico|Brazil|[A-Z][a-z]+ [A-Z][a-z]+|[A-Z][a-z]{3,}/);
+                    return {
+                        age: ageMatch ? parseInt(ageMatch[1]) : null,
+                        country: countryMatch ? countryMatch[0] : null,
+                        raw: text.substring(0, 80)
+                    };
+                })()
+            """)
+            return result or {}
+        except Exception:
+            return {}
+
     async def _log_dm_messages(self, worker: BotWorker, other_user: str,
                                 msgs: list, persona_id: str):
         """Store every message in a DM thread (both sides) since we last logged.
@@ -1663,6 +1684,12 @@ class BotOrchestrator:
                                 worker.in_dm = True
                                 other_user = c["text"] or "unknown"
                                 worker.room = other_user
+                                # Scrape partner age/country from DM header (first visit only)
+                                dm_st = worker._dm_state.setdefault(other_user, {})
+                                if "partner_age" not in dm_st:
+                                    info = await self._read_dm_partner_info(worker._page)
+                                    dm_st["partner_age"] = info.get("age")
+                                    dm_st["partner_country"] = info.get("country")
                                 msgs = await worker.read_chat()
                                 if msgs:
                                     state = worker._dm_state.get(other_user, {})
@@ -1796,7 +1823,7 @@ class BotOrchestrator:
 
             dm_state["phase"] = phase
 
-            # Read username signals for personalizing the opener
+            # Read username signals + age/country for personalizing the opener
             other_lower = (dm_other_user or "").lower()
             username_hint = ""
             if "ass" in other_lower or "booty" in other_lower:
@@ -1808,10 +1835,32 @@ class BotOrchestrator:
             elif "horny" in other_lower or "naughty" in other_lower or "dirty" in other_lower:
                 username_hint = "His username signals he's horny — match that energy immediately. "
 
+            partner_age = dm_state.get("partner_age")
+            partner_country = dm_state.get("partner_country", "")
+            age_hint = ""
+            if partner_age:
+                if partner_age <= 21:
+                    age_hint = (
+                        f"He is {partner_age} years old — young guy. "
+                        f"Tease him about being young: 'little boy', 'baby', joke about his parents' credit card, "
+                        f"challenge whether he can handle a real woman. Play with it. "
+                    )
+                elif partner_age >= 45:
+                    age_hint = (
+                        f"He is {partner_age} years old — older man. "
+                        f"Play to that: 'older men know what they want', 'experienced', be a little more direct. "
+                    )
+            country_hint = ""
+            if partner_country and partner_country.lower() not in ("united states", "usa", "us"):
+                country_hint = (
+                    f"He is from {partner_country} — not American. "
+                    f"Acknowledge it briefly if natural ('oh international, i like that'). "
+                )
+
             if phase == "warmup":
                 system = (
                     f"You are {username}, a real woman starting a private chat (18+). "
-                    f"Personality: {bio}. {username_hint}"
+                    f"Personality: {bio}. {username_hint}{age_hint}{country_hint}"
                     f"Say 'hey love.. where ya from?' or a short casual flirty variation — location ask in the opener. "
                     f"One short line only. No line breaks, no lists, no quotes. Never prefix your username. {_no_emoji}"
                 )
@@ -1821,13 +1870,14 @@ class BotOrchestrator:
                 geo_hint = (
                     "If he mentioned a state or city, respond with genuine excitement about that specific city — "
                     "e.g. if Nevada → 'oh i love to roll to vegas', if Georgia → 'i love to party in atlanta', "
-                    "if South Carolina → 'oh wow i got charleston all the time', if Texas → 'love houston', etc. "
+                    "if South Carolina → 'oh wow i got charleston all the time', if Texas → 'love houston', "
+                    "if California → 'omg i love LA', if Florida → 'florida boys are fun', etc. "
                     "Then follow with a short tease like 'not sure you can handle this though' or "
                     "'can you handle this spicy latina?' to keep him hooked. "
                 )
                 system = (
                     f"You are {username}, a fun flirty woman from Miami in a private chat (18+). "
-                    f"Personality: {bio}. {username_hint}"
+                    f"Personality: {bio}. {username_hint}{age_hint}{country_hint}"
                     f"{geo_hint}"
                     f"ONE short punchy line — natural, playful, a little cocky. "
                     f"No line breaks, no quotes. Never prefix your username. {_no_emoji}"
