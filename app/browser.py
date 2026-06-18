@@ -2261,6 +2261,43 @@ class BotOrchestrator:
     def get_bot(self, username: str) -> Optional[BotWorker]:
         return self._workers.get(username)
 
+    async def debug_tabs(self) -> list:
+        """Inspect each live worker's page: viewport, parsed tabs, and raw
+        roomlist DOM. Diagnoses why DM tabs aren't being detected/entered."""
+        out = []
+        for w in self._workers.values():
+            info = {"agent_id": w.agent_id, "room": w.room, "status": w.status,
+                    "in_dm": w.in_dm, "error": None}
+            page = getattr(w, "_page", None)
+            if not page:
+                info["error"] = "no page"
+                out.append(info); continue
+            try:
+                info["viewport"] = await page.evaluate(
+                    "() => ({w: window.innerWidth, h: window.innerHeight})")
+                info["url"] = page.url
+                info["tabs"] = await self._list_conversations(page)
+                # Raw roomlist DOM — find whatever container holds the tabs
+                info["roomlist_html"] = await page.evaluate("""
+                    (() => {
+                        const sels = ['nav.roomlist', '.roomlist', '[class*=roomlist i]',
+                                      '.conversations', '[class*=conversation i]',
+                                      '.pm-list', '[class*=private i]', '[class*=message-list i]'];
+                        const seen = new Set(); let html = '';
+                        for (const s of sels) {
+                            document.querySelectorAll(s).forEach(el => {
+                                if (seen.has(el)) return; seen.add(el);
+                                html += `\\n<!-- ${s} -->\\n` + el.outerHTML.slice(0, 4000);
+                            });
+                        }
+                        return html.slice(0, 12000) || '(no roomlist container found)';
+                    })()
+                """)
+            except Exception as e:
+                info["error"] = f"{type(e).__name__}: {e}"[:300]
+            out.append(info)
+        return out
+
     # ── Legacy compatibility: BrowserManager-like interface ─────────────────
 
     async def start_session(self, persona: dict) -> Optional[BotWorker]:

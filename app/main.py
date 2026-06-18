@@ -1573,6 +1573,15 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
     stats = await get_stats(s.strftime(fmt), e.strftime(fmt))
     return {"range": range, "start": s.strftime(fmt), "end": e.strftime(fmt), **stats}
 
+@app.get("/api/debug/tabs")
+async def api_debug_tabs():
+    """Per-agent live inspection: viewport, parsed tabs, raw roomlist DOM.
+    Used to diagnose why DM tabs aren't being detected."""
+    try:
+        return {"agents": await browser_manager.debug_tabs()}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
 # ─── API: Supervisor ───
 @app.get("/api/supervisor/rules")
 async def api_rules():
