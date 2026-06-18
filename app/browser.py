@@ -1901,7 +1901,9 @@ class BotOrchestrator:
                     "if California → 'omg i love LA', if Florida → 'florida boys are fun', etc. "
                     "Then follow with a short tease like 'not sure you can handle this though' or "
                     "'can you handle this spicy latina?' to keep him hooked. "
-                    "If no location mentioned, be flirty and ask what he wants. "
+                    "If no location mentioned, ask a question he'll definitely say yes to: "
+                    "'you want to watch?', 'you wanna see more?', 'you want to help me cum?'. "
+                    "These yes-questions build momentum before the TG pitch. "
                 )
                 system = (
                     f"You are {username}, a fun flirty woman from Miami in a private chat (18+). "
@@ -1941,18 +1943,31 @@ class BotOrchestrator:
                             f"ONE line. {_no_emoji} {_safety}"
                         )
                 else:
+                    # Yes-ladder + conditional pitch: "if you got TG, [reward].. but you gotta have TG"
+                    # Ask a question they MUST say yes to, then make TG the key to unlock it
+                    yes_questions = [
+                        "you want to watch?",
+                        "you want to see?",
+                        "you wanna watch me?",
+                        "want me to show you?",
+                    ]
+                    yes_q = random.choice(yes_questions)
                     tg_phrases = [
-                        f"if you want to party some time, find me on that TG — i'm {handle}",
+                        f"if you got TG, i got my dildo out and i'm about to use it.. i'll let ya watch.. but you gotta have TG {handle}",
+                        f"if you got TG i'll show you everything.. i'm touching myself right now.. but you gotta be on TG {handle}",
+                        f"if you want to party some time, find me on that TG — {handle}",
                         f"you should find me on the TG baby — {handle}",
-                        f"hit me on the TG if you're serious — {handle}",
-                        f"come find me on TG, that's where i'm at — {handle}",
                     ]
                     tg_line = random.choice(tg_phrases) if handle else "find me on the TG"
                     system = (
-                        f"You are {username}. He's interested and the vibe is good. "
-                        f"Pitch your TG naturally — say something like: '{tg_line}'. "
-                        f"Make it feel casual and personal, not like an ad. "
-                        f"ONE short line. {_no_emoji} {_safety}"
+                        f"You are {username}. The vibe is hot and he's engaged. "
+                        f"Use the yes-ladder + conditional TG pitch: "
+                        f"First ask a question he MUST say yes to ('{yes_q}'). "
+                        f"Then deliver the conditional: '{tg_line}'. "
+                        f"End by repeating the yes question to close: '{yes_q}' "
+                        f"OR combine into one line like: '{tg_line}.. {yes_q}'. "
+                        f"Make TG sound like the KEY to unlock the reward, not a barrier. "
+                        f"ONE or TWO short lines max. {_no_emoji} {_safety}"
                     )
 
         else:
