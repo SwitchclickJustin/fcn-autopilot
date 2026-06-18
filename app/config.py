@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     database_path: str = "fcn.db"
     session_secret: str = "change-me-in-production"
+    admin_username: str = "admin"
     admin_password: str = "changeme"
     log_level: str = "INFO"
     capsolver_api_key: str = ""

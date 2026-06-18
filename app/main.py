@@ -126,7 +126,8 @@ input:focus{border-color:#555}
 <div class="card">
   <h1>FCN Auto-Pilot</h1>
   <form method="post" action="/login">
-    <div class="mb"><label>Password</label><input type="password" name="password" autofocus placeholder="••••••••"></div>
+    <div class="mb"><label>Username</label><input type="text" name="username" autofocus placeholder="username" autocomplete="username"></div>
+    <div class="mb"><label>Password</label><input type="password" name="password" placeholder="••••••••" autocomplete="current-password"></div>
     <button class="btn" type="submit">Sign In</button>
     __ERROR__
   </form>
@@ -141,11 +142,12 @@ async def login_page(request: Request):
 @app.post("/login")
 async def login_submit(request: Request):
     form = await request.form()
+    username = (form.get("username") or "").strip()
     pw = (form.get("password") or "").strip()
-    if pw == settings.admin_password:
+    if username == settings.admin_username and pw == settings.admin_password:
         request.session["authed"] = True
         return RedirectResponse("/", status_code=302)
-    return HTMLResponse(_LOGIN_HTML.replace("__ERROR__", '<div class="err">Incorrect password.</div>'), status_code=401)
+    return HTMLResponse(_LOGIN_HTML.replace("__ERROR__", '<div class="err">Incorrect username or password.</div>'), status_code=401)
 
 @app.get("/logout")
 async def logout(request: Request):
