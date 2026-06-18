@@ -528,13 +528,12 @@ class BotOrchestrator:
             try:
                 # 1280x960 (4:3) matches the dashboard's .browser-frame aspect-ratio
                 # so the live stream fills the box with no black bars.
-                # proxyCountryCode="us" pins each browser to a US residential IP
-                # from BU Cloud's pool — each browser instance gets a distinct IP,
-                # so N concurrent bots = N different US exit IPs. No external proxy
-                # service needed; BU Cloud rotates automatically.
+                # No proxyCountryCode — BU Cloud defaults to US residential proxy.
+                # Explicitly passing proxyCountryCode="us" routes through a different
+                # proxy tier that CF blocks; default (omitted) works correctly.
                 browser = await client.browsers.create(
                     timeout=60, browser_screen_width=1280, browser_screen_height=960,
-                    enable_recording=False, proxyCountryCode="us",
+                    enable_recording=False,
                 )
             except Exception as e:
                 logger.warning(f"[{worker.username}] provision failed (try {attempt + 1}): {e}")
@@ -823,43 +822,17 @@ class BotOrchestrator:
             # so we leave it untouched and spoof only the non-UA signals below.
             worker._ua = ""  # no custom UA
 
-            _vendor = "Google Inc."
-            _hw = random.choice([4, 6, 8])
-            _dm = random.choice([4, 8])
-
-            # Stealth patches — injected before any page script on every navigation.
-            # Covers the main Cloudflare fingerprint signals: webdriver flag, plugins,
-            # hardware concurrency, device memory, vendor, and permissions API.
-            #
-            # navigator.platform is intentionally NOT overridden: BU Cloud runs Linux
-            # Chromium, so the real value is "Linux x86_64". Spoofing it to "Win32"
-            # created a UA/platform mismatch (UA says Linux, platform says Windows)
-            # that CF Bot Management detects and hard-blocks on /api/chat/login.
+            # BU Cloud already provides a stealth browser (no navigator.webdriver,
+            # proper TLS fingerprint, real UA). Custom overrides like fake plugins
+            # arrays or spoofed hardwareConcurrency create detectable inconsistencies
+            # that CF Bot Management flags — verified: debug endpoint (zero stealth JS)
+            # passes CF consistently; production with overrides fails every time.
+            # Only remove Playwright's own automation markers which BU Cloud may not
+            # strip on every page navigation.
             _stealth_js = """
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                Object.defineProperty(navigator, 'plugins', {get: () => {
-                    const p = [1,2,3,4,5];
-                    p.namedItem = () => null; p.refresh = () => {}; p.item = i => p[i];
-                    return p;
-                }});
-                Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});
-                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => HW_CONC});
-                Object.defineProperty(navigator, 'deviceMemory', {get: () => DEV_MEM});
-                Object.defineProperty(navigator, 'vendor', {get: () => 'VENDOR'});
-                if (!window.chrome && 'VENDOR'.includes('Google')) {
-                    window.chrome = {runtime:{}, loadTimes:()=>{}, csi:()=>{}, app:{}};
-                }
-                delete window.__playwright;
-                delete window.__pw_manual;
-                try {
-                    const _oq = window.navigator.permissions.query.bind(window.navigator.permissions);
-                    window.navigator.permissions.query = (p) => {
-                        if (p.name === 'notifications') return Promise.resolve({state:'default',onchange:null});
-                        return _oq(p);
-                    };
-                } catch(e) {}
-            """.replace("VENDOR", _vendor) \
-               .replace("HW_CONC", str(_hw)).replace("DEV_MEM", str(_dm))
+                try { delete window.__playwright; } catch(e) {}
+                try { delete window.__pw_manual; } catch(e) {}
+            """
             await worker._page.add_init_script(_stealth_js)
 
             # Ad guard: block ONLY known ad/pop networks by exact domain.
@@ -1125,15 +1098,17 @@ class BotOrchestrator:
             # form.submit() does NOT fire the submit event so Vue cannot intercept
             # it — the browser POSTs directly to /api/chat/login in the main
             # (CF-cleared) window and follows the server redirect to schat.*.
-            # The checkbox has no `name` attribute (pure Vue gate, not sent in POST),
-            # so we only need to call submit(); no checkbox manipulation required.
+            # Force-set input[name=birthdate] directly — Vue may not have propagated
+            # the select widget changes to the hidden backing field in time.
             logger.info(f"[{worker.agent_id}] submitting login form…")
             try:
-                await page.evaluate("""() => {
+                await page.evaluate("""(bd) => {
                     const f = document.querySelector('form[action*="login"]');
                     if (!f) throw new Error('no login form');
+                    const b = f.querySelector('input[name=birthdate]');
+                    if (b) b.value = bd;
                     f.submit();
-                }""")
+                }""", birthdate)
             except Exception as e:
                 _emsg = str(e).lower()
                 if not any(k in _emsg for k in ("closed", "navigation", "detach", "destroyed")):
@@ -1155,7 +1130,13 @@ class BotOrchestrator:
             if "schat." in url_now or "/room/" in url_now or "alert=" in url_now:
                 break
             if _tick >= 3 and await self._is_blocked_page(page):
-                logger.warning(f"[{worker.agent_id}] Cloudflare block tick={_tick} — rotating IP")
+                try:
+                    _btitle = await page.title()
+                    _burl = page.url
+                except Exception:
+                    _btitle, _burl = "?", "?"
+                logger.warning(f"[{worker.agent_id}] Cloudflare block tick={_tick} "
+                                f"title={_btitle!r} url={_burl!r} — rotating IP")
                 worker.phase = "cf_blocked_post"
                 page.context.remove_listener("page", _close_all_popups)
                 return False
