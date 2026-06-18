@@ -421,7 +421,7 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
         "messages": counts.get("message", 0),
         "handle_shares": counts.get("handle_share", 0),
         "dms": (drows[0]["c"] if drows else 0),
-        "conversions": counts.get("conversion", 0) + counts.get("telegram_conversion", 0),
+        "conversions": counts.get("telegram_conversion", 0),
         "bans": counts.get("ban", 0),
     }
 

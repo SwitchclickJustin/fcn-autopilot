@@ -1745,28 +1745,8 @@ class BotOrchestrator:
 
         persona_id = persona.get("id", "")
 
-        # ── Conversion detection (DMs only — group room phrases are false positives) ──
-        # Only scan the GUY's lines — bot's own casual phrases ("got you", "see you there")
-        # would otherwise false-trigger the conversion regex.
-        guy_lines = [
-            m for m in messages[-6:]
-            if ":" in m and m.split(":", 1)[0].strip() != worker.login_name
-        ]
-        recent_text = "\n".join(guy_lines)
-        if is_dm and worker.handle_shared and _CONFIRM_RE.search(recent_text):
-            try:
-                await db.log_event(persona_id, "conversion", room=worker.room,
-                                   content="\n".join(messages[-3:]))
-            except Exception:
-                pass
-            dm_state = worker._dm_state.get(dm_other_user, {})
-            conv_id = dm_state.get("conv_id")
-            if conv_id:
-                try:
-                    await db.mark_dm_converted(conv_id)
-                except Exception:
-                    pass
-            worker.handle_shared = False
+        # Conversions are tracked exclusively via the SirenDM webhook (/api/telegram-conversion).
+        # FCN-side guessing removed — only real Telegram messages count.
 
         context = "\n".join(messages[-10:])
         tone = persona.get("default_tone", "casual")
