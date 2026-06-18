@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="FCN Auto-Pilot", version="0.1.0", lifespan=lifespan)
 
 # ─── Auth helpers ───
-_PUBLIC = {"/health", "/login", "/api/telegram-conversion", "/api/admin/clear-test-conversions"}
+_PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
 # ensuring request.session is populated before the auth check executes.
@@ -1709,19 +1709,6 @@ async def siren_dm_webhook(request: Request):
 
     logger.info(f"[siren_dm] telegram_conversion: @{fan_username} ({fan_name}) via {agent_name}")
     return {"ok": True, "logged": fan_username or fan_name}
-
-# ─── Temp: clear today's test conversions ───
-@app.delete("/api/admin/clear-test-conversions")
-async def clear_test_conversions():
-    db = await get_db()
-    from app.database import _execute, USE_NEON
-    if USE_NEON:
-        await _execute(db, "DELETE FROM bot_events WHERE event_type = 'telegram_conversion' AND created_at::date = CURRENT_DATE")
-    else:
-        await _execute(db, "DELETE FROM bot_events WHERE event_type = 'telegram_conversion' AND date(created_at) = date('now')")
-    from app.database import close_db
-    await close_db(db)
-    return {"deleted": True}
 
 # ─── Entry point ───
 if __name__ == "__main__":
