@@ -1957,32 +1957,62 @@ class BotOrchestrator:
                     + ". Write something completely different. "
                 )
 
-            # Group room obfuscation: "Tela Grahm" (NOT "TG" — group scanner is stricter)
             # Handle capitalized: AlexandraSwallows style
             handle_cap = handle.capitalize() if handle else ""
             handle_broadcast = ""
             if handle:
                 handle_broadcast = (
-                    f" You MUST include your handle in the message. "
-                    f"Write it as '{handle_cap}' (capitalized). "
-                    f"Refer to the platform as 'Tela Grahm' (two words, misspelled) — NEVER write 'Telegram' or 'TG'. "
-                    f"Example format: 'find me on Tela Grahm {handle_cap}'"
+                    f" You MUST include your handle '{handle_cap}' in the message. "
+                    f"Refer to the platform as 'TG' — NEVER write the full word 'Telegram'. "
+                    f"Example: 'Find me on TG now! {handle_cap}'"
                 )
 
-            group_examples = (
-                "EXACT style examples — this is the template, vary the specific act/number: "
-                f"'Okay.. i'm gonna touch myself.. if you want to watch, you gotta find me on Tela Grahm {handle_cap}.. "
-                f"this is a huge fetish of mine and i can let only 5 guys watch.. I Squirt!!', "
-                f"'i'm about to get in the shower and film it.. only 3 spots to watch on Tela Grahm {handle_cap}.. who wants in', "
-                f"'just got home and i'm soaking wet.. gonna play with myself.. find me on Tela Grahm {handle_cap} if you want to see'. "
-            )
+            # Room-specific kink targeting — match the room's fantasy, pivot to TG
+            room_lower = (worker.room or "").lower()
+            if "cuck" in room_lower:
+                room_angle = (
+                    f"This is a Cucks/cuckold room. Play to that fantasy: "
+                    f"'Looking for a cuck to watch my GF bang me', 'any cucks want to watch', etc. "
+                    f"Then pivot: 'Find me on TG now! {handle_cap} as this is a huge fetish of mine'. "
+                )
+            elif "tribute" in room_lower:
+                room_angle = (
+                    f"This is a Tributes room. Men here want to send photo tributes. "
+                    f"Say you want to receive tributes, then direct to TG: 'send me your tribute on TG {handle_cap}'. "
+                )
+            elif "boob" in room_lower or "tit" in room_lower:
+                room_angle = (
+                    f"This is a Boobs room. Lead with your chest: 'my tits are begging to be seen', "
+                    f"then pivot to TG {handle_cap}. "
+                )
+            elif "anal" in room_lower:
+                room_angle = (
+                    f"This is an Anal room. Play to that: 'i love anal so much', "
+                    f"then pivot to TG {handle_cap}. "
+                )
+            elif "mature" in room_lower or "milf" in room_lower:
+                room_angle = (
+                    f"This is a Mature/MILF room. Play to older-woman fantasy, "
+                    f"then pivot to TG {handle_cap}. "
+                )
+            elif "roleplay" in room_lower:
+                room_angle = (
+                    f"This is a Roleplay room. Set up a scenario/fantasy, "
+                    f"tell them to continue it with you on TG {handle_cap}. "
+                )
+            else:
+                room_angle = (
+                    f"Announce a specific sexual act you're about to do live, "
+                    f"add scarcity ('only 5 guys', 'starting in 5 mins'), "
+                    f"direct them to TG {handle_cap}. "
+                    f"Examples: 'gonna touch myself live.. find me on TG {handle_cap}.. only 5 spots.. I Squirt!!', "
+                    f"'okay first off.. Find me on TG {handle_cap} & if you do.. i'll let you watch me finger myself live.. i start in 5 mins'. "
+                )
 
             system = (
                 f"You are {username}, a horny latina woman in a public adult group chat (18+). "
                 f"Tone: {tone}. Personality: {bio}. "
-                f"Write ONE broadcast message using the exact template style: "
-                f"announce a specific sexual act you're about to do, add scarcity ('only X guys', 'limited spots'), "
-                f"direct them to find you by name on the platform. {group_examples}"
+                f"Write ONE broadcast message tailored to this specific room. {room_angle}"
                 f"No line breaks, no lists, no quotes. Never prefix your username. "
                 f"{no_repeat}{handle_broadcast}{_no_emoji}"
             )
