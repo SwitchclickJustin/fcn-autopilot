@@ -298,6 +298,7 @@ class BotWorker:
         # DM conversation tracking: other_user → {conv_id, logged_count, is_first_bot_msg}
         self._dm_state: dict = {}
         self._room_photo_counts: dict = {}  # room_name → messages sent in that room
+        self._dms_since_group: int = 0     # DMs handled since last group room blast
         self.profile_id: str = ""
         self.session_id: str = ""
         self.browser_id: str = ""
@@ -1679,7 +1680,10 @@ class BotOrchestrator:
                         elif state.get("first_bot_sent", False):
                             active_dms.append(c)
 
-                    if active_dms and now >= dm_next:
+                    # After every 3 DMs, force a group room blast before continuing DMs
+                    force_group = worker._dms_since_group >= 3 and rooms and now >= next_send
+
+                    if active_dms and now >= dm_next and not force_group:
                         for c in active_dms:
                             if await self._open_conversation(worker._page, c["href"]):
                                 worker.in_dm = True
@@ -1702,8 +1706,9 @@ class BotOrchestrator:
                                     if c["unseen"] or new_count > prev_count:
                                         await self._auto_pilot_tick(worker, msgs, client,
                                                                     dm_other_user=other_user)
+                                        worker._dms_since_group += 1
                         dm_next = time.monotonic() + random.uniform(2, 4)
-                    elif now >= next_send:
+                    elif now >= next_send or force_group:
                         # Group room: rotate between all joined rooms on each send
                         if rooms:
                             worker._room_index = (worker._room_index + 1) % len(rooms)
@@ -1715,6 +1720,7 @@ class BotOrchestrator:
                         messages = await worker.read_chat()
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
+                        worker._dms_since_group = 0  # reset after group blast
                         next_send = now + random.randint(60, 120)
 
                 # ── SDK fallback (if no CDP) ──
