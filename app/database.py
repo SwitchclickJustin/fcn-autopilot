@@ -407,14 +407,20 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
             q += " AND persona_id = ?"; params.append(persona_id)
         q += " GROUP BY event_type"
     rows = await _fetchall(db, q, params)
-    # distinct DM conversations started in range — started_at is TEXT (ISO string), use string params
+    # distinct DM conversations started in range. started_at is TEXT written via
+    # datetime.isoformat() → "YYYY-MM-DDTHH:MM:SS.ffffff" (note the 'T'). The incoming
+    # bounds are space-separated ("YYYY-MM-DD HH:MM:SS"), and ' ' (0x20) sorts BEFORE
+    # 'T' (0x54) — so a space-form upper bound silently excludes EVERY row and the
+    # count is always 0. Match the stored ISO form by swapping the separator to 'T'.
+    start_iso = start.replace(" ", "T")
+    end_iso = end.replace(" ", "T")
     try:
         dq = ("SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations "
               "WHERE started_at >= $1 AND started_at < $2 AND other_user <> ''"
               if USE_NEON else
               "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations "
               "WHERE started_at >= ? AND started_at < ? AND other_user <> ''")
-        drows = await _fetchall(db, dq, [start, end])
+        drows = await _fetchall(db, dq, [start_iso, end_iso])
     except Exception as e:
         logger.error(f"dm_conversations stats query failed: {e}")
         drows = []
