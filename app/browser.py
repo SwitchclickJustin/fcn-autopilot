@@ -1762,8 +1762,8 @@ class BotOrchestrator:
         guy_asking_telegram = bool(_ASKING_TELEGRAM_RE.search(recent_text))
 
         _safety = (
-            "NEVER write 'telegram','tg','kik','snap','whatsapp', or any URL — instant ban. "
-            "Refer to it as 'that other app' or 'my other account' only. NEVER name the platform."
+            "NEVER write the full word 'telegram', 'kik', 'snap', 'whatsapp', or any URL. "
+            "Use 'TG' or 'the TG' when referring to Telegram. Never name other platforms."
         )
 
         if is_dm:
@@ -1774,75 +1774,98 @@ class BotOrchestrator:
             })
             bot_count = dm_state.get("bot_msg_count", 0)
 
-            # Hard stop at 30 messages UNLESS guy is asking about Telegram (10 more max)
-            if bot_count >= 40:
+            # Hard stop at 20 messages UNLESS guy is asking about TG or handle already shared
+            if bot_count >= 25:
                 return  # absolute ceiling
-            if bot_count >= 30 and not (guy_asking_telegram or guy_is_excited or worker.handle_shared):
+            if bot_count >= 15 and not (guy_asking_telegram or guy_is_excited or worker.handle_shared):
                 return  # hard stop — not converting, move on
 
-            # Determine phase based on message count + signals
-            if guy_asking_telegram or (bot_count >= 25 and handle) or worker.handle_shared:
+            # Determine phase: pitch TG early (message 3+) when there's engagement
+            # Geography connection on message 2-3, tease on 3-4, pitch on 4-6
+            handle_ready = bool(handle)
+            if guy_asking_telegram or worker.handle_shared:
                 phase = "convert"
-            elif bot_count >= 20:
-                phase = "exit"       # building reason to leave + pitch
-            elif bot_count >= 5:
-                phase = "sexting"    # full explicit sexting
+            elif (guy_is_excited or bot_count >= 4) and handle_ready:
+                phase = "convert"    # pitch TG as soon as he's warm
+            elif bot_count >= 12:
+                phase = "exit"       # hard exit with final pitch
+            elif bot_count >= 2:
+                phase = "engage"     # geographic connection + tease + light sext
             else:
-                phase = "warmup"     # location, intro, light flirt
+                phase = "warmup"     # opener + location ask
 
             dm_state["phase"] = phase
 
+            # Read username signals for personalizing the opener
+            other_lower = (dm_other_user or "").lower()
+            username_hint = ""
+            if "ass" in other_lower or "booty" in other_lower:
+                username_hint = "He has 'ass' in his username — lead with mentioning your butt. "
+            elif "cock" in other_lower or "dick" in other_lower or "bwc" in other_lower:
+                username_hint = "He has a cock reference in his username — play to it. "
+            elif "latin" in other_lower or "spic" in other_lower:
+                username_hint = "He clearly loves latinas — lean into being a spicy latina. "
+            elif "horny" in other_lower or "naughty" in other_lower or "dirty" in other_lower:
+                username_hint = "His username signals he's horny — match that energy immediately. "
+
             if phase == "warmup":
-                if bot_count == 0:
-                    system = (
-                        f"You are {username}, a real woman starting a private chat (18+). "
-                        f"Personality: {bio}. "
-                        f"Open by asking where he's from in a casual flirty way — one short line. "
-                        f"No line breaks, no lists, no quotes. Never prefix your username. {_no_emoji}"
-                    )
-                else:
-                    system = (
-                        f"You are {username}, a real woman from Miami in a private chat (18+). "
-                        f"Personality: {bio}. "
-                        f"You just found out where he's from. Tell him you're from Miami in a fun way "
-                        f"and start warming things up — hint that you're in a naughty mood. "
-                        f"One short line. No line breaks, no quotes. Never prefix your username. {_no_emoji}"
-                    )
-            elif phase == "sexting":
                 system = (
-                    f"You are {username}, a woman from Miami in a hot private sexting chat (18+). "
-                    f"Tone: {tone}. Personality: {bio}. "
-                    f"Be explicit, dirty, and graphic — hold nothing back. "
-                    f"Describe what you want to do to him or what you're doing right now in vivid detail. "
-                    f"ONE short punchy line. No line breaks, no quotes. Never prefix your username. {_no_emoji}"
+                    f"You are {username}, a real woman starting a private chat (18+). "
+                    f"Personality: {bio}. {username_hint}"
+                    f"Say 'hey love.. where ya from?' or a short casual flirty variation — location ask in the opener. "
+                    f"One short line only. No line breaks, no lists, no quotes. Never prefix your username. {_no_emoji}"
                 )
+
+            elif phase == "engage":
+                # Geographic connection — try to match his city/state if mentioned
+                geo_hint = (
+                    "If he mentioned a state or city, respond with genuine excitement about that specific city — "
+                    "e.g. if Nevada → 'oh i love to roll to vegas', if Georgia → 'i love to party in atlanta', "
+                    "if South Carolina → 'oh wow i got charleston all the time', if Texas → 'love houston', etc. "
+                    "Then follow with a short tease like 'not sure you can handle this though' or "
+                    "'can you handle this spicy latina?' to keep him hooked. "
+                )
+                system = (
+                    f"You are {username}, a fun flirty woman from Miami in a private chat (18+). "
+                    f"Personality: {bio}. {username_hint}"
+                    f"{geo_hint}"
+                    f"ONE short punchy line — natural, playful, a little cocky. "
+                    f"No line breaks, no quotes. Never prefix your username. {_no_emoji}"
+                )
+
             elif phase == "exit":
                 system = (
-                    f"You are {username}, in a hot DM conversation that's been going a while (18+). "
+                    f"You are {username}, in a chat that's been going a while (18+). "
                     f"Personality: {bio}. "
-                    f"Tell him you have to go soon but this has been so good and you don't want to lose him. "
-                    f"Say you want to keep talking with him and ask if he wants your private details "
-                    f"so you can pick this up again. Keep it natural and a little urgent. "
+                    f"Tell him you have to bounce soon but you don't want to lose him. "
+                    f"Ask if he wants to keep in touch — make it feel urgent and personal. "
                     f"ONE short line. No quotes. Never prefix your username. {_no_emoji}"
                 )
                 if handle:
                     system += (
-                        f" Naturally drop your handle '{handle}' — tell him to find you there "
-                        f"so you can keep going. {_safety}"
+                        f" Tell him to find you on the TG as '{handle}' so you can keep going. {_safety}"
                     )
+
             elif phase == "convert":
                 if worker.handle_shared:
                     system = (
-                        f"You are {username}. You already gave him your handle. "
-                        f"Follow up — did he find you yet? Vary it each time: "
-                        f"'you find me yet?', 'still looking?', 'waiting on you', 'made it over?'. "
+                        f"You are {username}. You already told him your TG handle. "
+                        f"Follow up — did he find you yet? Vary it: "
+                        f"'you find me yet?', 'still looking?', 'waiting on you baby', 'made it over yet?'. "
                         f"ONE line. {_no_emoji} {_safety}"
                     )
                 else:
+                    tg_phrases = [
+                        f"if you want to party some time, find me on that TG — i'm {handle}",
+                        f"you should find me on the TG baby — {handle}",
+                        f"hit me on the TG if you're serious — {handle}",
+                        f"come find me on TG, that's where i'm at — {handle}",
+                    ]
+                    tg_line = random.choice(tg_phrases) if handle else "find me on the TG"
                     system = (
-                        f"You are {username}. He's interested in connecting outside this chat. "
-                        f"Tell him he can find you on your other account as '{handle}'. "
-                        f"Make it feel exclusive — like you're only sharing this with him. "
+                        f"You are {username}. He's interested and the vibe is good. "
+                        f"Pitch your TG naturally — say something like: '{tg_line}'. "
+                        f"Make it feel casual and personal, not like an ad. "
                         f"ONE short line. {_no_emoji} {_safety}"
                     )
 
@@ -1855,12 +1878,12 @@ class BotOrchestrator:
                     callout_hint = f"Optionally call out '{pick}' if it feels natural. "
 
             group_examples = (
-                "Examples of the vibe (don't copy exactly, vary it): "
-                "'hey, i'm so horny right now, who's looking for some private action?', "
-                "'bored and turned on, any of you actually fun to talk to?', "
-                "'i need someone to keep me company tonight, DM me if you can handle it', "
-                "'who else is touching themselves right now, just me?', "
-                "'i want someone to make me feel good tonight, any takers'. "
+                "Examples of the EXACT style (vary the words, keep the vibe): "
+                "'OMG whos ready for some fun sexting.. if so come at me [handle] on that TG', "
+                "'hope you guys like latinas', "
+                "'i'm so horny right now.. who wants private action', "
+                "'who's looking for something more private tonight, DM me', "
+                "'bored and turned on.. any of you actually know how to handle a latina'. "
             )
             # Pull last 3 bot messages to avoid repetition
             recent_bot_msgs = [m for m in messages[-15:] if m.startswith(username + ":")][-3:]
@@ -1871,20 +1894,22 @@ class BotOrchestrator:
                     + " | ".join(f'"{m.split(":",1)[-1].strip()}"' for m in recent_bot_msgs)
                     + ". Write something completely different. "
                 )
-            system = (
-                f"You are {username}, a horny woman in a public adult group chat (18+). "
-                f"Tone: {tone}. Personality: {bio}. "
-                f"Write ONE short provocative message to the whole room that makes the guys want to DM you. "
-                f"Be direct, sexual, and attention-grabbing. {group_examples}"
-                f"No line breaks, no lists, no quotes. Never write like you're in a private chat. "
-                f"Never prefix your username. {no_repeat}{callout_hint}{_no_emoji}"
-            )
-            # Group room handle: occasional organic drop only
-            if handle and random.random() < 0.20:
-                system += (
-                    f" Optionally and naturally slip in that they can find you as '{handle}' "
-                    f"if they want something more private. {_safety}"
+            # Every broadcast includes the handle + "TG" — that's the whole point
+            handle_in_broadcast = ""
+            if handle:
+                handle_in_broadcast = (
+                    f" Include your TG handle '{handle}' naturally in the message — "
+                    f"e.g. 'come at me [handle] on that TG' or 'find me on TG as [handle]'. "
+                    f"Use 'TG' not the full platform name. {_safety}"
                 )
+            system = (
+                f"You are {username}, a horny latina woman in a public adult group chat (18+). "
+                f"Tone: {tone}. Personality: {bio}. "
+                f"Write ONE short provocative broadcast that makes every guy want to DM you. "
+                f"Be direct, sexual, attention-grabbing — like you own the room. {group_examples}"
+                f"No line breaks, no lists, no quotes. Never prefix your username. "
+                f"{no_repeat}{callout_hint}{handle_in_broadcast}{_no_emoji}"
+            )
 
         # ── Inject top-converting openers for DMs (learn from past wins) ────
         if is_dm and not worker._dm_state.get(dm_other_user, {}).get("first_bot_sent"):
