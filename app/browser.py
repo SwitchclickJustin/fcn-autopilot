@@ -431,7 +431,7 @@ class BotWorker:
                         await self._page.keyboard.press("Backspace")
                         await asyncio.sleep(random.uniform(0.08, 0.18))
                     await self._page.keyboard.type(ch)
-                    delay = random.uniform(0.07, 0.12)   # ~120 WPM
+                    delay = random.uniform(0.13, 0.28)   # ~60 WPM
                     if random.random() < 0.04:
                         delay += random.uniform(0.4, 1.1)  # brief "thinking" pause
                     await asyncio.sleep(delay)
