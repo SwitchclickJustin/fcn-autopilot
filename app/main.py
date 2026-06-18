@@ -128,7 +128,7 @@ input:focus{border-color:#555}
   <form method="post" action="/login">
     <div class="mb"><label>Password</label><input type="password" name="password" autofocus placeholder="••••••••"></div>
     <button class="btn" type="submit">Sign In</button>
-    {error}
+    __ERROR__
   </form>
 </div></body></html>"""
 
@@ -136,7 +136,7 @@ input:focus{border-color:#555}
 async def login_page(request: Request):
     if request.session.get("authed"):
         return RedirectResponse("/", status_code=302)
-    return HTMLResponse(_LOGIN_HTML.format(error=""))
+    return HTMLResponse(_LOGIN_HTML.replace("__ERROR__", ""))
 
 @app.post("/login")
 async def login_submit(request: Request):
@@ -145,7 +145,7 @@ async def login_submit(request: Request):
     if pw == settings.admin_password:
         request.session["authed"] = True
         return RedirectResponse("/", status_code=302)
-    return HTMLResponse(_LOGIN_HTML.format(error='<div class="err">Incorrect password.</div>'), status_code=401)
+    return HTMLResponse(_LOGIN_HTML.replace("__ERROR__", '<div class="err">Incorrect password.</div>'), status_code=401)
 
 @app.get("/logout")
 async def logout(request: Request):
