@@ -411,7 +411,7 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
     # started_at is stored as TEXT in dm_conversations — pass string params not datetime objects
     if USE_NEON:
         dq = "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations WHERE started_at >= $1 AND started_at < $2 AND other_user <> ''"
-        drows = await _fetchall(db, dq, [start, end])
+        drows = await _fetchall(db, dq, [s, e])  # use datetime objects for Neon timestamp column
     else:
         dq = "SELECT COUNT(DISTINCT other_user) AS c FROM dm_conversations WHERE started_at >= ? AND started_at < ? AND other_user <> ''"
         drows = await _fetchall(db, dq, [start, end])

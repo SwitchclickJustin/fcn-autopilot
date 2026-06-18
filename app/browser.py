@@ -1707,6 +1707,14 @@ class BotOrchestrator:
                                         await self._auto_pilot_tick(worker, msgs, client,
                                                                     dm_other_user=other_user)
                                         worker._dms_since_group += 1
+                                        # Wait 10s for a reply — if nothing, move to next DM
+                                        await asyncio.sleep(10)
+                                        follow_msgs = await worker.read_chat()
+                                        follow_count = len(follow_msgs) if follow_msgs else 0
+                                        if follow_count > new_count:
+                                            # He replied — do one more tick immediately
+                                            await self._auto_pilot_tick(worker, follow_msgs, client,
+                                                                        dm_other_user=other_user)
                         dm_next = time.monotonic() + random.uniform(2, 4)
                     elif now >= next_send or force_group:
                         # Group room: rotate between all joined rooms on each send
@@ -1813,20 +1821,11 @@ class BotOrchestrator:
                 first_msgs, re.I
             ))
 
-            # Determine phase
-            handle_ready = bool(handle)
-            if guy_asking_telegram or worker.handle_shared:
-                phase = "convert"
-            elif inbound_from_broadcast and bot_count >= 1:
-                phase = "convert"    # came from broadcast — skip warmup, push TG immediately
-            elif (guy_is_excited or bot_count >= 4) and handle_ready:
-                phase = "convert"    # warm enough — pitch TG
-            elif bot_count >= 12:
-                phase = "exit"       # final urgency pitch
-            elif bot_count >= 2:
-                phase = "engage"     # geographic connection + tease
+            # Determine phase — pitch TG on message 2, always
+            if bot_count == 0:
+                phase = "warmup"     # message 1: opener + location ask
             else:
-                phase = "warmup"     # opener + location ask
+                phase = "convert"    # message 2+: TG pitch immediately
 
             dm_state["phase"] = phase
 
