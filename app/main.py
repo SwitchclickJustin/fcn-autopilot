@@ -1179,13 +1179,17 @@ async def debug_room_list():
                 pass
             await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*="12chats"]')
                 .forEach(e => { const m = e.closest('.stelivo-modal') || e; if (m && m.remove) m.remove(); })""")
-        out["rooms_candidates"] = await page.evaluate("""() => Array.from(document.querySelectorAll('div,button,a,span,li'))
-            .filter(e => /^rooms?$/i.test((e.textContent||'').trim()) && e.offsetParent)
-            .slice(0,8).map(e => ({tag:e.tagName, cls:e.className}))""")
-        await page.evaluate("""() => { const b = Array.from(document.querySelectorAll('.join-container,div,button,a,li'))
-            .find(e => (e.textContent||'').trim().toLowerCase()==='rooms' && e.offsetParent); if (b) b.click(); }""")
-        await page.wait_for_timeout(1500)
-        # Clicking Rooms may spawn another ad — clear again before dumping.
+        # JS-click the Rooms button DIRECTLY (it's compact-hidden at 1280px, so a
+        # visibility-gated click misses it; .click() works on hidden els).
+        out["clicked"] = await page.evaluate("""() => {
+            const btn = document.querySelector('button.join.header-icon')
+                     || document.querySelector('button.join')
+                     || document.querySelector('.header-icon')
+                     || document.querySelector('.join-container');
+            if (btn) { btn.click(); return {ok:true, cls:btn.className}; }
+            return {ok:false};
+        }""")
+        await page.wait_for_timeout(1800)
         try:
             await browser_manager._kill_ads(page)
         except Exception:
@@ -1194,15 +1198,19 @@ async def debug_room_list():
             .forEach(e => { const m = e.closest('.stelivo-modal') || e; if (m && m.remove) m.remove(); })""")
         dump = await page.evaluate("""() => {
             const o = {};
-            const all = Array.from(document.querySelectorAll('*'));
-            // Anchor on something only the room-list panel has.
-            let anchor = all.find(e => /chatting now/i.test(e.textContent||'') && (e.textContent||'').length < 40)
-                     || all.find(e => (e.textContent||'').trim().toLowerCase() === 'room list')
-                     || all.find(e => (e.textContent||'').trim().toLowerCase() === 'roleplay' && e.offsetParent);
-            o.anchor_found = !!anchor;
-            let panel = anchor;
-            for (let i=0; i<8 && panel && panel.parentElement; i++) panel = panel.parentElement;
-            o.panel_html = panel ? panel.outerHTML.slice(0, 9000) : '(no panel found)';
+            // Largest fixed/absolute overlay that isn't the ad = the room-list modal.
+            const cands = Array.from(document.querySelectorAll('div')).filter(e => {
+                const s = getComputedStyle(e);
+                return (s.position === 'fixed' || s.position === 'absolute')
+                    && e.offsetParent !== null && !/stelivo/i.test(e.className||'')
+                    && e.querySelectorAll('*').length > 12;
+            }).sort((a,b) => b.querySelectorAll('*').length - a.querySelectorAll('*').length);
+            o.overlay_count = cands.length;
+            o.panel_html = cands.length ? cands[0].outerHTML.slice(0, 9000) : '(no overlay panel)';
+            // Also: anything whose text looks like "<name> <count>" room tiles.
+            o.tile_samples = Array.from(document.querySelectorAll('*'))
+                .filter(e => e.children.length <= 3 && /^[A-Za-z][\\w .&-]{2,20}\\s+\\d{2,4}$/.test((e.textContent||'').trim()))
+                .slice(0,8).map(e => ({cls:e.className, txt:(e.textContent||'').trim().slice(0,30), html:(e.outerHTML||'').slice(0,180)}));
             return o;
         }""")
         out.update(dump)
