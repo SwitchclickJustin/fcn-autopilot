@@ -1191,9 +1191,14 @@ class BotOrchestrator:
                 except Exception:
                     rooms = [rooms]
             worker.rooms = list(rooms) if rooms else ["SextChat"]
-        room = (rooms[0] if rooms else "SextChat") or "SextChat"
-        worker.room = room
-        slug = FCN_SLUG_MAP.get(room.lower()) or room.lower().replace("chat", "").strip() or "sext"
+        room = (rooms[0] if rooms else "sex") or "sex"
+        # Login MUST target a valid BASE room slug (sex/adult/sext/...), never a
+        # dynamically-joined room name like 'SexChat2' (-> 'sex2', a dead login URL).
+        # Strip a trailing digit and fall back to a real base room.
+        slug = FCN_SLUG_MAP.get(room.lower()) or re.sub(r"\d+$", "", room.lower().replace("chat", "")).strip()
+        if slug not in FCN_ROOMS:
+            slug = "sex"
+        worker.room = slug
         room_url = f"{self.FCN_BASE}/chat/{slug}/"
 
         # ── Step 1: navigate directly to the room page ────────────────────────
