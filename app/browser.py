@@ -111,7 +111,7 @@ _ZWSP = "​"  # zero-width space — invisible to humans, breaks FCN's exact-st
 
 # Max DMs handled per loop tick — bounds tick time so a high-traffic agent stays responsive
 # (newest DMs first; the rest roll to the next tick). Poll = low-priority re-checks.
-_DM_PER_TICK = 3
+_DM_PER_TICK = 2
 _DM_POLL_PER_TICK = 2
 
 
@@ -1949,7 +1949,7 @@ class BotOrchestrator:
                                     info = await self._read_dm_partner_info(worker._page)
                                     dm_st["partner_age"] = info.get("age")
                                     dm_st["partner_country"] = info.get("country")
-                                msgs = await worker.read_chat()
+                                msgs = await worker.read_chat(15)  # DM: last 15 is plenty of context
                                 if msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
@@ -1980,7 +1980,7 @@ class BotOrchestrator:
                                 other_user = c["text"] or "unknown"
                                 worker.in_dm = True
                                 worker.room = other_user
-                                msgs = await worker.read_chat()
+                                msgs = await worker.read_chat(15)  # DM: last 15 is plenty of context
                                 if msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
