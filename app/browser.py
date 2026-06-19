@@ -1768,7 +1768,7 @@ class BotOrchestrator:
             el = await page.query_selector(f'.roomlist-room a[href="{href}"]')
             if el is None:
                 return False
-            await el.click(timeout=4000)
+            await el.click(timeout=2000)  # fail fast on stuck tabs (was 4000)
             await page.wait_for_timeout(300)  # conv-switch settle (snappier DM cycling)
             return True
         except Exception:
@@ -1852,6 +1852,8 @@ class BotOrchestrator:
         next_send = 0.0     # group-room pace gate (monotonic seconds)
         dm_next = 0.0       # hot-DM pace gate (faster)
         dm_poll_next = 0.0  # quiet-DM re-check gate (low priority, never blocks group)
+        last_ok = 0         # send_oks at last progress — for the self-heal stall detector
+        last_ok_mono = time.monotonic()
         while self._auto_pilot_enabled.get(agent_id, False):
             try:
                 # ── CDP path (fast, zero cost) ──
@@ -1896,9 +1898,25 @@ class BotOrchestrator:
                             dm_next = time.monotonic() + 10
                             await asyncio.sleep(2)
                             await self._join_top_rooms(worker, n=3, min_traffic=300)
+                            last_ok_mono = time.monotonic()  # recovery = progress
                         await asyncio.sleep(3)
                         continue
                     ban_strikes = 0
+
+                    # Self-heal: if NOT banned but no successful send in ~90s, the page is
+                    # likely stuck (e.g. conversation opens timing out → dead 8s ticks).
+                    # Reload to rebuild the chat DOM and break the stall.
+                    if worker.send_oks > last_ok:
+                        last_ok = worker.send_oks
+                        last_ok_mono = _t0
+                    elif _t0 - last_ok_mono > 90:
+                        logger.warning(f"[{agent_id}] no send in 90s — reloading page to self-heal")
+                        try:
+                            await worker._page.reload(wait_until="domcontentloaded", timeout=20000)
+                            await worker._page.wait_for_timeout(2500)
+                        except Exception:
+                            pass
+                        last_ok_mono = _t0  # reset so we don't reload every tick
 
                     # Refresh persona settings (handle/bio/tone) live — so edits on
                     # the Personas page apply WITHOUT restarting the session.
