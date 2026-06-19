@@ -126,10 +126,14 @@ def _safe_tg(token: str) -> str:
 # booted (2026-06-19). Wide GROUP pool so the SAME platform string isn't repeated every
 # broadcast (repetition itself is a ban signal — 2026-06-19).
 _TG_TOKENS_DM = ["TG", "the TG", "Tela Grahm", "Tele", "on TG", "my telly", "Tella Gram"]
+# Wide GROUP pool — many ways to say it so the SAME string is never repeated (repetition
+# is the ban trigger). "TG"/"T G" are zero-width-space protected by _safe_tg so they read
+# as TG to humans but can't be exact-string matched. All scanner-safe.
 _TG_TOKENS_GROUP = [
-    "Tela Grahm", "Tela Graham", "Tella Grahm", "Tella Gram", "Tela gram",
-    "Tele Grahm", "Telagrahm", "T3la Grahm", "Tel A Grahm", "my telly",
-    "Tella Grams", "tela grhm",
+    "TG", "T G", "T Gram", "T Grahm", "T.G.",
+    "Tela Grahm", "TelaGrahm", "Tella Grahm", "TallaGrahm", "Talla Grahm",
+    "Tela Gram", "Tella Gram", "Tel A Gram", "T3la Grahm", "Telagrahm",
+    "Tela gram", "Tella Grams", "tela grhm", "my telly", "the telly",
 ]
 
 
