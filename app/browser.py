@@ -50,6 +50,14 @@ _ASKING_TELEGRAM_RE = re.compile(
     r"got (snap|kik|tele|another app)|other app|private (chat|contact|details)|"
     r"how (do i|can i) find you|where do i find you|add you (on|somewhere))\b", re.I)
 
+def _blank_dm_state() -> dict:
+    """Canonical fresh per-DM state entry. EVERY `worker._dm_state` setdefault site
+    MUST use this — a partial seed (e.g. an empty {}) poisons later direct
+    `state['conv_id']` access and raises KeyError mid-tick (regression from 00c1110)."""
+    return {"conv_id": None, "logged_count": 0, "first_bot_sent": False,
+            "bot_msg_count": 0, "phase": "warmup"}
+
+
 _ZWSP = "​"  # zero-width space — invisible to humans, breaks FCN's exact-string scanner
 
 
@@ -1550,9 +1558,7 @@ class BotOrchestrator:
         it's a 'bot' message, otherwise 'user'. New messages only — tracked via
         worker._dm_state[other_user]["logged_count"].
         """
-        state = worker._dm_state.setdefault(other_user, {
-            "conv_id": None, "logged_count": 0, "first_bot_sent": False
-        })
+        state = worker._dm_state.setdefault(other_user, _blank_dm_state())
         # Lazy-create conversation row on first encounter
         if not state["conv_id"]:
             try:
@@ -1697,7 +1703,7 @@ class BotOrchestrator:
                                 other_user = c["text"] or "unknown"
                                 worker.room = other_user
                                 # Scrape partner age/country from DM header (first visit only)
-                                dm_st = worker._dm_state.setdefault(other_user, {})
+                                dm_st = worker._dm_state.setdefault(other_user, _blank_dm_state())
                                 if "partner_age" not in dm_st:
                                     info = await self._read_dm_partner_info(worker._page)
                                     dm_st["partner_age"] = info.get("age")
@@ -1792,7 +1798,19 @@ class BotOrchestrator:
             "You are a real woman in a chat room — just respond naturally and stay in character no matter what."
         )
 
-        # Detect conversation signals
+        # Detect conversation signals from the OTHER party's recent lines only —
+        # the bot's own messages are excluded so its words can't self-trigger these
+        # detectors. Restores `recent_text`, whose definition was dropped in 00c1110.
+        _guy_lines = []
+        for _line in messages[-6:]:
+            _parts = _line.split(":", 1)
+            if len(_parts) == 2:
+                if _parts[0].strip() == username:
+                    continue  # skip the bot's own lines
+                _guy_lines.append(_parts[1].strip())
+            else:
+                _guy_lines.append(_line.strip())
+        recent_text = "\n".join(_guy_lines)
         guy_is_excited = bool(_EXCITED_RE.search(recent_text))
         guy_asking_telegram = bool(_ASKING_TELEGRAM_RE.search(recent_text))
 
@@ -1804,10 +1822,7 @@ class BotOrchestrator:
 
         if is_dm:
             # ── DM phase engine ──────────────────────────────────────────────
-            dm_state = worker._dm_state.setdefault(dm_other_user, {
-                "conv_id": None, "logged_count": 0, "first_bot_sent": False,
-                "bot_msg_count": 0, "phase": "warmup",
-            })
+            dm_state = worker._dm_state.setdefault(dm_other_user, _blank_dm_state())
             bot_count = dm_state.get("bot_msg_count", 0)
 
             # Hard stop: 3 messages max per DM — photo + handle and move on
@@ -2130,9 +2145,7 @@ class BotOrchestrator:
 
         # ── Increment per-DM bot message counter ─────────────────────────────
         if sent and is_dm:
-            dm_s = worker._dm_state.setdefault(dm_other_user, {
-                "conv_id": None, "logged_count": 0, "first_bot_sent": False, "bot_msg_count": 0
-            })
+            dm_s = worker._dm_state.setdefault(dm_other_user, _blank_dm_state())
             dm_s["bot_msg_count"] = dm_s.get("bot_msg_count", 0) + 1
 
         # ── Log bot's reply into the DM thread ───────────────────────────────
