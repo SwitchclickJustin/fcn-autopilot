@@ -1488,7 +1488,9 @@ async def api_provider_models(data: dict):
                 r = await c.get("https://openrouter.ai/api/v1/models", headers={"Authorization": f"Bearer {api_key}"})
                 if r.status_code == 200:
                     models = r.json().get("data", [])
-                    return {"models": [m["id"] for m in models[:200]]}
+                    # Return ALL models, sorted — the old [:200] cap hid models like
+                    # sao10k/l3-lunaris-8b that sort/order past index 200.
+                    return {"models": sorted(m["id"] for m in models)}
         elif provider_type == "openai":
             return {"models": ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]}
         elif provider_type == "anthropic":

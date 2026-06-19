@@ -137,7 +137,9 @@ async function fetchModels() {
         m.includes('gpt-4o-mini') || m.includes('gpt-4o') ||
         m.includes('claude-sonnet') || m.includes('claude-3.5') ||
         m.includes('llama-3') || m.includes('deepseek') ||
-        m.includes('mistral') || m.includes('gemini')
+        m.includes('mistral') || m.includes('gemini') ||
+        m.includes('sao10k') || m.includes('lunaris') ||
+        m.includes('stheno') || m.includes('nemo')
       );
       const rest = data.models.filter(m => !popular.includes(m));
 
