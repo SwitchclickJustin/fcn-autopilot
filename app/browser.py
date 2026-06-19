@@ -162,9 +162,17 @@ def _obfuscate_handle(text: str, handle: str, tg_token: str) -> str:
     return result
 
 
+_EMOJI_RE = re.compile(
+    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+    "\U0001F600-\U0001F64F\U0001F900-\U0001F9FF←-⇿⬀-⯿️‍]",
+    flags=re.UNICODE)
+
+
 def _strip_ai_tells(text: str) -> str:
-    """Remove em/en dashes — a dead giveaway of AI text. Real people don't type ' — '."""
+    """Remove em/en dashes AND emojis — both are dead giveaways of AI/bot text. Real people
+    in these rooms type plain text with '..', not ' — ' or 😏."""
     text = re.sub(r"\s*[—–]\s*", ".. ", text)   # ' — ' -> '.. '
+    text = _EMOJI_RE.sub("", text)              # strip emojis (persona rule: none)
     return re.sub(r"  +", " ", text).strip()
 
 
