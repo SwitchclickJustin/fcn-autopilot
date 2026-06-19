@@ -54,6 +54,22 @@ _ASKING_TELEGRAM_RE = re.compile(
     r"got (snap|kik|tele|another app)|other app|private (chat|contact|details)|"
     r"how (do i|can i) find you|where do i find you|add you (on|somewhere))\b", re.I)
 
+# Distinct broadcast ANGLES (message *types*, not just reworded acts) — one is picked at
+# random per group message so she doesn't always run the same "doing X live, find me" line.
+# Every angle still ends on her phone + telegram (no cam site / room).
+_BROADCAST_STYLES = [
+    "LIVE-SHOW INVITE: invite them to watch you do a specific sex act live on your phone right now, with a little scarcity.",
+    "DIRTY QUESTION: open with a filthy question to the whole room (e.g. 'which one of you can actually make a latina squirt?'), then say you'll show whoever answers on your phone.",
+    "NAUGHTY CONFESSION: confess what you're fantasizing about / what you did earlier, then say you're recreating it live on your phone for a couple guys.",
+    "BORED & HORNY: say you're home alone, bored and dripping, and need a guy to entertain you live on your phone rn.",
+    "LOOKING-FOR: say exactly what kind of guy you want right now (big, dominant, a moaner, etc.) and that he should pull you up on your phone to prove it.",
+    "BRATTY TEASE: be cocky — bet that most guys here can't handle you, dare one to prove it live on your phone.",
+    "JUST-NOW: say you just got out of the shower / woke up soaked / took your toys out, and you're about to play live on your phone.",
+    "RATE-ME / SHOW-OFF: brag about a body part or what you're wearing (or not), and say you'll show it off live on your phone to whoever's quick.",
+    "COUNTDOWN: announce you're starting a live phone show in a few minutes and only have room for a couple guys before you begin.",
+    "REACT-TO-ROOM: riff off the room's vibe/what guys are saying, then pivot to taking it to your phone live.",
+]
+
 def _blank_dm_state() -> dict:
     """Canonical fresh per-DM state entry. EVERY `worker._dm_state` setdefault site
     MUST use this — a partial seed (e.g. an empty {}) poisons later direct
@@ -2176,13 +2192,11 @@ class BotOrchestrator:
                     f"tell them to continue it with you on TG {handle_cap}. "
                 )
             else:
+                # Pick a random ANGLE so messages vary in TYPE, not just wording.
                 room_angle = (
-                    f"Tell them about a specific sexual act you're craving to do live on your PHONE "
-                    f"on TG {handle_cap}, with a little scarcity and a countdown. "
-                    f"VARY it every single time — different act, different hook, different wording. "
-                    f"The following show the VIBE ONLY — do NOT copy them, write your own: "
-                    f"'so horny i wanna play live on my phone for a couple guys rn..', "
-                    f"'wanna get off live on my phone for whoever pulls me up first'. "
+                    f"Use THIS angle for the message — {random.choice(_BROADCAST_STYLES)} "
+                    f"Then work in your handle on TG {handle_cap}. Write it fresh in your own words, "
+                    f"never copy a previous message. "
                 )
 
             system = (
