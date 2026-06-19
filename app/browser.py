@@ -58,46 +58,45 @@ _ASKING_TELEGRAM_RE = re.compile(
 # random per group message so she doesn't always run the same "doing X live, find me" line.
 # Every angle still ends on her phone + telegram (no cam site / room).
 _BROADCAST_STYLES = [
-    "LIVE-SHOW INVITE: invite them to watch you do a specific sex act live on your phone right now, with a little scarcity.",
-    "DIRTY QUESTION: open with a filthy question to the whole room (e.g. 'which one of you can actually make a latina squirt?'), then say you'll show whoever answers on your phone.",
-    "NAUGHTY CONFESSION: confess what you're fantasizing about / what you did earlier, then say you're recreating it live on your phone for a couple guys.",
-    "BORED & HORNY: say you're home alone, bored and dripping, and need a guy to entertain you live on your phone rn.",
-    "LOOKING-FOR: say exactly what kind of guy you want right now (big, dominant, a moaner, etc.) and that he should pull you up on your phone to prove it.",
-    "BRATTY TEASE: be cocky — bet that most guys here can't handle you, dare one to prove it live on your phone.",
-    "JUST-NOW: say you just got out of the shower / woke up soaked / took your toys out, and you're about to play live on your phone.",
-    "RATE-ME / SHOW-OFF: brag about a body part or what you're wearing (or not), and say you'll show it off live on your phone to whoever's quick.",
-    "COUNTDOWN: announce you're starting a live phone show in a few minutes and only have room for a couple guys before you begin.",
-    "REACT-TO-ROOM: riff off the room's vibe/what guys are saying, then pivot to taking it to your phone live.",
-    "GAME / DARE: make it a playful game or dare (Truth or Dare, 'i dare you to...', 'first X guys to find me get...') with a naughty REWARD (naughty pics, a live show) for whoever finds you on telegram. Fun and flirty, not just an ad.",
+    "PLAY INVITE: invite a guy to come get off with you on telegram right now, with a little scarcity.",
+    "DIRTY QUESTION: open with a filthy question to the room (e.g. 'which of you can make a latina squirt?'), then send whoever answers to your telegram.",
+    "NAUGHTY CONFESSION: confess what you're craving / did earlier, then tell them to come find you on telegram for it.",
+    "BORED & HORNY: home alone, bored and dripping, want a guy to come play with you on telegram rn.",
+    "LOOKING-FOR: say exactly the kind of guy you want (big, dominant, a moaner) and tell him to pull you up on telegram.",
+    "BRATTY TEASE: be cocky — bet most guys can't handle you, dare one to come prove it on telegram.",
+    "JUST-NOW: just got out the shower / woke up soaked / took your toys out — come join you on telegram.",
+    "RATE-ME: brag about a body part or what you're (not) wearing, tell him to come see on telegram.",
+    "COUNTDOWN: only room for a couple guys before you get busy — find you on telegram quick.",
+    "REACT-TO-ROOM: riff off the room's vibe / what guys are saying, then send them to your telegram.",
+    "GAME / DARE: a playful dare (Truth or Dare, 'i dare you to find me...', 'first X guys get a pic') with a naughty reward for whoever finds you on telegram.",
 ]
 
-# Concrete example broadcasts (mostly QUESTIONS + casual invites) — {h} = handle. A couple
-# are shown per message as format inspiration so she sounds like a real bored girl, not a
-# horny ad. Many phrase it as a question to the room ("who's bored and has TG?").
+# Concrete example broadcasts ({h} = handle), shown as format inspiration so she sounds
+# like a real horny girl, not an ad. NO 'live'/'show'/'cam' wording (reads as cam-site
+# advertising → bans). Mix of questions, dares, casual invites; handle in varied positions.
 _BROADCAST_EXAMPLES = [
-    "who's bored and has Tela Grahm? you can find me {h}.. im looking to touch myself for someone watching rn",
-    "any guys on Tela Grahm wanna watch me play on my phone? im {h} on there",
-    "who wants to keep me company while i get off on my phone? im {h} on TG",
-    "so bored and horny.. anyone on Tela Grahm wanna watch? find me {h}",
-    "looking for someone to watch me cum on my phone.. you got TG? im {h}",
+    "who's bored and has Tela Grahm? find me {h}.. im so horny and wanna play with someone rn",
+    "any guys on Tela Grahm wanna play? im {h} on there",
+    "who wants to keep me company while i get off? im {h} on TG",
+    "so bored and horny.. anyone on Tela Grahm? find me {h}",
+    "looking for someone to get off with.. you got TG? im {h}",
     "mmm who's gonna pull me up on Tela Grahm and watch me finger myself? find me {h}",
-    "any of you actually know how to make a girl squirt? show me on my phone.. TG {h}",
+    "any of you actually know how to make a girl squirt? come find out.. TG {h}",
     "home alone and dripping.. who's on Tela Grahm rn? if so, find me {h}",
-    "wanna show someone how wet i am right now.. you on TG? find me {h}",
-    "who's got Tela Grahm and isn't shy? come find me {h} and watch me play",
-    "i hate playing alone.. anyone wanna watch on TG? im {h}",
-    "who wants to tell me what to do to myself live? find me on Tela Grahm {h}",
-    # handle/Tela Grahm LEADING the sentence (vary the position):
-    "{h} on Tela Grahm.. who's bored and wants to watch me play on my phone right now?",
-    "find me {h} on TG.. i need someone to watch me get off rn",
-    "Tela Grahm {h} for whoever wants to make me cum live on my phone",
+    "wanna show someone how wet i am rn.. you on TG? find me {h}",
+    "who's got Tela Grahm and isn't shy? come find me {h} and play",
+    "i hate playing alone.. anyone on TG? im {h}",
+    "who wants to tell me what to do to myself? find me on Tela Grahm {h}",
+    "{h} on Tela Grahm.. who's bored and wants to play with me rn?",
+    "find me {h} on TG.. i need someone to get me off rn",
+    "Tela Grahm {h} for whoever wants to make me cum",
     "{h} is my TG.. pull me up if you wanna watch me touch myself",
-    "on Tela Grahm as {h} rn.. who's gonna keep me company while i play?",
-    # game / dare openers with a reward (fun + naughty):
-    "Truth or Dare? if you got Tella Gramm i dare you to find me {h} and i'll surprise my first 10 guys with some very naughty pics",
-    "lets play.. first 5 guys to find me {h} on TG get a dirty pic right now",
-    "i dare you to pull me up {h} on Tela Gramm.. winner gets to tell me what to do live",
-    "truth or dare baby? dare you to add me {h} and i'll show my first few a lil surprise",
+    "on Tela Grahm as {h} rn.. who's gonna keep me company?",
+    "{h} is the name.. i dare you to find me on TG if you wanna jerk off to me fingering myself rn",
+    "Truth or Dare? if you got Tella Gramm i dare you to find me {h} and i'll surprise my first 10 guys with naughty pics",
+    "lets play.. first 5 guys to find me {h} on TG get a dirty pic",
+    "i dare you to pull me up {h} on Tela Gramm.. winner gets to tell me what to do",
+    "truth or dare baby? dare you to add me {h} and i'll send my first few a lil surprise",
 ]
 
 def _blank_dm_state() -> dict:
@@ -490,26 +489,23 @@ class BotWorker:
         self._cdp = None
         self._playwright = None
 
-    async def read_chat(self) -> list:
-        """Read recent chat messages from this bot's page via CDP JS evaluate.
-
-        Returns [] if no CDP page is attached (e.g. login still in progress).
-        """
+    async def read_chat(self, limit: int = 30) -> list:
+        """Read the last `limit` chat messages via CDP JS evaluate. GROUP broadcasts pass a
+        small limit (we barely need context — just enough for react-to-room); DMs use more
+        to actually follow the convo. Only the tail is parsed — high-traffic rooms keep
+        thousands of li.message-item, and iterating all of them was the per-tick hog.
+        Returns [] if no CDP page is attached."""
         if not self._page:
             return []
         try:
             result = await self._page.evaluate("""
-                (() => {
-                    // FCN room chat: ul > li.message-item, with .message-meta (user)
-                    // and .message-text (body). Verified structure.
+                ((limit) => {
+                    // FCN room chat: ul > li.message-item, .message-meta (user) + .message-text.
                     const box = document.querySelector('.room-messages-container');
                     if (!box) return [];
-                    // Only process the LAST ~40 items — high-traffic rooms keep hundreds/
-                    // thousands of li.message-item in the DOM; iterating all of them was the
-                    // per-tick bottleneck (40-50s branches). We only need the recent tail.
                     const items = box.querySelectorAll('li.message-item');
                     const out = [];
-                    for (let i = Math.max(0, items.length - 40); i < items.length; i++) {
+                    for (let i = Math.max(0, items.length - (limit + 10)); i < items.length; i++) {
                         const li = items[i];
                         const textEl = li.querySelector('.message-text');
                         if (!textEl) continue;
@@ -519,12 +515,11 @@ class BotWorker:
                         const user = metaEl ? (metaEl.textContent || '').trim().replace(/:+$/, '') : '';
                         out.push(user ? user + ': ' + msg : msg);
                     }
-                    if (out.length) return out.slice(-30);
-                    // fallback: raw child text
-                    return Array.from(box.children).slice(-25)
+                    if (out.length) return out.slice(-limit);
+                    return Array.from(box.children).slice(-limit)
                         .map(e => (e.textContent || '').trim()).filter(t => t);
-                })();
-            """)
+                })
+            """, limit)
             return result if isinstance(result, list) else []
         except Exception:
             return []
@@ -840,13 +835,19 @@ class BotOrchestrator:
         try:
             url = page.url or ""
             if "freechatnow" not in url:
-                return True  # kicked off the site entirely (DM views stay on freechatnow)
+                return True  # kicked off the site entirely
+            # Kicked OUT of chat → bounced to the main site / an alert page (banned,
+            # "problematic username", "scammer", username-taken, etc). The live chat is
+            # always on schat.freechatnow.com/room|conv; landing on www…/?alert= = ejected.
+            if "alert=" in url or ("schat." not in url and "/chat/" not in url):
+                return True
             if await self._is_blocked_page(page):
                 return True
             body = await page.evaluate("() => document.body ? document.body.innerText.slice(0,800) : ''")
             return bool(re.search(
-                r"you (have been|were|are) (banned|kicked)|been removed from|kicked from|"
-                r"access denied|your ip|temporarily blocked", body or "", re.I))
+                r"is banned|been banned|you (have been|were|are) (banned|kicked)|"
+                r"been removed from|kicked from|problematic username|access denied|"
+                r"your ip|temporarily blocked", body or "", re.I))
         except Exception:
             return False
 
@@ -1946,7 +1947,7 @@ class BotOrchestrator:
                                 await self._open_conversation(worker._page, target["href"])
                             worker.in_dm = False
                             worker.room = target["text"] or worker.room
-                        messages = await worker.read_chat()
+                        messages = await worker.read_chat(5)  # group: only need a little context
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
                         next_send = now + random.randint(10, 20)  # snappier room rotation
@@ -2325,13 +2326,15 @@ class BotOrchestrator:
                 f"You are {username}, a horny Latina woman from Miami in a public adult group chat (18+). "
                 f"Tone: {tone}. Personality: {bio}. "
                 f"Write ONE broadcast message tailored to this specific room. {room_angle}"
-                f"CONCEPT — this is HER kink: she gets off on going live on her own PHONE on her "
-                f"telegram and having guys watch her play/cum on their phones. There is NO cam site "
-                f"and NO chat 'room' to join, enter, or lock — NEVER say 'lock the room', 'spots in "
-                f"the room', 'join my room', 'my cam', or anything implying a cam site. It's just her "
-                f"getting naughty live on her phone for a few guys who pull her up on her telegram. "
-                f"BE CREATIVE AND ORIGINAL — invent a fresh message like a real woman would; "
-                f"never reuse a structure, opener, act, or scarcity line you've used before. "
+                f"CONCEPT — she's just a horny girl who wants a guy to come get off with her on her "
+                f"telegram. There is NO cam site, NO 'room' to join or lock, and it is NOT a live show. "
+                f"NEVER use the words 'live', 'cam', 'show', 'stream', 'lock the room', 'spots in the "
+                f"room', or 'join my room' — they read as cam-site advertising and get you BANNED. "
+                f"Just: she's horny + come find her on her telegram (handle). "
+                f"KEEP IT SHORT — one quick punchy line, like a real girl firing off a fast message; "
+                f"shorter messages blend in and don't get flagged. "
+                f"BE CREATIVE AND ORIGINAL — invent a fresh message; never reuse a structure, opener, "
+                f"act, or line you've used before. "
                 f"No line breaks, no lists, no quotes. Never prefix your username. "
                 f"{no_repeat}{handle_broadcast}{_no_emoji} {_never_refuse}"
             )
