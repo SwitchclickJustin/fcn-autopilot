@@ -75,13 +75,16 @@ def _safe_tg(token: str) -> str:
     return token
 
 
-# Varied obfuscated Telegram tokens — used in BOTH group rooms and DMs (chosen
-# 2026-06-19). One is picked at random per message so the cue isn't repetitive.
-_TG_TOKENS = ["TG", "the TG", "Tela Grahm", "Tele", "on TG"]
+# Obfuscated Telegram tokens, picked at random per message so the cue varies.
+# DMs (private, lighter scanning) tolerate casual short forms. GROUP rooms (public,
+# scanned + human-modded) must use ONLY the misspelled/spaced forms — a bare "TG" got
+# an agent booted (2026-06-19), so no "TG"/"Tele" in the group pool.
+_TG_TOKENS_DM = ["TG", "the TG", "Tela Grahm", "Tele", "on TG"]
+_TG_TOKENS_GROUP = ["Tela Grahm", "Tela Graham"]
 
 
-def _pick_tg_token() -> str:
-    return _safe_tg(random.choice(_TG_TOKENS))
+def _pick_tg_token(is_dm: bool) -> str:
+    return _safe_tg(random.choice(_TG_TOKENS_DM if is_dm else _TG_TOKENS_GROUP))
 
 
 def _sanitize_platforms(text: str, tg_token: str) -> str:
@@ -2122,7 +2125,7 @@ class BotOrchestrator:
         # Obfuscate handle + convert telegram refs to a randomly-picked scanner-safe token
         # BEFORE sending (TG / Tela Grahm / Tele etc., varied each message, both contexts).
         # The handle is never sent without a telegram cue.
-        tg_token = _pick_tg_token()
+        tg_token = _pick_tg_token(is_dm)
         if handle:
             send_text = _obfuscate_handle(response, handle, tg_token)
         else:
