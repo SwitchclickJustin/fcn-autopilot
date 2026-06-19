@@ -82,7 +82,10 @@ class LLMClient:
                     {"role": "user", "content": user_prompt}
                 ],
                 "temperature": self.temperature,
-                "max_tokens": max_tokens
+                "max_tokens": max_tokens,
+                # Push the model away from formulaic, repeated phrasing so broadcasts vary.
+                "frequency_penalty": 0.6,
+                "presence_penalty": 0.5,
             }
 
         try:

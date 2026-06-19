@@ -2093,17 +2093,20 @@ class BotOrchestrator:
                 )
             else:
                 room_angle = (
-                    f"Announce a specific sexual act you're about to do live, "
-                    f"add scarcity ('only 5 guys', 'starting in 5 mins'), "
-                    f"direct them to TG {handle_cap}. "
-                    f"Examples: 'gonna touch myself live.. find me on TG {handle_cap}.. only 5 spots.. I Squirt!!', "
-                    f"'okay first off.. Find me on TG {handle_cap} & if you do.. i'll let you watch me finger myself live.. i start in 5 mins'. "
+                    f"Announce a specific sexual act you're about to do live, with scarcity "
+                    f"(a number of spots, a countdown) and a direction to TG {handle_cap}. "
+                    f"VARY it every single time — different act, different hook, different scarcity, "
+                    f"different wording. The following show the VIBE ONLY — do NOT copy them, write "
+                    f"your own: 'gonna touch myself live.. only a few spots..', "
+                    f"'cumming live in 5 for whoever finds me first'. "
                 )
 
             system = (
                 f"You are {username}, a horny latina woman in a public adult group chat (18+). "
                 f"Tone: {tone}. Personality: {bio}. "
                 f"Write ONE broadcast message tailored to this specific room. {room_angle}"
+                f"BE CREATIVE AND ORIGINAL — invent a fresh message like a real woman would; "
+                f"never reuse a structure, opener, act, or scarcity line you've used before. "
                 f"No line breaks, no lists, no quotes. Never prefix your username. "
                 f"{no_repeat}{handle_broadcast}{_no_emoji} {_never_refuse}"
             )
