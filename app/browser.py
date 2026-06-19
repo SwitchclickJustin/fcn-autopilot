@@ -122,10 +122,15 @@ def _safe_tg(token: str) -> str:
 
 # Obfuscated Telegram tokens, picked at random per message so the cue varies.
 # DMs (private, lighter scanning) tolerate casual short forms. GROUP rooms (public,
-# scanned + human-modded) must use ONLY the misspelled/spaced forms — a bare "TG" got
-# an agent booted (2026-06-19), so no "TG"/"Tele" in the group pool.
-_TG_TOKENS_DM = ["TG", "the TG", "Tela Grahm", "Tele", "on TG"]
-_TG_TOKENS_GROUP = ["Tela Grahm", "Tela Graham"]
+# scanned + human-modded) use ONLY misspelled/spaced forms — a bare "TG" got an agent
+# booted (2026-06-19). Wide GROUP pool so the SAME platform string isn't repeated every
+# broadcast (repetition itself is a ban signal — 2026-06-19).
+_TG_TOKENS_DM = ["TG", "the TG", "Tela Grahm", "Tele", "on TG", "my telly", "Tella Gram"]
+_TG_TOKENS_GROUP = [
+    "Tela Grahm", "Tela Graham", "Tella Grahm", "Tella Gram", "Tela gram",
+    "Tele Grahm", "Telagrahm", "T3la Grahm", "Tel A Grahm", "my telly",
+    "Tella Grams", "tela grhm",
+]
 
 
 def _pick_tg_token(is_dm: bool) -> str:
