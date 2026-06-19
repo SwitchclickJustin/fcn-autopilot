@@ -859,11 +859,9 @@ class BotOrchestrator:
                     logger.error(f"[{agent_id}] all recovery attempts failed — agent offline")
                     return
 
-            # Join all assigned rooms beyond the first (best-effort). Kept short so the
-            # first broadcast in the primary room isn't delayed ~20s by serial joins.
-            for extra_room in worker.rooms[1:]:
-                await asyncio.sleep(0.5)
-                await self._join_second_room(worker, extra_room)
+            # Join the top-traffic NON-gay rooms via the room directory (dynamic — replaces
+            # the static room assignment). The loop then rotates broadcasts across them.
+            await self._join_top_rooms(worker, n=3, min_traffic=300)
 
             # Start the auto-pilot loop immediately.
             worker.phase = "starting_loop"
@@ -877,6 +875,67 @@ class BotOrchestrator:
             worker.last_error = f"setup: {type(e).__name__}: {e}"[:200]
             logger.error(f"Bot setup failed for {agent_id}: {e}")
             worker.status = "error"
+
+    # Room names to skip (gay/trans/femboy/etc) — verified against the live room directory.
+    _GAY_ROOM_RE = "gay|trans|femboy|sissy|lgbt|lgtb|bisex|m4m|men4men"
+
+    async def _join_top_rooms(self, worker: BotWorker, n: int = 3, min_traffic: int = 300) -> list:
+        """Open FCN's room directory, rank non-gay rooms with >= min_traffic by traffic, and
+        join this agent's slice of `n` (distributed by slot so multiple agents spread across
+        the top rooms). Joining = double-click the room tile's hidden '+' button. The loop
+        then rotates broadcasts across whatever rooms ended up joined."""
+        page = worker._page
+        if not page:
+            return []
+        # Slot from agent_id suffix ("Alexa_2" -> slot 1); single agent -> 0.
+        slot = 0
+        tail = worker.agent_id.rsplit("_", 1)[-1] if "_" in worker.agent_id else ""
+        if tail.isdigit():
+            slot = max(0, int(tail) - 1)
+        try:
+            result = await page.evaluate("""async (cfg) => {
+                const {n, minTraffic, slot, gayRe} = cfg;
+                const rx = new RegExp(gayRe, 'i');
+                let b = null;
+                for (let i=0; i<12; i++){ b = document.querySelector('button.join.header-icon'); if (b) break; await new Promise(r=>setTimeout(r,300)); }
+                if (!b) return {error: 'rooms button not found'};
+                ['mousedown','mouseup','click'].forEach(t => b.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})));
+                await new Promise(r=>setTimeout(r,2000));
+                const dlg = document.querySelector('.dialog.rooms-available');
+                if (!dlg) return {error: 'room dialog did not open'};
+                const tiles = Array.from(dlg.querySelectorAll('li.join')).map(li => ({
+                    li,
+                    name: ((li.querySelector('.join-name:not(.join-click)')||{}).textContent||'').trim(),
+                    count: parseInt(((li.querySelector('.join-count')||{}).textContent||'').replace(/\\D/g,'')) || 0,
+                })).filter(t => t.name && t.count >= minTraffic && !rx.test(t.name))
+                  .sort((a,b) => b.count - a.count);
+                let picked = tiles.slice(slot*n, slot*n + n);
+                if (picked.length < n) picked = tiles.slice(0, n);  // slot out of range -> top n
+                const joined = [];
+                for (const t of picked) {
+                    const jb = Array.from(t.li.querySelectorAll('button.action')).find(x => x.querySelector('.join-click')) || t.li.querySelector('button.action');
+                    t.li.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));
+                    await new Promise(r=>setTimeout(r,150));
+                    ['mousedown','mouseup','click','dblclick'].forEach(ev => jb.dispatchEvent(new MouseEvent(ev,{bubbles:true,cancelable:true,view:window})));
+                    joined.push({name: t.name, count: t.count});
+                    await new Promise(r=>setTimeout(r,700));
+                }
+                const close = document.querySelector('.icon.dialog-close');
+                if (close) close.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+                return {joined, eligible: tiles.slice(0,12).map(t => ({name:t.name, count:t.count}))};
+            }""", {"n": n, "minTraffic": min_traffic, "slot": slot, "gayRe": self._GAY_ROOM_RE})
+
+            if isinstance(result, dict) and result.get("joined"):
+                names = [j["name"] for j in result["joined"]]
+                worker.rooms = names
+                logger.info(f"[{worker.agent_id}] joined top rooms (slot {slot}): "
+                            + ", ".join(f"{j['name']}({j['count']})" for j in result["joined"]))
+                return names
+            logger.warning(f"[{worker.agent_id}] _join_top_rooms: {result}")
+            return []
+        except Exception as e:
+            logger.warning(f"[{worker.agent_id}] _join_top_rooms error: {e}")
+            return []
 
     async def _join_second_room(self, worker: BotWorker, room_name: str) -> bool:
         """Join a second FCN schat room by navigating directly to its URL.
@@ -1686,13 +1745,12 @@ class BotOrchestrator:
                                 # Recovery exhausted all attempts — stop this agent
                                 worker.status = "error"
                                 break
-                            # After recovery: give the room a moment to settle,
-                            # try to re-join second room, then resume the loop
+                            # After recovery: settle, then re-join the top non-gay rooms
+                            # (same dynamic directory join as startup), then resume the loop.
                             next_send = time.monotonic() + 20
                             dm_next = time.monotonic() + 10
-                            for extra_room in worker.rooms[1:]:
-                                await asyncio.sleep(3)
-                                await self._join_second_room(worker, extra_room)
+                            await asyncio.sleep(2)
+                            await self._join_top_rooms(worker, n=3, min_traffic=300)
                         await asyncio.sleep(3)
                         continue
                     ban_strikes = 0
