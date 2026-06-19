@@ -168,11 +168,12 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE)
 
 
-def _strip_ai_tells(text: str) -> str:
-    """Remove em/en dashes AND emojis — both are dead giveaways of AI/bot text. Real people
-    in these rooms type plain text with '..', not ' — ' or 😏."""
+def _strip_ai_tells(text: str, strip_emoji: bool = False) -> str:
+    """Remove em/en dashes (an AI tell) from every send. Strip emojis ONLY when
+    strip_emoji=True (group broadcasts) — emojis are fine in private DMs."""
     text = re.sub(r"\s*[—–]\s*", ".. ", text)   # ' — ' -> '.. '
-    text = _EMOJI_RE.sub("", text)              # strip emojis (persona rule: none)
+    if strip_emoji:
+        text = _EMOJI_RE.sub("", text)          # group only — no emojis in public rooms
     return re.sub(r"  +", " ", text).strip()
 
 
@@ -1976,9 +1977,12 @@ class BotOrchestrator:
                         if uname not in recent_usernames:
                             recent_usernames.append(uname)
 
+        # Emojis: fine in DMs (real girl texting), NEVER in public group broadcasts.
         _no_emoji = (
+            "A few emojis are totally fine here — text like a real flirty girl would."
+            if is_dm else
             "NEVER use emojis. No emoji characters at all — plain text only. "
-            "Real people in adult chat rooms don't use emojis."
+            "Real people don't post emojis in these public rooms."
         )
 
         _never_refuse = (
@@ -2319,7 +2323,7 @@ class BotOrchestrator:
                 send_text = _force_group_cta(send_text, handle, tg_token)
         else:
             send_text = _sanitize_platforms(response, tg_token).strip() or response
-        send_text = _strip_ai_tells(send_text)  # kill em/en dashes (AI tell) on every send
+        send_text = _strip_ai_tells(send_text, strip_emoji=not is_dm)  # em-dashes always; emojis group-only
 
         # Supervisor pre-flight (run on the obfuscated text we'll actually send)
         try:
