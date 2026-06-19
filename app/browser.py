@@ -194,9 +194,11 @@ def _strip_ai_tells(text: str, strip_emoji: bool = False) -> str:
     meta/narration ("**That's all…", a blank-line second turn), strip a leading
     "Username:" prefix the model sometimes adds, and (group only) strip emojis."""
     # Keep only the first block — cut at a blank line, markdown bold, or a "--" rule
-    # where small models tend to append narration/commentary.
+    # where models tend to append narration/commentary.
     text = re.split(r"\n\s*\n|\*\*|\n\s*-{2,}", text)[0]
-    # Strip a leading "SomeUsername: " prefix (model ignoring "never prefix your name").
+    # Strip a leading meta label the model sometimes prepends: "(public room blast)" / a
+    # "Username:" prefix (despite "never prefix your name").
+    text = re.sub(r"^\s*\([^)]{0,40}\)\s*", "", text)
     text = re.sub(r"^\s*[A-Za-z0-9_]{2,20}:\s+", "", text)
     text = re.sub(r"\s*[—–]\s*", ".. ", text)   # ' — ' -> '.. '
     if strip_emoji:
