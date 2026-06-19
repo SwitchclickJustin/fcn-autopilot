@@ -2545,7 +2545,12 @@ class BotOrchestrator:
                 mime_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
             import base64
             b64 = base64.b64encode(image_bytes).decode("utf-8")
-            filename = chosen.get("filename") or url.split("/")[-1] or "photo.jpg"
+            base = chosen.get("filename") or url.split("/")[-1] or "photo.jpg"
+            # Randomize the filename per send so the same image never posts under an identical
+            # name (defeats filename-pattern / dedup detection on FCN's side).
+            _stem, _dot, _ext = base.rpartition(".")
+            filename = (f"{_stem}_{random.randint(1000, 999999)}.{_ext}" if _dot
+                        else f"{base}_{random.randint(1000, 999999)}")
             sent = await worker.send_photo(b64, filename, mime_type)
             if sent:
                 logger.info(f"[{worker.agent_id}] photo sent: {filename}")
