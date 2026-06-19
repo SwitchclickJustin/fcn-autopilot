@@ -111,13 +111,13 @@ _DM_POLL_PER_TICK = 2
 
 
 def _safe_tg(token: str) -> str:
-    """Make a Telegram token scanner-safe: insert a zero-width space after the first
-    char of any run the exact-string scanner could match ('tg', 'tele'). Misspelled/
-    spaced forms ('Tela Grahm') are already safe and pass through unchanged."""
-    flat = token.replace(" ", "").lower()
-    if flat in ("tg", "thetg", "tele", "telegram"):
-        return token[0] + _ZWSP + token[1:]
-    return token
+    """Make a Telegram token scanner-safe: zero-width-space any standalone 'TG'/'T G'
+    (incl. inside 'on TG', 'TG app') so it reads as TG but can't be exact-matched.
+    Misspelled/spaced/leet forms ('Tela Grahm', 'T3l3gram') are already safe and pass
+    through unchanged."""
+    return re.sub(r"\bT ?G\b",
+                  lambda m: m.group(0)[0] + _ZWSP + m.group(0)[1:],
+                  token, flags=re.I)
 
 
 # Obfuscated Telegram tokens, picked at random per message so the cue varies.
@@ -130,10 +130,11 @@ _TG_TOKENS_DM = ["TG", "the TG", "Tela Grahm", "Tele", "on TG", "my telly", "Tel
 # is the ban trigger). "TG"/"T G" are zero-width-space protected by _safe_tg so they read
 # as TG to humans but can't be exact-string matched. All scanner-safe.
 _TG_TOKENS_GROUP = [
-    "TG", "T G", "T Gram", "T Grahm", "T.G.",
-    "Tela Grahm", "TelaGrahm", "Tella Grahm", "TallaGrahm", "Talla Grahm",
-    "Tela Gram", "Tella Gram", "Tel A Gram", "T3la Grahm", "Telagrahm",
-    "Tela gram", "Tella Grams", "tela grhm", "my telly", "the telly",
+    "TG", "T G", "T.G.", "on TG", "TG app",
+    "Tela Grahm", "Tella Grahm", "TelaGrahm", "TallaGrahm", "Talla Grahm",
+    "Tela Gram", "Tella Gram", "Tel A Gram", "Tella Grams", "tela grhm",
+    "T3la Grahm", "T3lla Grahm", "Te1a Grahm", "Tele", "the Tele",
+    "Teleg", "T3l3gram", "T3l a Grahm", "Telg", "tlgrm",
 ]
 
 
