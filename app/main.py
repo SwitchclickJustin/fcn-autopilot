@@ -1,4 +1,5 @@
 """FCN Auto-Pilot — FastAPI application."""
+import hmac
 import json
 import logging
 import os
@@ -1685,7 +1686,22 @@ async def siren_dm_webhook(request: Request):
     Receives n8n POSTs from SirenDM every 5 minutes with new Telegram conversations.
     Each payload = one real fan who found the TG handle and messaged.
     We log a 'telegram_conversion' event so the dashboard shows verified conversions.
+
+    Auth: requires the Authorization header to match TELEGRAM_WEBHOOK_SECRET (env var).
+    Accepts the raw key or 'Bearer <key>'. If the env var is unset the check is skipped
+    (so deploying this code can't break the live webhook before the secret is configured).
     """
+    expected = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+    if expected:
+        provided = (request.headers.get("Authorization") or "").strip()
+        if provided.lower().startswith("bearer "):
+            provided = provided[7:].strip()
+        if not hmac.compare_digest(provided, expected):
+            logger.warning("[siren_dm] rejected webhook: bad/missing Authorization header")
+            raise HTTPException(401, "unauthorized")
+    else:
+        logger.warning("[siren_dm] TELEGRAM_WEBHOOK_SECRET unset — webhook auth DISABLED")
+
     try:
         body = await request.json()
     except Exception:
