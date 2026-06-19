@@ -83,7 +83,7 @@ _PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 # Read-only diagnostics reachable with ?key=<DEBUG_KEY> in addition to a session cookie,
 # so an operator can poll logs + agent status without logging in. Exposes NO secrets and
 # NO controls. The bypass is INERT unless DEBUG_KEY is set in the environment.
-_KEY_READABLE = {"/debug/logs", "/debug/browser-status"}
+_KEY_READABLE = {"/debug/logs", "/debug/browser-status", "/debug/room-list"}
 _DEBUG_KEY = os.environ.get("DEBUG_KEY", "").strip()
 
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
@@ -1158,6 +1158,43 @@ async def debug_composer_probe():
             return out;
         }""")
         return result
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/debug/room-list")
+async def debug_room_list():
+    """Open the Rooms panel and dump its DOM so we can build top-traffic room joining."""
+    workers = [w for w in browser_manager._workers.values() if w._page]
+    if not workers:
+        return {"error": "no active agents"}
+    page = workers[0]._page
+    out = {}
+    try:
+        clicked = await page.evaluate("""() => {
+            const els = Array.from(document.querySelectorAll('button, a, div, span, li'));
+            const btn = els.find(e => (e.textContent||'').trim().toLowerCase() === 'rooms'
+                                       && e.offsetParent !== null);
+            if (btn) { btn.click(); return {found:true, tag:btn.tagName, cls:btn.className}; }
+            return {found:false};
+        }""")
+        out["rooms_button"] = clicked
+        await page.wait_for_timeout(1500)
+        dump = await page.evaluate("""() => {
+            const o = {};
+            const all = Array.from(document.querySelectorAll('*'));
+            const hdr = all.find(e => (e.textContent||'').trim().toLowerCase() === 'room list');
+            let modal = hdr;
+            for (let i=0; i<7 && modal && modal.parentElement; i++) modal = modal.parentElement;
+            modal = modal || document.querySelector('[class*=modal i],[class*=dialog i],[class*=room-list i]');
+            o.modal_html = modal ? modal.outerHTML.slice(0, 9000) : '(modal not found)';
+            const scope = modal || document;
+            o.plus_candidates = Array.from(scope.querySelectorAll('*'))
+                .filter(e => (e.textContent||'').trim() === '+' || /join|plus|add/i.test(e.className||''))
+                .slice(0,12).map(e => ({tag:e.tagName, cls:e.className, html:(e.outerHTML||'').slice(0,160)}));
+            return o;
+        }""")
+        out.update(dump)
+        return out
     except Exception as e:
         return {"error": str(e)}
 
