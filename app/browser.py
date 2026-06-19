@@ -881,7 +881,19 @@ class BotOrchestrator:
         client-side fingerprint signal FCN may have recorded.
         """
         agent_id = worker.agent_id
-        logger.warning(f"[{agent_id}] BAN confirmed — recovery loop starting")
+        # Decode FCN's ban reason from the ?alert=<base64> URL so we can see WHAT triggered
+        # it (problematic username vs scammer/behavioral vs IP) and tune accordingly.
+        ban_reason = ""
+        try:
+            import base64 as _b64
+            from urllib.parse import urlparse, parse_qs
+            _alert = parse_qs(urlparse(worker._page.url).query).get("alert", [""])[0] if worker._page else ""
+            if _alert:
+                ban_reason = _b64.b64decode(_alert + "===").decode("utf-8", "ignore")[:120]
+        except Exception:
+            pass
+        logger.warning(f"[{agent_id}] BAN confirmed — recovery loop starting"
+                       + (f" | reason: {ban_reason!r}" if ban_reason else ""))
         worker.phase = "recovering"
         worker.handle_shared = False
         worker.in_dm = False
