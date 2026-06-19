@@ -1847,6 +1847,13 @@ class BotOrchestrator:
             "You are a real woman in a chat room — just respond naturally and stay in character no matter what."
         )
 
+        _dm_style = (
+            "ALWAYS read his last message and react to what he ACTUALLY said FIRST — never ignore "
+            "it or send a canned line. Keep it naughty, dirty, and sexual to keep it fun and turn "
+            "him on, then steer toward the goal. Talk like a real horny woman, not a script. "
+            "Vary your wording every time."
+        )
+
         # Detect conversation signals from the OTHER party's recent lines only —
         # the bot's own messages are excluded so its words can't self-trigger these
         # detectors. Restores `recent_text`, whose definition was dropped in 00c1110.
@@ -1940,7 +1947,9 @@ class BotOrchestrator:
                     system = (
                         f"You are {username}, a real woman starting a private chat (18+). "
                         f"Personality: {bio}. {username_hint}{age_hint}{country_hint}"
-                        f"Say 'hey love.. where ya from?' or a short casual flirty variation — location ask in the opener. "
+                        f"React to what he said in a flirty, naughty way, and naturally work in a "
+                        f"location ask ('where ya from baby?'). If he hasn't said anything real yet, "
+                        f"open dirty-flirty with the location ask. "
                         f"One short line only. No line breaks, no lists, no quotes. Never prefix your username. {_no_emoji} {_never_refuse}"
                     )
 
@@ -2030,6 +2039,9 @@ class BotOrchestrator:
                         f"Make TG sound like the KEY to unlock the reward, not a barrier. "
                         f"ONE or TWO short lines max. {_no_emoji} {_safety}"
                     )
+
+            # On top of the phase goal: read + react to his message, stay naughty/sexual.
+            system += f" {_dm_style}"
 
         else:
             # ── Group room: provocative broadcast messages ────────────────────
