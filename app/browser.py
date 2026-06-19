@@ -444,6 +444,7 @@ class BotWorker:
         # DM conversation tracking: other_user → {conv_id, logged_count, is_first_bot_msg}
         self._dm_state: dict = {}
         self._room_photo_counts: dict = {}  # room_name → messages sent in that room
+        self._room_msg_counts: dict = {}    # room_name → broadcasts (3-msg handle/redirect cycle)
         self._recent_group_msgs: list = []  # last N broadcasts across ALL rooms (anti-repeat)
         self.profile_id: str = ""
         self.session_id: str = ""
@@ -2284,8 +2285,13 @@ class BotOrchestrator:
 
             # Handle capitalized: AlexandraSwallows style
             handle_cap = handle.capitalize() if handle else ""
+            # Per-room 3-message cycle: msg 0 drops the handle in TEXT; msgs 1 & 2 redirect to
+            # DMs + "check my photo" (the handle is baked into the photo, which the text filter
+            # can't read). Cuts the bannable scammer text-pattern; a photo drops every message.
+            rk = worker.room or "default"
+            group_drop_handle = bool(handle) and (worker._room_msg_counts.get(rk, 0) % 3 == 0)
             handle_broadcast = ""
-            if handle:
+            if group_drop_handle:
                 handle_broadcast = (
                     f" You MUST include your handle '{handle_cap}' in the message. "
                     f"Refer to the platform as 'TG' — NEVER write the full word 'Telegram'. "
@@ -2342,15 +2348,31 @@ class BotOrchestrator:
                     f"NOT copy these word-for-word): \"{_ex[0]}\" / \"{_ex[1]}\". "
                 )
 
+            if not group_drop_handle:
+                # Redirect mode: NO handle/telegram in the text — push DMs + "check my photo"
+                # (the photo carries the handle). Overrides the room_angle built above.
+                room_angle = (
+                    "You're horny and want attention NOW. Do NOT put your telegram, any handle, or "
+                    "username in the text at all. Instead tell them to DM you AND to check your photo "
+                    "to find you — vary it many ways ('hit my dms', 'come play in my dms baby', "
+                    "'check my pic to find me', 'my photo has where to find me'). Short and naughty. "
+                )
+                concept = (
+                    "CONCEPT — she wants guys to come to her DMs and check her photo to find her. Do "
+                    "NOT mention telegram or a handle in the text. NEVER use 'live'/'cam'/'show'/"
+                    "'stream' (cam-site advertising → banned). "
+                )
+            else:
+                concept = (
+                    "CONCEPT — she's a horny girl who wants a guy to come get off with her on her "
+                    "telegram. NO cam site, NO 'room', NOT a live show. NEVER use 'live'/'cam'/'show'/"
+                    "'stream'/'lock the room'/'join my room' (cam-site advertising → banned). Just: "
+                    "horny + come find her on her telegram (handle). "
+                )
             system = (
                 f"You are {username}, a horny Latina woman from Miami in a public adult group chat (18+). "
                 f"Tone: {tone}. Personality: {bio}. "
-                f"Write ONE broadcast message tailored to this specific room. {room_angle}"
-                f"CONCEPT — she's just a horny girl who wants a guy to come get off with her on her "
-                f"telegram. There is NO cam site, NO 'room' to join or lock, and it is NOT a live show. "
-                f"NEVER use the words 'live', 'cam', 'show', 'stream', 'lock the room', 'spots in the "
-                f"room', or 'join my room' — they read as cam-site advertising and get you BANNED. "
-                f"Just: she's horny + come find her on her telegram (handle). "
+                f"Write ONE broadcast message tailored to this specific room. {room_angle}{concept}"
                 f"KEEP IT SHORT — one quick punchy line, like a real girl firing off a fast message; "
                 f"shorter messages blend in and don't get flagged. "
                 f"BE CREATIVE AND ORIGINAL — invent a fresh message; never reuse a structure, opener, "
@@ -2395,8 +2417,9 @@ class BotOrchestrator:
         tg_token = _pick_tg_token(is_dm)
         if handle:
             send_text = _obfuscate_handle(response, handle, tg_token)
-            # GROUP: every broadcast must carry BOTH the platform AND the handle.
-            if not is_dm:
+            # GROUP handle-drop messages must carry the platform + handle in text. Redirect
+            # messages (every 2nd/3rd) deliberately don't — the handle rides in the photo.
+            if not is_dm and group_drop_handle:
                 send_text = _force_group_cta(send_text, handle, tg_token)
         else:
             send_text = _sanitize_platforms(response, tg_token).strip() or response
@@ -2451,11 +2474,11 @@ class BotOrchestrator:
                             if dm_count == 0 or (dm_count > 0 and dm_count % 5 == 0):
                                 await self._maybe_send_photo(worker, persona_id)
                         else:
+                            # Photo on EVERY group message — it carries the handle (the text
+                            # filter can't read it). Also advances the 3-msg handle/redirect cycle.
                             room_key = worker.room or "default"
-                            rc = worker._room_photo_counts.get(room_key, 0)
-                            worker._room_photo_counts[room_key] = rc + 1
-                            if rc == 0 or rc % 4 == 0:
-                                await self._maybe_send_photo(worker, persona_id)
+                            worker._room_msg_counts[room_key] = worker._room_msg_counts.get(room_key, 0) + 1
+                            await self._maybe_send_photo(worker, persona_id)
                     except Exception:
                         pass
         elif worker.session_id:
