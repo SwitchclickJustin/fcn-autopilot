@@ -32,16 +32,13 @@ _CONFIRM_RE = re.compile(
     r"\b(found (you|u|ya|her)|i found you|got you|i see you|see you (there|now)|there now|"
     r"messaged (you|u)|in your (dm|inbox)|texted you|added (you|u|ya))\b", re.I)
 
-# Telegram references the model emits — REPLACED (not deleted) with a context-specific
-# safe token so the guy still learns WHERE to find the handle. The group token
-# "Tela Grahm" is deliberately NOT matched here so a replacement survives a second pass.
-_TELEGRAM_RE = re.compile(r'\b(telegram|telegr|tele?gr?m|tele|tg)\b', re.I)
+# Telegram references the model emits (incl. our own obfuscated variants) — REPLACED
+# (not deleted) with a randomly-picked safe token so the guy still learns WHERE to find
+# the handle. Matches "tela grahm"/"tele"/"tg" etc. so any form normalizes to one token.
+_TELEGRAM_RE = re.compile(r'\b(tela\s*grahm|telegram|telegr|tele?gr?m|tele|tg)\b', re.I)
 # Other platforms we never advertise — stripped entirely. (Bare 'of'/'wa' removed:
 # they matched ordinary English words and mangled normal messages.)
 _OTHER_PLATFORM_RE = re.compile(r'\b(kik|snapchat|snap|whatsapp|onlyfans)\b', re.I)
-# Canonical obfuscated Telegram token for GROUP rooms (chosen 2026-06-19): misspelled
-# two-word form, inherently safe against FCN's exact-string scanner. (DM token: _TG_DM.)
-_TG_GROUP = "Tela Grahm"
 
 # Signals that a guy is excited / engaged — good time to pitch Telegram
 _EXCITED_RE = re.compile(
@@ -66,9 +63,25 @@ def _blank_dm_state() -> dict:
 
 
 _ZWSP = "​"  # zero-width space — invisible to humans, breaks FCN's exact-string scanner
-# DM Telegram token: reads "TG" to humans, but the zero-width space breaks the
-# exact-string scanner so "tg" can't be matched/banned.
-_TG_DM = "T" + _ZWSP + "G"
+
+
+def _safe_tg(token: str) -> str:
+    """Make a Telegram token scanner-safe: insert a zero-width space after the first
+    char of any run the exact-string scanner could match ('tg', 'tele'). Misspelled/
+    spaced forms ('Tela Grahm') are already safe and pass through unchanged."""
+    flat = token.replace(" ", "").lower()
+    if flat in ("tg", "thetg", "tele", "telegram"):
+        return token[0] + _ZWSP + token[1:]
+    return token
+
+
+# Varied obfuscated Telegram tokens — used in BOTH group rooms and DMs (chosen
+# 2026-06-19). One is picked at random per message so the cue isn't repetitive.
+_TG_TOKENS = ["TG", "the TG", "Tela Grahm", "Tele", "on TG"]
+
+
+def _pick_tg_token() -> str:
+    return _safe_tg(random.choice(_TG_TOKENS))
 
 
 def _sanitize_platforms(text: str, tg_token: str) -> str:
@@ -1549,7 +1562,7 @@ class BotOrchestrator:
             if el is None:
                 return False
             await el.click(timeout=4000)
-            await page.wait_for_timeout(1200)
+            await page.wait_for_timeout(500)  # conv-switch settle (was 1200; cut for snappier replies)
             return True
         except Exception:
             return False
@@ -1772,7 +1785,7 @@ class BotOrchestrator:
                 worker.last_error = f"{type(e).__name__}: {e}"[:200]
                 logger.error(f"Auto-pilot tick error for {agent_id}: {e}")
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)  # loop poll cadence (was 2; faster pickup of new msgs)
 
     async def _auto_pilot_tick(self, worker: BotWorker, messages: list, client,
                                 dm_other_user: str = ""):
@@ -2105,10 +2118,10 @@ class BotOrchestrator:
         # Detect handle share on the raw (unobfuscated) text
         shares_handle = bool(handle) and handle.lower().lstrip("@") in response.lower()
 
-        # Obfuscate handle + convert telegram refs to a scanner-safe token BEFORE sending.
-        # Group rooms (public, heavily scanned) use the misspelled "Tela Grahm"; DMs use
-        # "TG" with a zero-width space. The handle is never sent without a telegram cue.
-        tg_token = _TG_DM if is_dm else _TG_GROUP
+        # Obfuscate handle + convert telegram refs to a randomly-picked scanner-safe token
+        # BEFORE sending (TG / Tela Grahm / Tele etc., varied each message, both contexts).
+        # The handle is never sent without a telegram cue.
+        tg_token = _pick_tg_token()
         if handle:
             send_text = _obfuscate_handle(response, handle, tg_token)
         else:
