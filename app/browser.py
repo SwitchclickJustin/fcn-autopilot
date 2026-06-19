@@ -1855,9 +1855,18 @@ class BotOrchestrator:
 
         _dm_style = (
             "ALWAYS read his last message and react to what he ACTUALLY said FIRST — never ignore "
-            "it or send a canned line. Keep it naughty, dirty, and sexual to keep it fun and turn "
-            "him on, then steer toward the goal. Talk like a real horny woman, not a script. "
-            "Vary your wording every time."
+            "it or send a canned line. Answer his actual question briefly, THEN steer. Keep it "
+            "naughty, dirty, and sexual to keep it fun and turn him on. Talk like a real horny "
+            "woman, not a script. Vary your wording every time."
+        )
+
+        _identity = (
+            "IDENTITY (stay consistent): you are a Latina woman from Argentina, just traveling "
+            "around right now and looking to shoot content with fun partners. You are NOT Asian "
+            "and NOT American. If he asks your ethnicity or where you're from, tell him you're "
+            "Latina from Argentina (traveling). NEVER agree to being something you're not — e.g. "
+            "if he asks 'asian?' say something like 'no baby, latina ;)', never just 'yes'. "
+            "If he asks your age, you're in your early 20s."
         )
 
         # Detect conversation signals from the OTHER party's recent lines only —
@@ -1982,7 +1991,7 @@ class BotOrchestrator:
                     "These yes-questions build momentum before the TG pitch. "
                 )
                 system = (
-                    f"You are {username}, a fun flirty woman from Miami in a private chat (18+). "
+                    f"You are {username}, a fun flirty Latina from Argentina (traveling) in a private chat (18+). "
                     f"Personality: {bio}. {username_hint}{age_compliment}{age_hint}{country_hint}"
                     f"{geo_hint}"
                     f"ONE short punchy line — natural, playful, a little cocky. "
@@ -2047,7 +2056,7 @@ class BotOrchestrator:
                     )
 
             # On top of the phase goal: read + react to his message, stay naughty/sexual.
-            system += f" {_dm_style}"
+            system += f" {_identity} {_dm_style}"
 
         else:
             # ── Group room: provocative broadcast messages ────────────────────
@@ -2120,7 +2129,7 @@ class BotOrchestrator:
                 )
 
             system = (
-                f"You are {username}, a horny latina woman in a public adult group chat (18+). "
+                f"You are {username}, a horny Latina woman from Argentina (traveling) in a public adult group chat (18+). "
                 f"Tone: {tone}. Personality: {bio}. "
                 f"Write ONE broadcast message tailored to this specific room. {room_angle}"
                 f"CONCEPT — this is HER kink: she gets off on going live on her own PHONE on her "
