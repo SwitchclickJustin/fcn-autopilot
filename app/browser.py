@@ -348,7 +348,6 @@ class BotWorker:
         self._dm_state: dict = {}
         self._room_photo_counts: dict = {}  # room_name → messages sent in that room
         self._recent_group_msgs: list = []  # last N broadcasts across ALL rooms (anti-repeat)
-        self._dms_since_group: int = 0     # DMs handled since last group room blast
         self.profile_id: str = ""
         self.session_id: str = ""
         self.browser_id: str = ""
@@ -1647,8 +1646,9 @@ class BotOrchestrator:
 
         tick = 0
         ban_strikes = 0
-        next_send = 0.0  # group-room pace gate (monotonic seconds)
-        dm_next = 0.0    # DM pace gate (faster)
+        next_send = 0.0     # group-room pace gate (monotonic seconds)
+        dm_next = 0.0       # hot-DM pace gate (faster)
+        dm_poll_next = 0.0  # quiet-DM re-check gate (low priority, never blocks group)
         while self._auto_pilot_enabled.get(agent_id, False):
             try:
                 # ── CDP path (fast, zero cost) ──
@@ -1716,31 +1716,27 @@ class BotOrchestrator:
                             await worker._page.bring_to_front()
                         except Exception:
                             pass
-                    # DMs-FIRST: check ALL DM tabs (unseen badge OR new messages since
-                    # last reply). After the bot replies the badge clears, but the user
-                    # keeps messaging — we catch that via msg-count comparison.
                     now = time.monotonic()
                     convos = await self._list_conversations(worker._page)
                     all_dms = [c for c in convos if c["is_dm"]]
                     rooms = [c for c in convos if not c["is_dm"]]
 
-                    # A DM needs a reply if: badge is unseen OR message count grew since last reply
-                    active_dms = []
+                    # HOT DM = a guy just messaged (unseen badge) or a brand-new DM we've never
+                    # logged → reply immediately, preempts group broadcasting.
+                    # POLL DM = already replied, no new badge → re-check periodically for new
+                    # messages the badge may miss, but it must NEVER block group rotation (the
+                    # bug where one replied-but-quiet DM starved ALL broadcasting).
+                    hot_dms, poll_dms = [], []
                     for c in all_dms:
                         other = c.get("text") or "unknown"
                         state = worker._dm_state.get(other, {})
-                        last_seen = state.get("logged_count", 0)
-                        if c["unseen"] or last_seen == 0:
-                            active_dms.append(c)
-                        # Even without badge: if bot replied before, keep checking for new guy msgs
+                        if c["unseen"] or state.get("logged_count", 0) == 0:
+                            hot_dms.append(c)
                         elif state.get("first_bot_sent", False):
-                            active_dms.append(c)
+                            poll_dms.append(c)
 
-                    # After every 3 DMs, blast group — but ONLY if no DMs are waiting
-                    force_group = worker._dms_since_group >= 3 and rooms and now >= next_send and not active_dms
-
-                    if active_dms and now >= dm_next and not force_group:
-                        for c in active_dms:
+                    if hot_dms and now >= dm_next:
+                        for c in hot_dms:
                             if await self._open_conversation(worker._page, c["href"]):
                                 worker.in_dm = True
                                 other_user = c["text"] or "unknown"
@@ -1751,23 +1747,16 @@ class BotOrchestrator:
                                     info = await self._read_dm_partner_info(worker._page)
                                     dm_st["partner_age"] = info.get("age")
                                     dm_st["partner_country"] = info.get("country")
-                                # Skip expensive read if no badge and already replied
-                                already_replied = worker._dm_state.get(other_user, {}).get("first_bot_sent", False)
-                                if not c["unseen"] and already_replied:
-                                    continue  # nothing new — skip and check next DM
                                 msgs = await worker.read_chat()
                                 if msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
-                                    new_count = len(msgs)
-                                    if c["unseen"] or new_count > prev_count:
+                                    if c["unseen"] or len(msgs) > prev_count:
                                         await self._auto_pilot_tick(worker, msgs, client,
                                                                     dm_other_user=other_user)
-                                        worker._dms_since_group += 1
-                                        # Move immediately to next DM — blink brings us back
                         dm_next = time.monotonic() + 0.5  # fast blink check
-                    elif now >= next_send or force_group:
+                    elif now >= next_send:
                         # Group room: rotate between all joined rooms on each send
                         if rooms:
                             worker._room_index = (worker._room_index + 1) % len(rooms)
@@ -1779,8 +1768,25 @@ class BotOrchestrator:
                         messages = await worker.read_chat()
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
-                        worker._dms_since_group = 0  # reset after group blast
-                        next_send = now + random.randint(10, 20)  # was 60-120; snappier room rotation
+                        next_send = now + random.randint(10, 20)  # snappier room rotation
+                    elif poll_dms and now >= dm_poll_next:
+                        # Low-priority safety: re-check already-replied DMs for new guy messages
+                        # the badge may have missed. Runs only when no hot DM and no group send
+                        # is due, so it can NOT starve broadcasting.
+                        for c in poll_dms:
+                            if await self._open_conversation(worker._page, c["href"]):
+                                other_user = c["text"] or "unknown"
+                                worker.in_dm = True
+                                worker.room = other_user
+                                msgs = await worker.read_chat()
+                                if msgs:
+                                    state = worker._dm_state.get(other_user, {})
+                                    prev_count = state.get("logged_count", 0)
+                                    await self._log_dm_messages(worker, other_user, msgs, persona_id)
+                                    if len(msgs) > prev_count:
+                                        await self._auto_pilot_tick(worker, msgs, client,
+                                                                    dm_other_user=other_user)
+                        dm_poll_next = now + 8  # re-check quiet DMs ~every 8s; never blocks group
 
                 # ── SDK fallback (if no CDP) ──
                 elif worker.session_id:
