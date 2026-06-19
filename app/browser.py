@@ -1801,6 +1801,7 @@ class BotOrchestrator:
                 if worker._page:
                     tick += 1
                     worker.loop_ticks = tick
+                    _t0 = time.monotonic()  # tick-timing start
 
                     # Ban/kick detection: 2 consecutive "looks banned" ticks before
                     # triggering recovery (debounces brief network blips).
@@ -1848,10 +1849,13 @@ class BotOrchestrator:
 
                     # Kill the ad modal/iframe every tick (cheap, targeted) so the
                     # gray "[x]" box never lingers in the live view.
+                    _t_pre = time.monotonic()
                     await self._kill_ads(worker._page)
+                    _t_ads = time.monotonic()
 
                     # Click through any in-room captcha dialog every tick.
                     await self._handle_captcha(worker._page)
+                    _t_cap = time.monotonic()
 
                     # Heavier cleanup (tip dismiss, popups, refocus) only periodically.
                     if tick % 5 == 1:
@@ -1863,6 +1867,7 @@ class BotOrchestrator:
                             pass
                     now = time.monotonic()
                     convos = await self._list_conversations(worker._page)
+                    _t_list = time.monotonic()
                     all_dms = [c for c in convos if c["is_dm"]]
                     rooms = [c for c in convos if not c["is_dm"]]
 
@@ -1936,6 +1941,15 @@ class BotOrchestrator:
                                         await self._auto_pilot_tick(worker, msgs, client,
                                                                     dm_other_user=other_user)
                         dm_poll_next = now + 8  # re-check quiet DMs ~every 8s; never blocks group
+
+                    # ── tick timing: log ONLY slow ticks so we can see where the time goes ──
+                    _end = time.monotonic()
+                    if _end - _t0 > 8:
+                        logger.info(
+                            f"[{agent_id}] SLOW tick {tick} {_end-_t0:.1f}s | "
+                            f"ban+persona={_t_pre-_t0:.1f} ads={_t_ads-_t_pre:.1f} "
+                            f"captcha={_t_cap-_t_ads:.1f} popups={now-_t_cap:.1f} "
+                            f"list={_t_list-now:.1f} branch={_end-_t_list:.1f}")
 
                 # ── SDK fallback (if no CDP) ──
                 elif worker.session_id:
