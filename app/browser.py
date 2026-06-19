@@ -2352,10 +2352,12 @@ class BotOrchestrator:
                 # Redirect mode: NO handle/telegram in the text — push DMs + "check my photo"
                 # (the photo carries the handle). Overrides the room_angle built above.
                 room_angle = (
-                    "You're horny and want attention NOW. Do NOT put your telegram, any handle, or "
-                    "username in the text at all. Instead tell them to DM you AND to check your photo "
-                    "to find you — vary it many ways ('hit my dms', 'come play in my dms baby', "
-                    "'check my pic to find me', 'my photo has where to find me'). Short and naughty. "
+                    "You are SO horny and DESPERATE for attention right now. Be naughty and EXPLICIT "
+                    "about what you're craving (touching yourself, need to cum so bad, want a cock, "
+                    "dripping wet, etc). Keep it SHORT and punchy. Then pop in a CTA to DM you OR "
+                    "check your photo to find you (e.g. 'someone get in my dms', 'come play in my "
+                    "dms', 'check my pic to find me', 'my photo shows where to find me'). Do NOT put "
+                    "your telegram, handle, or username anywhere in the text. Vary it every time. "
                 )
                 concept = (
                     "CONCEPT — she wants guys to come to her DMs and check her photo to find her. Do "
