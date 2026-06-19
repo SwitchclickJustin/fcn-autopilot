@@ -1682,14 +1682,27 @@ async def siren_dm_webhook(request: Request):
     except Exception:
         raise HTTPException(400, "invalid JSON")
 
-    fan_name = (body.get("fan_name") or "").strip()
-    fan_username = (body.get("fan_username") or "").strip()
-    conversation_started = (body.get("conversation_started") or "").strip()
-    fan_location = (body.get("fan_location") or "").strip()
-    fan_language = (body.get("fan_language") or "").strip()
-    agent_name = (body.get("agent_name") or "").strip()
+    def _first(*keys: str) -> str:
+        """First non-empty value across alias keys (tolerates SirenDM field-name drift)."""
+        for k in keys:
+            v = body.get(k)
+            if v and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    fan_name = _first("fan_name", "telegram_name")
+    # SirenDM's n8n node has historically shipped this field under several names,
+    # including the typo `telegram_usernama` (→ telegram_username). Accept all aliases
+    # so conversions land regardless of whether their node is ever fixed.
+    fan_username = _first("fan_username", "telegram_username", "telegram_usernama", "username")
+    conversation_started = _first("conversation_started")
+    fan_location = _first("fan_location")
+    fan_language = _first("fan_language")
+    agent_name = _first("agent_name")
 
     if not fan_username and not fan_name:
+        # Log the actual payload keys so we can see SirenDM's true field shape next time.
+        logger.warning(f"[siren_dm] skipped: no fan identity; payload keys={sorted(body.keys())}")
         return {"ok": True, "skipped": "no fan identity"}
 
     # Map agent_name → persona_id (best-effort: match by name, fallback to first persona)
