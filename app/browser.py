@@ -190,12 +190,18 @@ _EMOJI_RE = re.compile(
 
 
 def _strip_ai_tells(text: str, strip_emoji: bool = False) -> str:
-    """Remove em/en dashes (an AI tell) from every send. Strip emojis ONLY when
-    strip_emoji=True (group broadcasts) — emojis are fine in private DMs."""
+    """Clean model output before sending: drop em/en dashes (AI tell), cut trailing
+    meta/narration ("**That's all…", a blank-line second turn), strip a leading
+    "Username:" prefix the model sometimes adds, and (group only) strip emojis."""
+    # Keep only the first block — cut at a blank line, markdown bold, or a "--" rule
+    # where small models tend to append narration/commentary.
+    text = re.split(r"\n\s*\n|\*\*|\n\s*-{2,}", text)[0]
+    # Strip a leading "SomeUsername: " prefix (model ignoring "never prefix your name").
+    text = re.sub(r"^\s*[A-Za-z0-9_]{2,20}:\s+", "", text)
     text = re.sub(r"\s*[—–]\s*", ".. ", text)   # ' — ' -> '.. '
     if strip_emoji:
         text = _EMOJI_RE.sub("", text)          # group only — no emojis in public rooms
-    return re.sub(r"  +", " ", text).strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _force_group_cta(text: str, handle: str, tg_token: str) -> str:
