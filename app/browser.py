@@ -460,7 +460,7 @@ class BotWorker:
                     pass
                 await inp.focus()
                 await inp.fill("")  # clear any stale text
-                # Human-like typing ~120 WPM (doubled). ~0.10s/char avg.
+                # Human-like typing ~210 WPM (≈3.5x original). ~0.055s/char avg.
                 # Occasional typo: type wrong char, pause, backspace, type correct char.
                 _keyboard_neighbors = {
                     'a':'sq','b':'vgn','c':'xdv','d':'sfe','e':'wrd','f':'dge','g':'fht',
@@ -470,18 +470,18 @@ class BotWorker:
                 }
                 for ch in message:
                     # ~8% typo rate on alphabetic chars
-                    if ch.isalpha() and random.random() < 0.08:
+                    if ch.isalpha() and random.random() < 0.06:
                         wrong = random.choice(_keyboard_neighbors.get(ch.lower(), ch.lower()))
                         await self._page.keyboard.type(wrong)
-                        await asyncio.sleep(random.uniform(0.05, 0.11))
+                        await asyncio.sleep(random.uniform(0.03, 0.06))
                         await self._page.keyboard.press("Backspace")
-                        await asyncio.sleep(random.uniform(0.04, 0.09))
+                        await asyncio.sleep(random.uniform(0.02, 0.05))
                     await self._page.keyboard.type(ch)
-                    delay = random.uniform(0.065, 0.14)   # ~120 WPM (doubled)
-                    if random.random() < 0.04:
-                        delay += random.uniform(0.2, 0.55)  # brief "thinking" pause
+                    delay = random.uniform(0.035, 0.075)   # ~210 WPM (≈3.5x original)
+                    if random.random() < 0.03:
+                        delay += random.uniform(0.12, 0.32)  # brief "thinking" pause
                     await asyncio.sleep(delay)
-                await asyncio.sleep(random.uniform(0.08, 0.23))
+                await asyncio.sleep(random.uniform(0.05, 0.13))
                 await self._page.keyboard.press("Enter")
                 await asyncio.sleep(0.7)
                 if await _sent():
