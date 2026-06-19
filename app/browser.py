@@ -509,7 +509,7 @@ class BotWorker:
             return False
         try:
             result = await self._page.evaluate("""
-                async (b64, fname, mtype) => {
+                async ([b64, fname, mtype]) => {
                     try {
                         const binary = atob(b64);
                         const bytes = new Uint8Array(binary.length);
@@ -530,7 +530,7 @@ class BotWorker:
                         return true;
                     } catch(e) { return false; }
                 }
-            """, photo_b64, filename, mime_type)
+            """, [photo_b64, filename, mime_type])  # evaluate takes ONE arg → pass a list
             return bool(result)
         except Exception as e:
             logger.warning(f"[{self.username}] send_photo failed: {e}")
@@ -850,9 +850,10 @@ class BotOrchestrator:
                     logger.error(f"[{agent_id}] all recovery attempts failed — agent offline")
                     return
 
-            # Join all assigned rooms beyond the first (best-effort)
+            # Join all assigned rooms beyond the first (best-effort). Kept short so the
+            # first broadcast in the primary room isn't delayed ~20s by serial joins.
             for extra_room in worker.rooms[1:]:
-                await asyncio.sleep(3)
+                await asyncio.sleep(0.5)
                 await self._join_second_room(worker, extra_room)
 
             # Start the auto-pilot loop immediately.
@@ -884,7 +885,7 @@ class BotOrchestrator:
             room_url = f"https://schat.freechatnow.com/room/{schat_name}"
             logger.info(f"[{worker.agent_id}] joining second room {schat_name!r} via nav")
             await page.goto(room_url, wait_until="domcontentloaded", timeout=20000)
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(1500)  # SPA route settle (was 3000; cut for faster startup)
             url_now = page.url or ""
             if "/room/" in url_now:
                 worker.room = schat_name
