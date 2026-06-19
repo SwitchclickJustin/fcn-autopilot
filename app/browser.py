@@ -1038,7 +1038,10 @@ class BotOrchestrator:
                 })).filter(t => t.name && t.count >= minTraffic && !rx.test(t.name))
                   .sort((a,b) => b.count - a.count);
                 let picked = tiles.slice(slot*n, slot*n + n);
-                if (picked.length < n) picked = tiles.slice(0, n);  // slot out of range -> top n
+                // Overflow slot (more agents than room-slices): take the LOWEST-traffic
+                // eligible rooms instead of doubling onto the top ones — spreads agents off
+                // the most-moderated high-traffic rooms (less ban exposure + less overlap).
+                if (picked.length < n) picked = tiles.slice(-n);
                 const joined = [];
                 for (const t of picked) {
                     const jb = Array.from(t.li.querySelectorAll('button.action')).find(x => x.querySelector('.join-click')) || t.li.querySelector('button.action');
