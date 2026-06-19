@@ -1177,7 +1177,7 @@ async def debug_room_list():
                 await browser_manager._dismiss_overlays(page)
             except Exception:
                 pass
-            await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*=12chats]')
+            await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*="12chats"]')
                 .forEach(e => { const m = e.closest('.stelivo-modal') || e; if (m && m.remove) m.remove(); })""")
         out["rooms_candidates"] = await page.evaluate("""() => Array.from(document.querySelectorAll('div,button,a,span,li'))
             .filter(e => /^rooms?$/i.test((e.textContent||'').trim()) && e.offsetParent)
@@ -1190,7 +1190,7 @@ async def debug_room_list():
             await browser_manager._kill_ads(page)
         except Exception:
             pass
-        await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*=12chats]')
+        await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*="12chats"]')
             .forEach(e => { const m = e.closest('.stelivo-modal') || e; if (m && m.remove) m.remove(); })""")
         dump = await page.evaluate("""() => {
             const o = {};
