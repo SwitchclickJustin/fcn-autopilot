@@ -2353,16 +2353,19 @@ class BotOrchestrator:
             send_text = _sanitize_platforms(response, tg_token).strip() or response
         send_text = _strip_ai_tells(send_text, strip_emoji=not is_dm)  # em-dashes always; emojis group-only
 
-        # Supervisor pre-flight (run on the obfuscated text we'll actually send)
-        try:
-            from app.supervisor import supervisor_engine
-            approved, note = await supervisor_engine.pre_flight(send_text, context, persona)
-        except Exception:
-            approved, note = True, ""
-        if not approved:
-            worker.last_error = f"blocked: {note}"[:200]
-            logger.info(f"[{worker.agent_id}] supervisor blocked: {note}")
-            return
+        # Supervisor pre-flight is a SECOND LLM call — gate it to the conversion-critical
+        # moment (a DM where she's actually dropping the handle) to ~halve per-message
+        # latency. Routine openers + group broadcasts rely on the sanitizer instead.
+        if is_dm and shares_handle:
+            try:
+                from app.supervisor import supervisor_engine
+                approved, note = await supervisor_engine.pre_flight(send_text, context, persona)
+            except Exception:
+                approved, note = True, ""
+            if not approved:
+                worker.last_error = f"blocked: {note}"[:200]
+                logger.info(f"[{worker.agent_id}] supervisor blocked: {note}")
+                return
 
         if shares_handle:
             # Only track handle_shared for DMs — group room shares can't be confirmed
