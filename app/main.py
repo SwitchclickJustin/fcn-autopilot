@@ -83,7 +83,7 @@ _PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 # Read-only diagnostics reachable with ?key=<DEBUG_KEY> in addition to a session cookie,
 # so an operator can poll logs + agent status without logging in. Exposes NO secrets and
 # NO controls. The bypass is INERT unless DEBUG_KEY is set in the environment.
-_KEY_READABLE = {"/debug/logs", "/debug/browser-status", "/debug/room-list", "/debug/eval"}
+_KEY_READABLE = {"/debug/logs", "/debug/browser-status"}
 _DEBUG_KEY = os.environ.get("DEBUG_KEY", "").strip()
 
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
@@ -1158,77 +1158,6 @@ async def debug_composer_probe():
             return out;
         }""")
         return result
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.get("/debug/eval")
-async def debug_eval(js: str = ""):
-    """Run a JS snippet on the first active agent's page (debug; key-gated). Lets us probe
-    the live DOM interactively without redeploying. js = a `() => …` or `async () => …`."""
-    workers = [w for w in browser_manager._workers.values() if w._page]
-    if not workers:
-        return {"error": "no active agents"}
-    if not js:
-        return {"error": "pass ?js=<urlencoded arrow fn>"}
-    try:
-        return {"ok": True, "result": await workers[0]._page.evaluate(js)}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-@app.get("/debug/room-list")
-async def debug_room_list():
-    """Open the Rooms panel and dump its DOM so we can build top-traffic room joining."""
-    workers = [w for w in browser_manager._workers.values() if w._page]
-    if not workers:
-        return {"error": "no active agents"}
-    page = workers[0]._page
-    out = {}
-    try:
-        # Kill ad modals/overlays first (stelivo/12chats popups block the room list).
-        for _ in range(2):
-            try:
-                await browser_manager._kill_ads(page)
-                await browser_manager._dismiss_overlays(page)
-            except Exception:
-                pass
-            await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*="12chats"]')
-                .forEach(e => { const m = e.closest('.stelivo-modal') || e; if (m && m.remove) m.remove(); })""")
-        # JS-click the Rooms button DIRECTLY (it's compact-hidden at 1280px, so a
-        # visibility-gated click misses it; .click() works on hidden els).
-        out["clicked"] = await page.evaluate("""() => {
-            const btn = document.querySelector('button.join.header-icon')
-                     || document.querySelector('button.join')
-                     || document.querySelector('.header-icon')
-                     || document.querySelector('.join-container');
-            if (btn) { btn.click(); return {ok:true, cls:btn.className}; }
-            return {ok:false};
-        }""")
-        await page.wait_for_timeout(1800)
-        try:
-            await browser_manager._kill_ads(page)
-        except Exception:
-            pass
-        await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*="12chats"]')
-            .forEach(e => { const m = e.closest('.stelivo-modal') || e; if (m && m.remove) m.remove(); })""")
-        dump = await page.evaluate("""() => {
-            const o = {};
-            // Largest fixed/absolute overlay that isn't the ad = the room-list modal.
-            const cands = Array.from(document.querySelectorAll('div')).filter(e => {
-                const s = getComputedStyle(e);
-                return (s.position === 'fixed' || s.position === 'absolute')
-                    && e.offsetParent !== null && !/stelivo/i.test(e.className||'')
-                    && e.querySelectorAll('*').length > 12;
-            }).sort((a,b) => b.querySelectorAll('*').length - a.querySelectorAll('*').length);
-            o.overlay_count = cands.length;
-            o.panel_html = cands.length ? cands[0].outerHTML.slice(0, 9000) : '(no overlay panel)';
-            // Also: anything whose text looks like "<name> <count>" room tiles.
-            o.tile_samples = Array.from(document.querySelectorAll('*'))
-                .filter(e => e.children.length <= 3 && /^[A-Za-z][\\w .&-]{2,20}\\s+\\d{2,4}$/.test((e.textContent||'').trim()))
-                .slice(0,8).map(e => ({cls:e.className, txt:(e.textContent||'').trim().slice(0,30), html:(e.outerHTML||'').slice(0,180)}));
-            return o;
-        }""")
-        out.update(dump)
-        return out
     except Exception as e:
         return {"error": str(e)}
 

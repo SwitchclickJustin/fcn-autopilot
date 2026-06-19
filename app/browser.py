@@ -68,6 +68,7 @@ _BROADCAST_STYLES = [
     "RATE-ME / SHOW-OFF: brag about a body part or what you're wearing (or not), and say you'll show it off live on your phone to whoever's quick.",
     "COUNTDOWN: announce you're starting a live phone show in a few minutes and only have room for a couple guys before you begin.",
     "REACT-TO-ROOM: riff off the room's vibe/what guys are saying, then pivot to taking it to your phone live.",
+    "GAME / DARE: make it a playful game or dare (Truth or Dare, 'i dare you to...', 'first X guys to find me get...') with a naughty REWARD (naughty pics, a live show) for whoever finds you on telegram. Fun and flirty, not just an ad.",
 ]
 
 # Concrete example broadcasts (mostly QUESTIONS + casual invites) — {h} = handle. A couple
@@ -92,6 +93,11 @@ _BROADCAST_EXAMPLES = [
     "Tela Grahm {h} for whoever wants to make me cum live on my phone",
     "{h} is my TG.. pull me up if you wanna watch me touch myself",
     "on Tela Grahm as {h} rn.. who's gonna keep me company while i play?",
+    # game / dare openers with a reward (fun + naughty):
+    "Truth or Dare? if you got Tella Gramm i dare you to find me {h} and i'll surprise my first 10 guys with some very naughty pics",
+    "lets play.. first 5 guys to find me {h} on TG get a dirty pic right now",
+    "i dare you to pull me up {h} on Tela Gramm.. winner gets to tell me what to do live",
+    "truth or dare baby? dare you to add me {h} and i'll show my first few a lil surprise",
 ]
 
 def _blank_dm_state() -> dict:
@@ -498,20 +504,25 @@ class BotWorker:
                     // and .message-text (body). Verified structure.
                     const box = document.querySelector('.room-messages-container');
                     if (!box) return [];
+                    // Only process the LAST ~40 items — high-traffic rooms keep hundreds/
+                    // thousands of li.message-item in the DOM; iterating all of them was the
+                    // per-tick bottleneck (40-50s branches). We only need the recent tail.
+                    const items = box.querySelectorAll('li.message-item');
                     const out = [];
-                    box.querySelectorAll('li.message-item').forEach(li => {
+                    for (let i = Math.max(0, items.length - 40); i < items.length; i++) {
+                        const li = items[i];
                         const textEl = li.querySelector('.message-text');
-                        if (!textEl) return;
+                        if (!textEl) continue;
                         const msg = (textEl.textContent || '').trim();
-                        if (!msg) return;
+                        if (!msg) continue;
                         const metaEl = li.querySelector('.message-meta');
                         const user = metaEl ? (metaEl.textContent || '').trim().replace(/:+$/, '') : '';
                         out.push(user ? user + ': ' + msg : msg);
-                    });
+                    }
                     if (out.length) return out.slice(-30);
                     // fallback: raw child text
-                    return Array.from(box.children)
-                        .map(e => (e.textContent || '').trim()).filter(t => t).slice(-25);
+                    return Array.from(box.children).slice(-25)
+                        .map(e => (e.textContent || '').trim()).filter(t => t);
                 })();
             """)
             return result if isinstance(result, list) else []
