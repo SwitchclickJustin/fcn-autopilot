@@ -70,6 +70,30 @@ _BROADCAST_STYLES = [
     "REACT-TO-ROOM: riff off the room's vibe/what guys are saying, then pivot to taking it to your phone live.",
 ]
 
+# Concrete example broadcasts (mostly QUESTIONS + casual invites) — {h} = handle. A couple
+# are shown per message as format inspiration so she sounds like a real bored girl, not a
+# horny ad. Many phrase it as a question to the room ("who's bored and has TG?").
+_BROADCAST_EXAMPLES = [
+    "who's bored and has Tela Grahm? you can find me {h}.. im looking to touch myself for someone watching rn",
+    "any guys on Tela Grahm wanna watch me play on my phone? im {h} on there",
+    "who wants to keep me company while i get off on my phone? im {h} on TG",
+    "so bored and horny.. anyone on Tela Grahm wanna watch? find me {h}",
+    "looking for someone to watch me cum on my phone.. you got TG? im {h}",
+    "mmm who's gonna pull me up on Tela Grahm and watch me finger myself? {h}",
+    "any of you actually know how to make a girl squirt? show me on my phone.. TG {h}",
+    "home alone and dripping.. who's on Tela Grahm rn? {h}",
+    "wanna show someone how wet i am right now.. you on TG? find me {h}",
+    "who's got Tela Grahm and isn't shy? come watch me play on my phone {h}",
+    "i hate playing alone.. anyone wanna watch on TG? im {h}",
+    "who wants to tell me what to do to myself live? find me on Tela Grahm {h}",
+    # handle/Tela Grahm LEADING the sentence (vary the position):
+    "{h} on Tela Grahm.. who's bored and wants to watch me play on my phone right now?",
+    "find me {h} on TG — i need someone to watch me get off rn",
+    "Tela Grahm {h} for whoever wants to make me cum live on my phone",
+    "{h} is my TG.. pull me up if you wanna watch me touch myself",
+    "on Tela Grahm as {h} rn.. who's gonna keep me company while i play?",
+]
+
 def _blank_dm_state() -> dict:
     """Canonical fresh per-DM state entry. EVERY `worker._dm_state` setdefault site
     MUST use this — a partial seed (e.g. an empty {}) poisons later direct
@@ -2192,11 +2216,17 @@ class BotOrchestrator:
                     f"tell them to continue it with you on TG {handle_cap}. "
                 )
             else:
-                # Pick a random ANGLE so messages vary in TYPE, not just wording.
+                # Pick a random ANGLE + a couple concrete example formats so messages vary in
+                # TYPE (often a question to the room), not just wording.
+                _ex = random.sample(_BROADCAST_EXAMPLES, 2)
+                _ex = [e.replace("{h}", handle_cap) for e in _ex]
                 room_angle = (
-                    f"Use THIS angle for the message — {random.choice(_BROADCAST_STYLES)} "
-                    f"Then work in your handle on TG {handle_cap}. Write it fresh in your own words, "
-                    f"never copy a previous message. "
+                    f"Angle for this message — {random.choice(_BROADCAST_STYLES)} "
+                    f"Mix it up: sometimes ask the room a QUESTION (like 'who's bored and has TG?'), "
+                    f"sometimes a statement or tease. VARY where your handle + Tela Grahm goes — "
+                    f"sometimes lead the message with it, sometimes drop it in the middle or end "
+                    f"(do NOT always end with it). Examples of the vibe/format (write your OWN, do "
+                    f"NOT copy these word-for-word): \"{_ex[0]}\" / \"{_ex[1]}\". "
                 )
 
             system = (
