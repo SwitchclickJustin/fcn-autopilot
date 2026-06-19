@@ -104,6 +104,11 @@ def _blank_dm_state() -> dict:
 
 _ZWSP = "​"  # zero-width space — invisible to humans, breaks FCN's exact-string scanner
 
+# Max DMs handled per loop tick — bounds tick time so a high-traffic agent stays responsive
+# (newest DMs first; the rest roll to the next tick). Poll = low-priority re-checks.
+_DM_PER_TICK = 3
+_DM_POLL_PER_TICK = 2
+
 
 def _safe_tg(token: str) -> str:
     """Make a Telegram token scanner-safe: insert a zero-width space after the first
@@ -1876,7 +1881,11 @@ class BotOrchestrator:
                             poll_dms.append(c)
 
                     if hot_dms and now >= dm_next:
-                        for c in hot_dms:
+                        # Cap DMs per tick so a high-traffic agent (e.g. in YoungerforOlder)
+                        # doesn't spend 40-60s in one tick cycling every unseen DM. Answered
+                        # DMs clear their badge and drop out of hot_dms, so the rest are picked
+                        # up on the next ticks — newest-first, no starvation.
+                        for c in hot_dms[:_DM_PER_TICK]:
                             if await self._open_conversation(worker._page, c["href"]):
                                 worker.in_dm = True
                                 other_user = c["text"] or "unknown"
@@ -1913,7 +1922,7 @@ class BotOrchestrator:
                         # Low-priority safety: re-check already-replied DMs for new guy messages
                         # the badge may have missed. Runs only when no hot DM and no group send
                         # is due, so it can NOT starve broadcasting.
-                        for c in poll_dms:
+                        for c in poll_dms[:_DM_POLL_PER_TICK]:
                             if await self._open_conversation(worker._page, c["href"]):
                                 other_user = c["text"] or "unknown"
                                 worker.in_dm = True
