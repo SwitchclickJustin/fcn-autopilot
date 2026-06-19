@@ -83,6 +83,10 @@ class LLMClient:
                 ],
                 "temperature": self.temperature,
                 "max_tokens": max_tokens,
+                # min_p clamps the low-probability tail so high temps (RP models like Lunaris
+                # want temp ~1.3) stay COHERENT instead of sampling garbage tokens/foreign
+                # scripts/code. Without this, temp >1.0 on a small model produces gibberish.
+                "min_p": 0.1,
                 # Push the model away from formulaic, repeated phrasing so broadcasts vary.
                 "frequency_penalty": 0.6,
                 "presence_penalty": 0.5,
