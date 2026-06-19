@@ -887,7 +887,8 @@ class BotOrchestrator:
         try:
             import base64 as _b64
             from urllib.parse import urlparse, parse_qs
-            _alert = parse_qs(urlparse(worker._page.url).query).get("alert", [""])[0] if worker._page else ""
+            _ban_url = getattr(worker, "_last_ban_url", "") or (worker._page.url if worker._page else "")
+            _alert = parse_qs(urlparse(_ban_url).query).get("alert", [""])[0]
             if _alert:
                 _alert += "=" * (-len(_alert) % 4)  # correct base64 padding
                 ban_reason = _b64.b64decode(_alert).decode("utf-8", "ignore")[:120]
@@ -1848,8 +1849,14 @@ class BotOrchestrator:
                     # triggering recovery (debounces brief network blips).
                     if await self._looks_banned(worker):
                         ban_strikes += 1
+                        # Capture the ban URL NOW (it carries the ?alert= reason) — by the
+                        # time _recover runs the page may have navigated off it.
+                        try:
+                            worker._last_ban_url = worker._page.url if worker._page else ""
+                        except Exception:
+                            worker._last_ban_url = ""
                         logger.info(f"[{agent_id}] ban signal #{ban_strikes} "
-                                    f"(url={worker._page.url[:60] if worker._page else '?'})")
+                                    f"(url={(worker._last_ban_url or '?')[:60]})")
                         if ban_strikes >= 2:
                             ban_strikes = 0
                             try:
