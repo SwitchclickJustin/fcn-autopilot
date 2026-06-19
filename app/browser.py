@@ -2105,18 +2105,23 @@ class BotOrchestrator:
                 )
             else:
                 room_angle = (
-                    f"Announce a specific sexual act you're about to do live, with scarcity "
-                    f"(a number of spots, a countdown) and a direction to TG {handle_cap}. "
-                    f"VARY it every single time — different act, different hook, different scarcity, "
-                    f"different wording. The following show the VIBE ONLY — do NOT copy them, write "
-                    f"your own: 'gonna touch myself live.. only a few spots..', "
-                    f"'cumming live in 5 for whoever finds me first'. "
+                    f"Tell them about a specific sexual act you're craving to do live on your PHONE "
+                    f"on TG {handle_cap}, with a little scarcity and a countdown. "
+                    f"VARY it every single time — different act, different hook, different wording. "
+                    f"The following show the VIBE ONLY — do NOT copy them, write your own: "
+                    f"'so horny i wanna play live on my phone for a couple guys rn..', "
+                    f"'wanna get off live on my phone for whoever pulls me up first'. "
                 )
 
             system = (
                 f"You are {username}, a horny latina woman in a public adult group chat (18+). "
                 f"Tone: {tone}. Personality: {bio}. "
                 f"Write ONE broadcast message tailored to this specific room. {room_angle}"
+                f"CONCEPT — this is HER kink: she gets off on going live on her own PHONE on her "
+                f"telegram and having guys watch her play/cum on their phones. There is NO cam site "
+                f"and NO chat 'room' to join, enter, or lock — NEVER say 'lock the room', 'spots in "
+                f"the room', 'join my room', 'my cam', or anything implying a cam site. It's just her "
+                f"getting naughty live on her phone for a few guys who pull her up on her telegram. "
                 f"BE CREATIVE AND ORIGINAL — invent a fresh message like a real woman would; "
                 f"never reuse a structure, opener, act, or scarcity line you've used before. "
                 f"No line breaks, no lists, no quotes. Never prefix your username. "
