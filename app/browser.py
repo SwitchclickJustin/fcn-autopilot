@@ -839,8 +839,11 @@ class BotOrchestrator:
                 return True  # kicked off the site entirely
             # Kicked OUT of chat → bounced to the main site / an alert page (banned,
             # "problematic username", "scammer", username-taken, etc). The live chat is
-            # always on schat.freechatnow.com/room|conv; landing on www…/?alert= = ejected.
-            if "alert=" in url or ("schat." not in url and "/chat/" not in url):
+            # always on schat.freechatnow.com/room|conv; landing on www…/?alert=, a /login
+            # page (kicked OR just logged out — no ban text), or off-host = ejected → recover.
+            if "alert=" in url or "/login" in url:
+                return True
+            if "schat." not in url and "/chat/" not in url:
                 return True
             if await self._is_blocked_page(page):
                 return True
