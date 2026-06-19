@@ -1170,27 +1170,39 @@ async def debug_room_list():
     page = workers[0]._page
     out = {}
     try:
-        clicked = await page.evaluate("""() => {
-            const els = Array.from(document.querySelectorAll('button, a, div, span, li'));
-            const btn = els.find(e => (e.textContent||'').trim().toLowerCase() === 'rooms'
-                                       && e.offsetParent !== null);
-            if (btn) { btn.click(); return {found:true, tag:btn.tagName, cls:btn.className}; }
-            return {found:false};
-        }""")
-        out["rooms_button"] = clicked
+        # Kill ad modals/overlays first (stelivo/12chats popups block the room list).
+        for _ in range(2):
+            try:
+                await browser_manager._kill_ads(page)
+                await browser_manager._dismiss_overlays(page)
+            except Exception:
+                pass
+            await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*=12chats]')
+                .forEach(e => { const m = e.closest('.stelivo-modal') || e; if (m && m.remove) m.remove(); })""")
+        out["rooms_candidates"] = await page.evaluate("""() => Array.from(document.querySelectorAll('div,button,a,span,li'))
+            .filter(e => /^rooms?$/i.test((e.textContent||'').trim()) && e.offsetParent)
+            .slice(0,8).map(e => ({tag:e.tagName, cls:e.className}))""")
+        await page.evaluate("""() => { const b = Array.from(document.querySelectorAll('.join-container,div,button,a,li'))
+            .find(e => (e.textContent||'').trim().toLowerCase()==='rooms' && e.offsetParent); if (b) b.click(); }""")
         await page.wait_for_timeout(1500)
+        # Clicking Rooms may spawn another ad — clear again before dumping.
+        try:
+            await browser_manager._kill_ads(page)
+        except Exception:
+            pass
+        await page.evaluate("""() => document.querySelectorAll('.stelivo-modal, iframe[src*=12chats]')
+            .forEach(e => { const m = e.closest('.stelivo-modal') || e; if (m && m.remove) m.remove(); })""")
         dump = await page.evaluate("""() => {
             const o = {};
             const all = Array.from(document.querySelectorAll('*'));
-            const hdr = all.find(e => (e.textContent||'').trim().toLowerCase() === 'room list');
-            let modal = hdr;
-            for (let i=0; i<7 && modal && modal.parentElement; i++) modal = modal.parentElement;
-            modal = modal || document.querySelector('[class*=modal i],[class*=dialog i],[class*=room-list i]');
-            o.modal_html = modal ? modal.outerHTML.slice(0, 9000) : '(modal not found)';
-            const scope = modal || document;
-            o.plus_candidates = Array.from(scope.querySelectorAll('*'))
-                .filter(e => (e.textContent||'').trim() === '+' || /join|plus|add/i.test(e.className||''))
-                .slice(0,12).map(e => ({tag:e.tagName, cls:e.className, html:(e.outerHTML||'').slice(0,160)}));
+            // Anchor on something only the room-list panel has.
+            let anchor = all.find(e => /chatting now/i.test(e.textContent||'') && (e.textContent||'').length < 40)
+                     || all.find(e => (e.textContent||'').trim().toLowerCase() === 'room list')
+                     || all.find(e => (e.textContent||'').trim().toLowerCase() === 'roleplay' && e.offsetParent);
+            o.anchor_found = !!anchor;
+            let panel = anchor;
+            for (let i=0; i<8 && panel && panel.parentElement; i++) panel = panel.parentElement;
+            o.panel_html = panel ? panel.outerHTML.slice(0, 9000) : '(no panel found)';
             return o;
         }""")
         out.update(dump)
