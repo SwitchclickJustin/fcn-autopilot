@@ -135,6 +135,7 @@ _TG_TOKENS_GROUP = [
     "TellaGramm", "Tela Grahm", "Tella Grahm", "TelaGrahm", "TallaGrahm",
     "Talla Grahm", "Tel A Gram", "Tel A Gramm", "Tela Graham", "Tella Graham",
     "T3la Gramm", "T3lla Gramm", "Te1a Gramm", "T3l3gram", "T3l a Grahm",
+    "tlgrm",
 ]
 
 
