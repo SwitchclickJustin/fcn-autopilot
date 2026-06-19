@@ -79,12 +79,21 @@ app = FastAPI(title="FCN Auto-Pilot", version="0.1.0", lifespan=lifespan)
 # ─── Auth helpers ───
 _PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 
+# Read-only diagnostics reachable with ?key=<DEBUG_KEY> in addition to a session cookie,
+# so an operator can poll logs + agent status without logging in. Exposes NO secrets and
+# NO controls. The bypass is INERT unless DEBUG_KEY is set in the environment.
+_KEY_READABLE = {"/debug/logs", "/debug/browser-status"}
+_DEBUG_KEY = os.environ.get("DEBUG_KEY", "").strip()
+
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
 # ensuring request.session is populated before the auth check executes.
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     if path in _PUBLIC or path.startswith("/static"):
+        return await call_next(request)
+    if (_DEBUG_KEY and path in _KEY_READABLE
+            and request.query_params.get("key") == _DEBUG_KEY):
         return await call_next(request)
     if not request.session.get("authed"):
         if path.startswith("/api/") or path.startswith("/ws"):
