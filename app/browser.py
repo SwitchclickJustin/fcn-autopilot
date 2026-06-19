@@ -347,6 +347,7 @@ class BotWorker:
         # DM conversation tracking: other_user → {conv_id, logged_count, is_first_bot_msg}
         self._dm_state: dict = {}
         self._room_photo_counts: dict = {}  # room_name → messages sent in that room
+        self._recent_group_msgs: list = []  # last N broadcasts across ALL rooms (anti-repeat)
         self._dms_since_group: int = 0     # DMs handled since last group room blast
         self.profile_id: str = ""
         self.session_id: str = ""
@@ -1779,7 +1780,7 @@ class BotOrchestrator:
                         if messages:
                             await self._auto_pilot_tick(worker, messages, client)
                         worker._dms_since_group = 0  # reset after group blast
-                        next_send = now + random.randint(60, 120)
+                        next_send = now + random.randint(10, 20)  # was 60-120; snappier room rotation
 
                 # ── SDK fallback (if no CDP) ──
                 elif worker.session_id:
@@ -2026,14 +2027,19 @@ class BotOrchestrator:
 
         else:
             # ── Group room: provocative broadcast messages ────────────────────
-            # Pull last 3 bot messages to avoid repetition
-            recent_bot_msgs = [m for m in messages[-15:] if m.startswith(username + ":")][-3:]
+            # Anti-repeat: this room's last 3 bot lines PLUS recent broadcasts across OTHER
+            # rooms — posting the same line in two rooms is an instant ban pattern.
+            this_room = [m.split(":", 1)[-1].strip()
+                         for m in messages[-15:] if m.startswith(username + ":")][-3:]
+            prior = this_room + list(worker._recent_group_msgs)
             no_repeat = ""
-            if recent_bot_msgs:
+            if prior:
                 no_repeat = (
-                    f"IMPORTANT: Do NOT repeat or closely paraphrase these recent messages: "
-                    + " | ".join(f'"{m.split(":",1)[-1].strip()}"' for m in recent_bot_msgs)
-                    + ". Write something completely different. "
+                    f"IMPORTANT: Do NOT repeat or closely paraphrase ANY message you've already sent "
+                    f"(this room OR other rooms): "
+                    + " | ".join(f'"{m}"' for m in prior[-6:])
+                    + ". Make it COMPLETELY different — different opening, different act, different "
+                    "scarcity hook, different wording. Every room must get a unique message. "
                 )
 
             # Handle capitalized: AlexandraSwallows style
@@ -2161,6 +2167,10 @@ class BotOrchestrator:
                     await db.log_event(persona_id, "message", room=worker.room, content=send_text)
                 except Exception:
                     pass
+                # Remember group broadcasts (across rooms) so the next one can't repeat them.
+                if not is_dm:
+                    worker._recent_group_msgs.append(send_text)
+                    worker._recent_group_msgs = worker._recent_group_msgs[-8:]
                 # ── Photo logic ───────────────────────────────────────────────
                 # DMs:         send on message 1 (opener), then every 5th message
                 # Group rooms: send on message 1 in that room, then every 4th message
