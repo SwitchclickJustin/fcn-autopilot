@@ -79,11 +79,11 @@ _BROADCAST_EXAMPLES = [
     "who wants to keep me company while i get off on my phone? im {h} on TG",
     "so bored and horny.. anyone on Tela Grahm wanna watch? find me {h}",
     "looking for someone to watch me cum on my phone.. you got TG? im {h}",
-    "mmm who's gonna pull me up on Tela Grahm and watch me finger myself? {h}",
+    "mmm who's gonna pull me up on Tela Grahm and watch me finger myself? find me {h}",
     "any of you actually know how to make a girl squirt? show me on my phone.. TG {h}",
-    "home alone and dripping.. who's on Tela Grahm rn? {h}",
+    "home alone and dripping.. who's on Tela Grahm rn? if so, find me {h}",
     "wanna show someone how wet i am right now.. you on TG? find me {h}",
-    "who's got Tela Grahm and isn't shy? come watch me play on my phone {h}",
+    "who's got Tela Grahm and isn't shy? come find me {h} and watch me play",
     "i hate playing alone.. anyone wanna watch on TG? im {h}",
     "who wants to tell me what to do to myself live? find me on Tela Grahm {h}",
     # handle/Tela Grahm LEADING the sentence (vary the position):
@@ -169,8 +169,9 @@ def _strip_ai_tells(text: str) -> str:
 
 
 def _force_group_cta(text: str, handle: str, tg_token: str) -> str:
-    """GUARANTEE a group broadcast carries BOTH the platform (tg_token) AND the handle.
-    If either is missing after generation, append a scanner-safe CTA with both."""
+    """GUARANTEE a group broadcast carries BOTH the platform AND a 'find me <handle>' CTA —
+    not just a mention. ('who's on Tela Grahm rn?' is a dead end; append 'if so, find me
+    <handle>'.) Only fires if the model omitted one; preserves a trailing '?'."""
     clean = handle.lstrip("@")
     if not clean:
         return text
@@ -181,7 +182,11 @@ def _force_group_cta(text: str, handle: str, tg_token: str) -> str:
         return text
     pos = random.randint(2, max(2, len(clean) - 2))
     ob = clean[:pos] + _ZWSP + clean[pos:]
-    return (text.rstrip(" .,!") + f".. find me on {tg_token} {ob}").strip()
+    target = ob if has_tg else f"{tg_token} {ob}"     # don't repeat the platform if present
+    is_q = text.rstrip().endswith("?")
+    lead = (" if so, find me " if is_q else ".. find me ") if has_tg \
+        else (" if so, find me on " if is_q else ".. find me on ")
+    return f"{text.rstrip()}{lead}{target}".strip()
 
 logger = logging.getLogger(__name__)
 
@@ -2243,11 +2248,14 @@ class BotOrchestrator:
                 _ex = random.sample(_BROADCAST_EXAMPLES, 2)
                 _ex = [e.replace("{h}", handle_cap) for e in _ex]
                 room_angle = (
-                    f"Angle for this message — {random.choice(_BROADCAST_STYLES)} "
+                    f"Angle for this message: {random.choice(_BROADCAST_STYLES)} "
                     f"Mix it up: sometimes ask the room a QUESTION (like 'who's bored and has TG?'), "
-                    f"sometimes a statement or tease. VARY where your handle + Tela Grahm goes — "
-                    f"sometimes lead the message with it, sometimes drop it in the middle or end "
-                    f"(do NOT always end with it). Examples of the vibe/format (write your OWN, do "
+                    f"sometimes a statement or tease. VARY where your handle + Tela Grahm goes: "
+                    f"sometimes lead with it, sometimes middle or end (do NOT always end with it). "
+                    f"CRITICAL: every message must include a clear CALL TO ACTION to find you — "
+                    f"e.g. 'find me {handle_cap}' / 'im {handle_cap} on there'. A question alone is a "
+                    f"dead end: 'who's on Tela Grahm rn?' is BAD; 'who's on Tela Grahm rn? if so, "
+                    f"find me {handle_cap}' is GOOD. Examples of the vibe/format (write your OWN, do "
                     f"NOT copy these word-for-word): \"{_ex[0]}\" / \"{_ex[1]}\". "
                 )
 
