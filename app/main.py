@@ -83,7 +83,7 @@ _PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 # Read-only diagnostics reachable with ?key=<DEBUG_KEY> in addition to a session cookie,
 # so an operator can poll logs + agent status without logging in. Exposes NO secrets and
 # NO controls. The bypass is INERT unless DEBUG_KEY is set in the environment.
-_KEY_READABLE = {"/debug/logs", "/debug/browser-status", "/debug/room-list"}
+_KEY_READABLE = {"/debug/logs", "/debug/browser-status", "/debug/room-list", "/debug/eval"}
 _DEBUG_KEY = os.environ.get("DEBUG_KEY", "").strip()
 
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
@@ -1160,6 +1160,20 @@ async def debug_composer_probe():
         return result
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/debug/eval")
+async def debug_eval(js: str = ""):
+    """Run a JS snippet on the first active agent's page (debug; key-gated). Lets us probe
+    the live DOM interactively without redeploying. js = a `() => …` or `async () => …`."""
+    workers = [w for w in browser_manager._workers.values() if w._page]
+    if not workers:
+        return {"error": "no active agents"}
+    if not js:
+        return {"error": "pass ?js=<urlencoded arrow fn>"}
+    try:
+        return {"ok": True, "result": await workers[0]._page.evaluate(js)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 @app.get("/debug/room-list")
 async def debug_room_list():
