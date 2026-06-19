@@ -32,9 +32,16 @@ _CONFIRM_RE = re.compile(
     r"\b(found (you|u|ya|her)|i found you|got you|i see you|see you (there|now)|there now|"
     r"messaged (you|u)|in your (dm|inbox)|texted you|added (you|u|ya))\b", re.I)
 
-# Platform words the LLM sometimes leaks despite the safety prompt
-_PLATFORM_RE = re.compile(
-    r'\b(telegram|telegr|tele?gr?m|tg|kik|snapchat|snap|whatsapp|wa|onlyfans|of)\b', re.I)
+# Telegram references the model emits — REPLACED (not deleted) with a context-specific
+# safe token so the guy still learns WHERE to find the handle. The group token
+# "Tela Grahm" is deliberately NOT matched here so a replacement survives a second pass.
+_TELEGRAM_RE = re.compile(r'\b(telegram|telegr|tele?gr?m|tele|tg)\b', re.I)
+# Other platforms we never advertise — stripped entirely. (Bare 'of'/'wa' removed:
+# they matched ordinary English words and mangled normal messages.)
+_OTHER_PLATFORM_RE = re.compile(r'\b(kik|snapchat|snap|whatsapp|onlyfans)\b', re.I)
+# Canonical obfuscated Telegram token for GROUP rooms (chosen 2026-06-19): misspelled
+# two-word form, inherently safe against FCN's exact-string scanner. (DM token: _TG_DM.)
+_TG_GROUP = "Tela Grahm"
 
 # Signals that a guy is excited / engaged — good time to pitch Telegram
 _EXCITED_RE = re.compile(
@@ -59,23 +66,41 @@ def _blank_dm_state() -> dict:
 
 
 _ZWSP = "​"  # zero-width space — invisible to humans, breaks FCN's exact-string scanner
+# DM Telegram token: reads "TG" to humans, but the zero-width space breaks the
+# exact-string scanner so "tg" can't be matched/banned.
+_TG_DM = "T" + _ZWSP + "G"
 
 
-def _obfuscate_handle(text: str, handle: str) -> str:
-    """Replace every occurrence of `handle` in `text` with a version that has
-    a zero-width space inserted at a position that varies each call.
-    Also strips any leaked platform-name words."""
+def _sanitize_platforms(text: str, tg_token: str) -> str:
+    """REPLACE telegram references with `tg_token` (keep the cue, lose the bannable
+    string) and STRIP other platforms entirely."""
+    text = _TELEGRAM_RE.sub(tg_token, text)
+    text = _OTHER_PLATFORM_RE.sub("", text)
+    return text
+
+
+def _has_tg_cue(text: str, tg_token: str) -> bool:
+    """Is an (obfuscated) telegram cue present? Compare with zero-width spaces removed."""
+    flat = text.replace(_ZWSP, "").lower()
+    return tg_token.replace(_ZWSP, "").lower() in flat
+
+
+def _obfuscate_handle(text: str, handle: str, tg_token: str) -> str:
+    """Insert a zero-width space into `handle` (varying position) so FCN's scanner
+    can't match it, replace telegram refs with `tg_token`, strip other platforms, and
+    GUARANTEE a telegram cue sits right before the handle (so it's never shared bare)."""
     clean = handle.lstrip("@")
+    text = _sanitize_platforms(text, tg_token)
     if not clean or clean.lower() not in text.lower():
-        # Also just do the platform strip even if handle isn't present
-        return _PLATFORM_RE.sub("", text).strip()
+        return re.sub(r"  +", " ", text).strip()
     # Insert ZWSP at a random interior position (not first/last char)
     pos = random.randint(2, max(2, len(clean) - 2))
     obfuscated = clean[:pos] + _ZWSP + clean[pos:]
-    # Replace all case-insensitive occurrences
     result = re.sub(re.escape(clean), obfuscated, text, flags=re.I)
-    # Strip leaked platform words
-    result = _PLATFORM_RE.sub("", result)
+    # Backstop: if the model dropped the platform word, inject the token before the
+    # handle so the guy always knows WHERE to find it.
+    if not _has_tg_cue(result, tg_token):
+        result = re.sub(re.escape(obfuscated), f"{tg_token} {obfuscated}", result, count=1)
     # Collapse any double spaces left behind
     result = re.sub(r"  +", " ", result).strip()
     return result
@@ -422,7 +447,7 @@ class BotWorker:
                     pass
                 await inp.focus()
                 await inp.fill("")  # clear any stale text
-                # Human-like typing ~50 WPM. 50 WPM × 5 chars/word ÷ 60s = ~0.24s/char avg.
+                # Human-like typing ~120 WPM (doubled). ~0.10s/char avg.
                 # Occasional typo: type wrong char, pause, backspace, type correct char.
                 _keyboard_neighbors = {
                     'a':'sq','b':'vgn','c':'xdv','d':'sfe','e':'wrd','f':'dge','g':'fht',
@@ -435,15 +460,15 @@ class BotWorker:
                     if ch.isalpha() and random.random() < 0.08:
                         wrong = random.choice(_keyboard_neighbors.get(ch.lower(), ch.lower()))
                         await self._page.keyboard.type(wrong)
-                        await asyncio.sleep(random.uniform(0.10, 0.22))
+                        await asyncio.sleep(random.uniform(0.05, 0.11))
                         await self._page.keyboard.press("Backspace")
-                        await asyncio.sleep(random.uniform(0.08, 0.18))
+                        await asyncio.sleep(random.uniform(0.04, 0.09))
                     await self._page.keyboard.type(ch)
-                    delay = random.uniform(0.13, 0.28)   # ~60 WPM
+                    delay = random.uniform(0.065, 0.14)   # ~120 WPM (doubled)
                     if random.random() < 0.04:
-                        delay += random.uniform(0.4, 1.1)  # brief "thinking" pause
+                        delay += random.uniform(0.2, 0.55)  # brief "thinking" pause
                     await asyncio.sleep(delay)
-                await asyncio.sleep(random.uniform(0.15, 0.45))
+                await asyncio.sleep(random.uniform(0.08, 0.23))
                 await self._page.keyboard.press("Enter")
                 await asyncio.sleep(0.7)
                 if await _sent():
@@ -2080,12 +2105,14 @@ class BotOrchestrator:
         # Detect handle share on the raw (unobfuscated) text
         shares_handle = bool(handle) and handle.lower().lstrip("@") in response.lower()
 
-        # Obfuscate handle + strip leaked platform words BEFORE sending.
-        # Zero-width space breaks FCN's exact-string scanner; humans don't notice it.
+        # Obfuscate handle + convert telegram refs to a scanner-safe token BEFORE sending.
+        # Group rooms (public, heavily scanned) use the misspelled "Tela Grahm"; DMs use
+        # "TG" with a zero-width space. The handle is never sent without a telegram cue.
+        tg_token = _TG_DM if is_dm else _TG_GROUP
         if handle:
-            send_text = _obfuscate_handle(response, handle)
+            send_text = _obfuscate_handle(response, handle, tg_token)
         else:
-            send_text = _PLATFORM_RE.sub("", response).strip() or response
+            send_text = _sanitize_platforms(response, tg_token).strip() or response
 
         # Supervisor pre-flight (run on the obfuscated text we'll actually send)
         try:
