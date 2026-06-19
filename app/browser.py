@@ -2332,7 +2332,11 @@ class BotOrchestrator:
                 pass
 
         prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
+        _t_llm = time.monotonic()
         response = await llm.chat(system, prompt)
+        _llm_dt = time.monotonic() - _t_llm
+        if _llm_dt > 6:
+            logger.info(f"[{worker.agent_id}] SLOW llm.chat {_llm_dt:.1f}s ({'DM' if is_dm else 'GRP'})")
         worker.last_response = (response or "")[:200]
         if not response:
             return
