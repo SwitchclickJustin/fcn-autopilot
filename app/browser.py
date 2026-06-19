@@ -88,7 +88,7 @@ _BROADCAST_EXAMPLES = [
     "who wants to tell me what to do to myself live? find me on Tela Grahm {h}",
     # handle/Tela Grahm LEADING the sentence (vary the position):
     "{h} on Tela Grahm.. who's bored and wants to watch me play on my phone right now?",
-    "find me {h} on TG — i need someone to watch me get off rn",
+    "find me {h} on TG.. i need someone to watch me get off rn",
     "Tela Grahm {h} for whoever wants to make me cum live on my phone",
     "{h} is my TG.. pull me up if you wanna watch me touch myself",
     "on Tela Grahm as {h} rn.. who's gonna keep me company while i play?",
@@ -160,6 +160,28 @@ def _obfuscate_handle(text: str, handle: str, tg_token: str) -> str:
     # Collapse any double spaces left behind
     result = re.sub(r"  +", " ", result).strip()
     return result
+
+
+def _strip_ai_tells(text: str) -> str:
+    """Remove em/en dashes — a dead giveaway of AI text. Real people don't type ' — '."""
+    text = re.sub(r"\s*[—–]\s*", ".. ", text)   # ' — ' -> '.. '
+    return re.sub(r"  +", " ", text).strip()
+
+
+def _force_group_cta(text: str, handle: str, tg_token: str) -> str:
+    """GUARANTEE a group broadcast carries BOTH the platform (tg_token) AND the handle.
+    If either is missing after generation, append a scanner-safe CTA with both."""
+    clean = handle.lstrip("@")
+    if not clean:
+        return text
+    flat = text.replace(_ZWSP, "").lower()
+    has_handle = clean.lower() in flat
+    has_tg = tg_token.replace(_ZWSP, "").lower() in flat
+    if has_handle and has_tg:
+        return text
+    pos = random.randint(2, max(2, len(clean) - 2))
+    ob = clean[:pos] + _ZWSP + clean[pos:]
+    return (text.rstrip(" .,!") + f".. find me on {tg_token} {ob}").strip()
 
 logger = logging.getLogger(__name__)
 
@@ -2137,8 +2159,8 @@ class BotOrchestrator:
                     tg_phrases = [
                         f"if you got TG, i got my dildo out and i'm about to use it.. i'll let ya watch.. but you gotta have TG {handle}",
                         f"if you got TG i'll show you everything.. i'm touching myself right now.. but you gotta be on TG {handle}",
-                        f"if you want to party some time, find me on that TG — {handle}",
-                        f"you should find me on the TG baby — {handle}",
+                        f"if you want to party some time, find me on that TG.. {handle}",
+                        f"you should find me on the TG baby.. {handle}",
                     ]
                     tg_line = random.choice(tg_phrases) if handle else "find me on the TG"
                     system = (
@@ -2276,8 +2298,12 @@ class BotOrchestrator:
         tg_token = _pick_tg_token(is_dm)
         if handle:
             send_text = _obfuscate_handle(response, handle, tg_token)
+            # GROUP: every broadcast must carry BOTH the platform AND the handle.
+            if not is_dm:
+                send_text = _force_group_cta(send_text, handle, tg_token)
         else:
             send_text = _sanitize_platforms(response, tg_token).strip() or response
+        send_text = _strip_ai_tells(send_text)  # kill em/en dashes (AI tell) on every send
 
         # Supervisor pre-flight (run on the obfuscated text we'll actually send)
         try:
