@@ -1488,10 +1488,17 @@ class BotOrchestrator:
                         const href = a.getAttribute('href') || '';
                         const target = a.getAttribute('data-target') || '';
                         const cls = (d.className || '').toString();
+                        const isDm = target !== 'room' && !href.startsWith('/room/');
+                        // Unread signal is class-specific: DMs use `unseen-private` (a real
+                        // badge that clears once read), rooms use `unseen-message`. FCN leaves
+                        // `unseen-message` on rooms permanently, so it's NOT a reliable unread
+                        // flag for rooms — matched per-type so a DM's `unseen` can't be tripped
+                        // by a stray room class.
                         out.push({
                             href, target, text: (a.textContent || '').trim().slice(0,30),
-                            unseen: /unseen/.test(cls), active: /\\bactive\\b/.test(cls),
-                            is_dm: target !== 'room' && !href.startsWith('/room/'),
+                            unseen: isDm ? /unseen-private/.test(cls) : /unseen-message/.test(cls),
+                            active: /\\bactive\\b/.test(cls),
+                            is_dm: isDm,
                         });
                     });
                     return out;
