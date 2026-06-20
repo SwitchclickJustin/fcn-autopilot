@@ -196,6 +196,10 @@ def _strip_ai_tells(text: str, strip_emoji: bool = False) -> str:
     """Clean model output before sending: drop em/en dashes (AI tell), cut trailing
     meta/narration ("**That's all…", a blank-line second turn), strip a leading
     "Username:" prefix the model sometimes adds, and (group only) strip emojis."""
+    # Strip a leading meta/context parenthetical (ANY length) + its trailing blank line FIRST,
+    # so the block-split below can't keep the meta and drop the real reply. The model sometimes
+    # prefixes "(X sent a private message. She's in the cucks room...)" before the actual line.
+    text = re.sub(r"^\s*\([^)]*\)\s*", "", text)
     # Keep only the first block — cut at a blank line, markdown bold, or a "--" rule
     # where models tend to append narration/commentary.
     text = re.split(r"\n\s*\n|\*\*|\n\s*-{2,}", text)[0]
