@@ -78,24 +78,22 @@ class ChatAvenueWorker:
             self.login_name = name
             self._bw.login_name = name
             await page.fill("#guest_username", name, timeout=5000)
-            # Gender/DOB are selectboxit widgets — the native <select> is hidden (select_option
-            # times out) AND the form reads selectboxit's state, not the native .value. Click the
-            # option ANCHOR (selectboxit's own click handler selects it + syncs the native select).
-            # Structure: #<id>SelectBoxIt (button) + #<id>SelectBoxItOptions a.selectboxit-option-anchor.
+            # Gender/DOB are selectboxit widgets. The ONLY thing that updates both selectboxit's
+            # display AND the native <select> the form submits is jQuery .val().trigger('change')
+            # — verified in Chrome (anchor-click and vanilla dispatchEvent do NOT sync selectboxit).
+            # Chat Avenue loads jQuery, so this is reliable.
             try:
-                await page.evaluate("""() => {
-                    const pick = (selId, matchFn) => {
-                        const btn = document.getElementById(selId + 'SelectBoxIt');
-                        if (btn) btn.click();                                  // open the dropdown
-                        const opts = [...document.querySelectorAll('#' + selId + 'SelectBoxItOptions a.selectboxit-option-anchor')];
-                        const t = opts.find(matchFn) || opts[1];               // fallback: first real option
-                        if (t) t.click();                                      // select -> syncs native + closes
-                    };
-                    pick('guest_gender', a => /female/i.test(a.textContent));
-                    pick('date_day',   a => a.textContent.trim() === '15');
-                    pick('date_month', a => /^jun/i.test(a.textContent.trim()));
-                    pick('date_year',  a => /^(200[0-6])$/.test(a.textContent.trim()));
+                gset = await page.evaluate("""() => {
+                    if (!window.jQuery) return 'no-jquery';
+                    const setSB = (id, m) => { const s=document.getElementById(id); if(!s) return;
+                        const o=[...s.options].find(m); if(o) jQuery(s).val(o.value).trigger('change'); };
+                    setSB('guest_gender', o=>/female/i.test(o.text));
+                    setSB('date_day',   o=>o.text.trim()==='15');
+                    setSB('date_month', o=>/^jun/i.test(o.text.trim()));
+                    setSB('date_year',  o=>/^(200[0-6])$/.test(o.text.trim()));
+                    return (document.getElementById('guest_gender')||{}).value;  // expect '2' = Female
                 }""")
+                logger.info(f"[{self.agent_id}] CA gender set -> {gset}")
                 await page.wait_for_timeout(400)
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA gender/DOB set issue: {e}")
