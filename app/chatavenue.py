@@ -78,15 +78,31 @@ class ChatAvenueWorker:
             self.login_name = name
             self._bw.login_name = name
             await page.fill("#guest_username", name, timeout=5000)
+            # Gender/DOB are selectboxit-styled: the native <select> is hidden, so select_option
+            # times out on actionability. Set the native select value via JS + change (selectboxit
+            # syncs, and the native value is what the form submits).
             try:
-                await page.select_option("#guest_gender", label="Female")
-                await page.select_option("#date_day", "15")
-                await page.select_option("#date_month", index=5)   # ~June
-                await page.select_option("#date_year", "2001")
+                await page.evaluate("""() => {
+                    const byText = (id, txt) => { const s=document.getElementById(id); if(!s) return;
+                        const o=[...s.options].find(o=>o.text.trim().toLowerCase()===String(txt).toLowerCase());
+                        if(o){ s.value=o.value; s.dispatchEvent(new Event('change',{bubbles:true})); } };
+                    const byIdx = (id, i) => { const s=document.getElementById(id); if(!s||!s.options.length) return;
+                        const k=Math.min(Math.max(i,1), s.options.length-1);
+                        s.value=s.options[k].value; s.dispatchEvent(new Event('change',{bubbles:true})); };
+                    byText('guest_gender','Female');
+                    byIdx('date_day',15); byIdx('date_month',6); byIdx('date_year',5);
+                }""")
             except Exception as e:
-                logger.warning(f"[{self.agent_id}] CA gender/DOB select issue: {e}")
+                logger.warning(f"[{self.agent_id}] CA gender/DOB set issue: {e}")
+            # Wait for Cloudflare Turnstile to auto-solve (token populated) before submitting.
+            for _ in range(24):
+                tok = await page.evaluate("() => { const e=document.querySelector('input[name=cf-turnstile-response]'); return e ? (e.value||'') : 'none'; }")
+                if tok and tok != 'none':
+                    logger.info(f"[{self.agent_id}] CA turnstile solved")
+                    break
+                await page.wait_for_timeout(500)
             await page.click(".theme_btn.full_button", timeout=8000)
-            await page.wait_for_timeout(4500)                       # Turnstile + lobby render
+            await page.wait_for_timeout(4000)                       # lobby render
             ok = await page.evaluate("() => !document.getElementById('guest_username')")
             self.status = "lobby" if ok else "login_failed"
             logger.info(f"[{self.agent_id}] CA login {'OK' if ok else 'FAILED'} as {name}")
