@@ -163,7 +163,11 @@ CREATE TABLE IF NOT EXISTS persona_photos (
 async def get_db():
     """Get database connection (Neon PostgreSQL or SQLite fallback)."""
     if USE_NEON:
-        conn = await asyncpg.connect(settings.neon_database_url)
+        # statement_cache_size=0: Neon runs behind PgBouncer, where asyncpg's prepared-
+        # statement plan cache breaks after a schema change (e.g. an ADD COLUMN migration)
+        # with InvalidCachedStatementError on pooled backends. Disabling the cache is the
+        # recommended setting for PgBouncer and makes migrations safe.
+        conn = await asyncpg.connect(settings.neon_database_url, statement_cache_size=0)
         await conn.execute(SCHEMA_SQL)
         # personas migration: platform tag (fcn | chatavenue) on existing prod tables
         try:
