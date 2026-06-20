@@ -74,6 +74,7 @@ class ChatAvenueWorker:
         self._recent_msgs: list = []          # no-repeat memory
         self._task = None
         self._stop = False
+        self._orchestrator = None       # set by start_multi_chatavenue; feeds the dashboard
         # Cadence (seconds between blasts) from the persona's cooldown_min/max, 15-25s default.
         self.cd_min, self.cd_max = _broadcast_interval(persona)
         # Which Chat Avenue site this agent blasts (round-robin by slot across CA_SITES).
@@ -342,6 +343,15 @@ class ChatAvenueWorker:
                         self._recent_msgs.append(text)
                         self._recent_msgs = self._recent_msgs[-8:]
                         logger.info(f"[{self.agent_id}] CA BROADCAST room={self.room}: {text}")
+                        if self._orchestrator:
+                            self._orchestrator.push_feed({
+                                "t": time.strftime("%H:%M:%S"),
+                                "agent": self.agent_id,
+                                "dm": False,
+                                "room": self.room,
+                                "text": text,
+                                "platform": "chatavenue",
+                            })
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA loop error: {e}")
             await asyncio.sleep(random.uniform(self.cd_min, self.cd_max))

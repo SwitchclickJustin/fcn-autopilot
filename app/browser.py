@@ -864,6 +864,16 @@ class BotOrchestrator:
         logger.info(f"start_multi: {len(workers)}/{count} agents live")
         return workers
 
+    def push_feed(self, entry: dict):
+        """Append one message to the unified dashboard feed (FCN + Chat Avenue). Mutates the
+        list in place (capped at 400) so CA workers holding a reference stay consistent."""
+        try:
+            self._feed.append(entry)
+            if len(self._feed) > 400:
+                del self._feed[:len(self._feed) - 400]
+        except Exception:
+            pass
+
     async def start_multi_chatavenue(self, count: int, persona: dict) -> list:
         """Launch `count` Chat Avenue broadcasters from one persona — each on its own distinct
         Decodo IP (fresh per registration), running the text-only broadcast loop."""
@@ -874,6 +884,7 @@ class BotOrchestrator:
         async def _one(slot: int):
             aid = f"CA_{username}_{slot + 1}"
             w = ChatAvenueWorker(persona, aid, slot=slot, agent_total=count)
+            w._orchestrator = self      # so broadcasts land in the shared dashboard feed
             try:
                 if not await self._provision_and_connect(w._bw, custom_proxy=w.custom_proxy):
                     return None
@@ -2720,18 +2731,14 @@ class BotOrchestrator:
             if sent:
                 worker.send_oks += 1
                 # Unified feed: what this agent just said, group or DM, in order.
-                try:
-                    self._feed.append({
-                        "t": time.strftime("%H:%M:%S"),
-                        "agent": worker.agent_id,
-                        "dm": bool(is_dm),
-                        "room": worker.room,
-                        "text": send_text,
-                    })
-                    if len(self._feed) > 400:
-                        self._feed = self._feed[-400:]
-                except Exception:
-                    pass
+                self.push_feed({
+                    "t": time.strftime("%H:%M:%S"),
+                    "agent": worker.agent_id,
+                    "dm": bool(is_dm),
+                    "room": worker.room,
+                    "text": send_text,
+                    "platform": "fcn",
+                })
                 try:
                     await db.log_event(persona_id, "message", room=worker.room, content=send_text)
                 except Exception:
