@@ -1962,6 +1962,13 @@ class BotOrchestrator:
                     _t_list = time.monotonic()
                     all_dms = [c for c in convos if c["is_dm"]]
                     rooms = [c for c in convos if not c["is_dm"]]
+                    # DM inflow: log when the DM tab count hits a new peak so a burst (+N) is
+                    # visible and attributable to the BROADCAST lines logged just before it.
+                    _dmc = len(all_dms)
+                    if _dmc > getattr(worker, "_dm_peak", 0):
+                        logger.info(f"[{worker.agent_id}] DM_INFLOW total={_dmc} "
+                                    f"(+{_dmc - getattr(worker, '_dm_peak', 0)})")
+                        worker._dm_peak = _dmc
 
                     # HOT DM = a guy just messaged (unseen badge) or a brand-new DM we've never
                     # logged → reply immediately, preempts group broadcasting.
@@ -2488,6 +2495,9 @@ class BotOrchestrator:
             # Only track handle_shared for DMs — group room shares can't be confirmed
             if is_dm:
                 worker.handle_shared = True
+            # Log handle-shares to /debug/logs so we can correlate them against captcha events
+            # (the "rotate the username once it's burned" signal).
+            logger.info(f"[{worker.agent_id}] HANDLE_SHARE ({'DM' if is_dm else 'GRP'}) room={worker.room}")
             try:
                 await db.log_event(persona_id, "handle_share", room=worker.room, content=send_text)
             except Exception:
@@ -2529,6 +2539,10 @@ class BotOrchestrator:
                             room_key = worker.room or "default"
                             worker._room_msg_counts[room_key] = worker._room_msg_counts.get(room_key, 0) + 1
                             await self._maybe_send_photo(worker, persona_id)
+                            # Capture broadcast + the image it rode with, so a later DM burst can
+                            # be attributed to the exact (message, image) that pulled it in.
+                            logger.info(f"[{worker.agent_id}] BROADCAST room={worker.room} "
+                                        f"img={getattr(worker, '_last_photo', '?')}: {send_text}")
                     except Exception:
                         pass
         elif worker.session_id:
@@ -2592,6 +2606,7 @@ class BotOrchestrator:
             import base64
             b64 = base64.b64encode(image_bytes).decode("utf-8")
             base = chosen.get("filename") or url.split("/")[-1] or "photo.jpg"
+            worker._last_photo = base.rsplit(".", 1)[0]  # e.g. "6" — for broadcast→DM attribution
             # Randomize the filename per send so the same image never posts under an identical
             # name (defeats filename-pattern / dedup detection on FCN's side).
             _stem, _dot, _ext = base.rpartition(".")
