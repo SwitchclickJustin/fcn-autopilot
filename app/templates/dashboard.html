@@ -315,11 +315,15 @@ async function startSession(){
   btn.disabled=true;
   btn.textContent=`⏳ Launching ${count} agent${count>1?'s':''}…`;
 
-  // Show skeleton tiles while agents provision
-  const skeletons=Array.from({length:count},(_,i)=>({
-    agent_id:`skeleton_${i}`,live_url:'',rooms:[],status:'connecting'
-  }));
-  buildAgentGrid(skeletons);
+  // Skeleton tiles while provisioning — only when nothing's running, so launching a second
+  // platform (e.g. Chat Ave while FCN runs) doesn't wipe the fleet already on screen.
+  const alreadyRunning=!!pollTimer;
+  if(!alreadyRunning){
+    const skeletons=Array.from({length:count},(_,i)=>({
+      agent_id:`skeleton_${i}`,live_url:'',rooms:[],status:'connecting'
+    }));
+    buildAgentGrid(skeletons);
+  }
 
   try{
     const r=await fetch('/api/session/start-multi',{
@@ -330,15 +334,17 @@ async function startSession(){
     const data=await r.json();
     if(data.detail||data.error){
       toast('Error: '+(data.detail||data.error));
-      clearAgentGrid();
+      if(!alreadyRunning) clearAgentGrid();
       btn.disabled=false; btn.textContent='▶ Launch';
       return;
     }
 
-    buildAgentGrid(data.agents||[]);
-    document.getElementById('btn-start').style.display='none';
+    // Rebuild from full session state so BOTH platforms (FCN + Chat Avenue) show together.
+    let allAgents=data.agents||[];
+    try{ const st=await(await fetch('/api/session/state')).json(); if(st.agents&&st.agents.length) allAgents=st.agents; }catch(_){}
+    buildAgentGrid(allAgents);
     document.getElementById('btn-stop').style.display='inline-flex';
-    document.getElementById('status-text').textContent=`🟢 ${data.agents.length} agent${data.agents.length>1?'s':''} live`;
+    document.getElementById('status-text').textContent=`🟢 ${allAgents.length} agent${allAgents.length>1?'s':''} live`;
     setAutoPilotUI(true);
     toast(`${data.agents.length} agent${data.agents.length>1?'s':''} launched!`);
     startPolling();
@@ -463,7 +469,6 @@ setInterval(loadStats,20000);
     const agents=d.agents||[];
     if(agents.length>0){
       buildAgentGrid(agents);
-      document.getElementById('btn-start').style.display='none';
       document.getElementById('btn-stop').style.display='inline-flex';
       document.getElementById('status-text').textContent=`🟢 ${agents.length} agent${agents.length>1?'s':''} live`;
       setAutoPilotUI(true);

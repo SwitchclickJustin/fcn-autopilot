@@ -1354,13 +1354,13 @@ async def start_multi_session(data: dict):
             except (json.JSONDecodeError, TypeError):
                 persona[field] = []
 
-    # Stop any prior session before launching a new fleet
-    await browser_manager.stop_all()
-
+    # Replace only the SAME-platform fleet so FCN and Chat Avenue can run at the same time.
     try:
         if platform == "chatavenue":
+            await browser_manager.stop_chatavenue()
             workers = await browser_manager.start_multi_chatavenue(count, persona)
         else:
+            await browser_manager.stop_fcn()
             workers = await browser_manager.start_multi(count, persona)
     except Exception as e:
         logger.error(f"MULTI-START ERROR: {e}\n{traceback.format_exc()}")

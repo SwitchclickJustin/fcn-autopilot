@@ -2907,11 +2907,13 @@ class BotOrchestrator:
 
         worker.status = "stopped"
 
-    async def stop_all(self):
-        """Gracefully stop all bot sessions (FCN + Chat Avenue)."""
-        logger.info("Stopping all bots...")
+    async def stop_fcn(self):
+        """Stop only the FCN fleet (leaves any Chat Avenue agents running)."""
         for agent_id in list(self._workers.keys()):
             await self.stop_bot(agent_id)
+
+    async def stop_chatavenue(self):
+        """Stop only the Chat Avenue fleet (leaves any FCN agents running)."""
         for w in self._ca_workers:
             try:
                 await w.stop()
@@ -2919,6 +2921,12 @@ class BotOrchestrator:
             except Exception:
                 pass
         self._ca_workers = []
+
+    async def stop_all(self):
+        """Gracefully stop all bot sessions (FCN + Chat Avenue)."""
+        logger.info("Stopping all bots...")
+        await self.stop_fcn()
+        await self.stop_chatavenue()
         self._session_start = None  # uptime clock resets when the fleet is stopped
 
     async def close(self):

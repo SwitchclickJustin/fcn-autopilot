@@ -378,11 +378,17 @@ class ChatAvenueWorker:
             tab = self.tabs[i % len(self.tabs)]; i += 1
             self._bw._page = tab["page"]        # point send() at this tab
             try:
+                # Force the right tab to the foreground — remote browsers route input to the
+                # active tab, so without this an "Adult Chat" send can land in the Sex Chat tab.
+                try:
+                    await tab["page"].bring_to_front()
+                except Exception:
+                    pass
                 text = await self._make_broadcast()
                 if text and await self.send(text):
                     self._recent_msgs.append(text)
                     self._recent_msgs = self._recent_msgs[-8:]
-                    logger.info(f"[{self.agent_id}] CA BROADCAST [{tab['room']}]: {text}")
+                    logger.info(f"[{self.agent_id}] CA BROADCAST [{tab['room']}] @ {tab['page'].url[:42]}: {text}")
                     if self._orchestrator:
                         self._orchestrator.push_feed({
                             "t": time.strftime("%H:%M:%S"),
