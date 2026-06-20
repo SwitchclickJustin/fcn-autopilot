@@ -83,7 +83,8 @@ _PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 # Read-only diagnostics reachable with ?key=<DEBUG_KEY> in addition to a session cookie,
 # so an operator can poll logs + agent status without logging in. Exposes NO secrets and
 # NO controls. The bypass is INERT unless DEBUG_KEY is set in the environment.
-_KEY_READABLE = {"/debug/logs", "/debug/browser-status"}
+_KEY_READABLE = {"/debug/logs", "/debug/browser-status",
+                 "/debug/ca-launch", "/debug/ca-status", "/debug/ca-stop"}
 _DEBUG_KEY = os.environ.get("DEBUG_KEY", "").strip()
 
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
@@ -1641,6 +1642,60 @@ async def api_attribution(range: str = "today", start: str = "", end: str = "", 
     else:
         s, e = day0, now
     return await get_conversion_attribution(s.strftime(fmt), e.strftime(fmt), max(1, min(window_min, 30)))
+
+
+# ─── Chat Avenue test launch (validates the adapter before the platform-aware UI) ───
+_ca_workers: list = []
+
+@app.get("/debug/ca-launch")
+async def ca_launch(key: str = "", count: int = 1, persona_id: str = ""):
+    """Launch N Chat Avenue broadcaster agents and return their BU Cloud live_urls to watch."""
+    global _ca_workers
+    import asyncio as _asyncio
+    from app.chatavenue import ChatAvenueWorker
+    expected = os.environ.get("DEBUG_KEY", "").strip()
+    if not expected or key != expected:
+        raise HTTPException(401, "unauthorized")
+    personas = await get_personas()
+    persona = (await get_persona(persona_id)) if persona_id else (personas[0] if personas else None)
+    if not persona:
+        return {"error": "no persona found"}
+    count = max(1, min(count, 4))
+    out = []
+    for i in range(count):
+        aid = f"CA_{persona.get('username', 'Alexa')}_{i + 1}"
+        w = ChatAvenueWorker(persona, aid, slot=i, agent_total=count)
+        try:
+            ok = await browser_manager._provision_and_connect(w._bw)
+        except Exception as e:
+            out.append({"agent_id": aid, "error": f"provision: {e}"[:140]}); continue
+        if not ok:
+            out.append({"agent_id": aid, "error": "provision failed"}); continue
+        w._task = _asyncio.create_task(w.run())
+        _ca_workers.append(w)
+        out.append({"agent_id": aid, "live_url": w._bw.live_url})
+    return {"launched": out, "persona": persona.get("name") or persona.get("username")}
+
+@app.get("/debug/ca-status")
+async def ca_status(key: str = ""):
+    if os.environ.get("DEBUG_KEY", "").strip() != (key or "x"):
+        raise HTTPException(401, "unauthorized")
+    return {"agents": [{"agent_id": w.agent_id, "status": w.status, "room": w.room,
+                        "login_name": w.login_name, "attempts": w.send_attempts,
+                        "oks": w.send_oks, "live_url": w._bw.live_url} for w in _ca_workers]}
+
+@app.get("/debug/ca-stop")
+async def ca_stop(key: str = ""):
+    global _ca_workers
+    if os.environ.get("DEBUG_KEY", "").strip() != (key or "x"):
+        raise HTTPException(401, "unauthorized")
+    for w in _ca_workers:
+        try:
+            await w.stop(); await w._bw.disconnect_cdp()
+        except Exception:
+            pass
+    n = len(_ca_workers); _ca_workers = []
+    return {"stopped": n}
 
 @app.get("/api/debug/tabs")
 async def api_debug_tabs():
