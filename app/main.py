@@ -1666,7 +1666,7 @@ async def ca_launch(key: str = "", count: int = 1, persona_id: str = ""):
         aid = f"CA_{persona.get('username', 'Alexa')}_{i + 1}"
         w = ChatAvenueWorker(persona, aid, slot=i, agent_total=count)
         try:
-            ok = await browser_manager._provision_and_connect(w._bw)
+            ok = await browser_manager._provision_and_connect(w._bw, custom_proxy=w.custom_proxy)
         except Exception as e:
             out.append({"agent_id": aid, "error": f"provision: {e}"[:140]}); continue
         if not ok:

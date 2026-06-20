@@ -862,8 +862,10 @@ class BotOrchestrator:
         logger.info(f"start_multi: {len(workers)}/{count} agents live")
         return workers
 
-    async def _provision_and_connect(self, worker: BotWorker) -> bool:
-        """Provision a FRESH BU browser on BU Cloud's native residential proxy.
+    async def _provision_and_connect(self, worker: BotWorker, custom_proxy: dict = None) -> bool:
+        """Provision a FRESH BU browser. custom_proxy (host/port/username/password) routes through
+        a distinct residential IP (Decodo) for a guaranteed-fresh IP per registration; None = BU
+        Cloud native residential. Falls back to native if the custom proxy is rejected.
 
         BU Cloud's built-in residential IPs pass Cloudflare's Bot Management on
         freechatnow.com. Decoda proxies were getting CF 522s (IP-level blocks) on
@@ -880,20 +882,31 @@ class BotOrchestrator:
                 # No proxyCountryCode — BU Cloud defaults to US residential proxy.
                 # Explicitly passing proxyCountryCode="us" routes through a different
                 # proxy tier that CF blocks; default (omitted) works correctly.
-                browser = await client.browsers.create(
-                    timeout=60, browser_screen_width=1280, browser_screen_height=960,
-                    enable_recording=False,
-                )
+                _kwargs = dict(timeout=60, browser_screen_width=1280, browser_screen_height=960,
+                               enable_recording=False)
+                if custom_proxy:
+                    # Distinct residential IP (e.g. Decodo per-agent) for a guaranteed-fresh IP per
+                    # registration. If the SDK rejects the param/proxy, the except below drops it and
+                    # the next attempt uses BU Cloud native — so this can never break provisioning.
+                    _kwargs["proxy"] = {
+                        "server": f"http://{custom_proxy['host']}:{custom_proxy['port']}",
+                        "username": custom_proxy["username"], "password": custom_proxy["password"],
+                    }
+                browser = await client.browsers.create(**_kwargs)
             except Exception as e:
-                logger.warning(f"[{worker.username}] provision failed (try {attempt + 1}): {e}")
+                if custom_proxy:
+                    logger.warning(f"[{worker.username}] custom_proxy rejected ({str(e)[:60]}) — native fallback")
+                    custom_proxy = None
+                else:
+                    logger.warning(f"[{worker.username}] provision failed (try {attempt + 1}): {e}")
                 continue
             worker.browser_id = str(browser.id)
             worker.live_url = browser.live_url or ""
             cdp_url = browser.cdp_url or ""
             if cdp_url and await self._connect_cdp(worker, cdp_url):
-                worker.proxy_ip = "bu-cloud-native"
+                worker.proxy_ip = (f"decodo:{custom_proxy['port']}" if custom_proxy else "bu-cloud-native")
                 worker.proxy_location = "US"
-                logger.info(f"[{worker.username}] provisioned on BU Cloud native proxy (try {attempt + 1})")
+                logger.info(f"[{worker.username}] provisioned on {worker.proxy_ip} (try {attempt + 1})")
                 return True
             logger.warning(f"[{worker.username}] CDP connect failed (try {attempt + 1}); retrying")
             await worker.disconnect_cdp()

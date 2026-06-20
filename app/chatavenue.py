@@ -57,6 +57,9 @@ class ChatAvenueWorker:
         self._bw.agent_id = agent_id
         self._bw.slot = slot
         self._bw.agent_total = self.agent_total
+        # Distinct US Decodo IP per agent (first 50 entries = us.decodo.com) so every guest
+        # registration comes from a fresh, unused IP — avoids Chat Avenue's per-IP cap.
+        self.custom_proxy = fcn.DECODA_PROXIES[slot % 50]
 
     @property
     def _page(self):
@@ -98,26 +101,32 @@ class ChatAvenueWorker:
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA gender/DOB set issue: {e}")
             # Wait for Cloudflare Turnstile to auto-solve (token populated) before submitting.
-            for _ in range(24):
+            solved = False
+            for _ in range(44):                                    # up to ~22s (was 12s)
                 tok = await page.evaluate("() => { const e=document.querySelector('input[name=cf-turnstile-response]'); return e ? (e.value||'') : 'none'; }")
                 if tok and tok != 'none':
+                    solved = True
                     logger.info(f"[{self.agent_id}] CA turnstile solved")
                     break
                 await page.wait_for_timeout(500)
+            if not solved:
+                logger.warning(f"[{self.agent_id}] CA turnstile NOT solved in 22s — submitting anyway")
             await page.click(".theme_btn.full_button", timeout=8000)
             await page.wait_for_timeout(4000)                       # lobby render
-            # Chat Avenue caps guest registrations PER IP. Detect it distinctly from a form
-            # failure — on the native rotating proxy each fresh browser gets a new IP, so the
-            # fix is a fresh provision (recover), not a code change.
+            # Per-IP guest-registration cap (distinct from a form failure).
             capped = await page.evaluate(
                 "() => /maximum allowed registrations|try again later/i.test((document.body||{}).innerText||'')")
             if capped:
                 self.status = "ip_capped"
-                logger.warning(f"[{self.agent_id}] CA IP CAPPED (max guest registrations for this IP — needs a fresh IP)")
+                logger.warning(f"[{self.agent_id}] CA IP CAPPED (max guest registrations — needs a fresh IP)")
                 return False
             ok = await page.evaluate("() => !document.getElementById('guest_username')")
             self.status = "lobby" if ok else "login_failed"
-            logger.info(f"[{self.agent_id}] CA login {'OK' if ok else 'FAILED'} as {name}")
+            if ok:
+                logger.info(f"[{self.agent_id}] CA login OK as {name}")
+            else:
+                snip = await page.evaluate("() => ((document.body||{}).innerText||'').replace(/\\s+/g,' ').slice(0,160)")
+                logger.warning(f"[{self.agent_id}] CA login FAILED (turnstile_solved={solved}) — page: {snip}")
             return bool(ok)
         except Exception as e:
             logger.warning(f"[{self.agent_id}] CA login error: {e}")
