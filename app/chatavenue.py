@@ -1,0 +1,232 @@
+"""Chat Avenue (adultchat.chat-avenue.com) broadcast adapter.
+
+GROUP-ONLY: log in as a guest, join a high-traffic guest room, and broadcast every
+20-45s (text + handle, photo later), reusing the FCN AI brain — BU Cloud provisioning,
+LLM, sanitizers, handle obfuscation. No DM engine: the Chat Avenue funnel is
+broadcast -> Telegram add (confirmed fast in manual tests).
+
+Selectors mapped live 2026-06-20 (Chrome recon):
+  entry         https://adultchat.chat-avenue.com/
+  guest button  .intro_guest_btn
+  guest form    #guest_username, #guest_gender, #date_day/#date_month/#date_year,
+                Cloudflare Turnstile (auto-solved by BU Cloud residential)
+  submit        .theme_btn.full_button
+  room list     hamburger menu -> "Room list" -> click a room row (e.g. "Adult Chat" ~964)
+  send input    #content  (placeholder "Type here...")
+  send button   button#submit_button.send_btn   (paper-plane)
+  attach/photo  i.fa-plus.input_icon  (upload trigger — TBD, photos deferred to v2)
+
+Each browser step is marked LIVE-TEST: validate against the running site (deploy +
+watch the live_url) before trusting it. Built incrementally.
+"""
+import asyncio
+import logging
+import random
+import time
+
+from app import browser as fcn  # reuse helpers + BU Cloud provisioning
+
+logger = logging.getLogger(__name__)
+
+CHAT_URL = "https://adultchat.chat-avenue.com/"
+# High-traffic, guest-allowed rooms (from recon). Avoid registered-only (DICE, Desktop).
+GUEST_ROOMS = ["Adult Chat", "Taboo", "Seniors Room"]
+BROADCAST_MIN_S, BROADCAST_MAX_S = 20, 45   # per the manual-test cadence
+
+
+class ChatAvenueWorker:
+    """One Chat Avenue broadcaster. Composes a BotWorker for the BU Cloud browser +
+    send_photo + the shared `_page`, so we reuse FCN's provisioning untouched."""
+
+    def __init__(self, persona: dict, agent_id: str, slot: int = 0, agent_total: int = 1):
+        self.persona = persona
+        self.agent_id = agent_id
+        self.slot = slot
+        self.agent_total = max(1, agent_total)
+        self.login_name = ""
+        self.status = "init"
+        self.room = ""
+        self.started_at = time.time()
+        self.send_oks = 0
+        self.send_attempts = 0
+        self._recent_msgs: list = []          # no-repeat memory
+        self._task = None
+        self._stop = False
+        # Composition: a BotWorker carries the CDP page + send_photo + slicing slot.
+        self._bw = fcn.BotWorker(persona)
+        self._bw.agent_id = agent_id
+        self._bw.slot = slot
+        self._bw.agent_total = self.agent_total
+
+    @property
+    def _page(self):
+        return self._bw._page
+
+    # ── login ────────────────────────────────────────────────────────────────
+    async def login(self) -> bool:
+        """Guest login. LIVE-TEST: Turnstile clears on BU Cloud residential; the gender/DOB
+        selects are selectboxit-styled — select_option drives the underlying <select>, but
+        confirm the form reads it (may need to also click the styled option)."""
+        page = self._page
+        if not page:
+            return False
+        try:
+            await page.goto(CHAT_URL, wait_until="domcontentloaded", timeout=45000)
+            await page.click(".intro_guest_btn", timeout=8000)
+            await page.wait_for_timeout(1200)
+            name = fcn.BotOrchestrator._unique_username.__func__(None) if False else _guest_name()
+            self.login_name = name
+            self._bw.login_name = name
+            await page.fill("#guest_username", name, timeout=5000)
+            try:
+                await page.select_option("#guest_gender", label="Female")
+                await page.select_option("#date_day", "15")
+                await page.select_option("#date_month", index=5)   # ~June
+                await page.select_option("#date_year", "2001")
+            except Exception as e:
+                logger.warning(f"[{self.agent_id}] CA gender/DOB select issue: {e}")
+            await page.click(".theme_btn.full_button", timeout=8000)
+            await page.wait_for_timeout(4500)                       # Turnstile + lobby render
+            ok = await page.evaluate("() => !document.getElementById('guest_username')")
+            self.status = "lobby" if ok else "login_failed"
+            logger.info(f"[{self.agent_id}] CA login {'OK' if ok else 'FAILED'} as {name}")
+            return bool(ok)
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] CA login error: {e}")
+            return False
+
+    # ── join a room ──────────────────────────────────────────────────────────
+    async def join_room(self) -> bool:
+        """Open the room list and click a high-traffic guest room. Each agent picks a
+        different room by slot to spread out. LIVE-TEST: the room-list control is the
+        hamburger; rooms are clickable rows matched by name text."""
+        page = self._page
+        if not page:
+            return False
+        target = GUEST_ROOMS[self.slot % len(GUEST_ROOMS)]
+        try:
+            # open the left menu, then "Room list"
+            await page.evaluate("""() => {
+                const burger = document.querySelector('.menu_toggle, [class*=burger i], #menu_button')
+                    || document.querySelectorAll('.fa-bars, [class*=bars i]')[0];
+                if (burger) (burger.closest('[class*=click i]')||burger).click();
+            }""")
+            await page.wait_for_timeout(800)
+            await page.evaluate("""() => {
+                const rl = Array.from(document.querySelectorAll('*'))
+                    .find(e => /^\\s*Room list\\s*$/i.test(e.textContent||'') && e.querySelectorAll('*').length<4);
+                if (rl) (rl.closest('[class*=click i]')||rl).click();
+            }""")
+            await page.wait_for_timeout(1200)
+            clicked = await page.evaluate("""(name) => {
+                const rows = Array.from(document.querySelectorAll('*')).filter(e =>
+                    e.offsetParent!==null && (e.textContent||'').includes(name) &&
+                    (e.textContent||'').length < 120 && e.querySelectorAll('*').length < 12);
+                const row = rows[rows.length-1];
+                if (row) { (row.closest('[class*=room i]')||row).click(); return true; }
+                return false;
+            }""", target)
+            await page.wait_for_timeout(2500)
+            in_room = await page.evaluate("() => !!document.getElementById('content')")
+            if in_room:
+                self.room = target
+                self.status = "running"
+                logger.info(f"[{self.agent_id}] CA joined room '{target}'")
+            return bool(in_room)
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] CA join_room error: {e}")
+            return False
+
+    # ── send ───────────────────────────────────────────────────────────────────
+    async def send(self, text: str) -> bool:
+        """Fill #content and submit. Reuses FCN's validated one-shot fill() approach."""
+        page = self._page
+        if not page or not text:
+            return False
+        text = " ".join(text.split())[:300].strip()
+        try:
+            inp = await page.query_selector("#content")
+            if inp is None:
+                return False
+            self.send_attempts += 1
+            await inp.fill(text, timeout=2500)
+            # send: click the button, fall back to Enter
+            try:
+                await page.click("#submit_button", timeout=2000)
+            except Exception:
+                await page.keyboard.press("Enter")
+            await page.wait_for_timeout(500)
+            cleared = await page.evaluate("() => { const e=document.getElementById('content'); return e ? !e.value : false; }")
+            if cleared:
+                self.send_oks += 1
+            return bool(cleared)
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] CA send error: {e}")
+            return False
+
+    # ── broadcast generation (reuses FCN brain) ─────────────────────────────────
+    async def _make_broadcast(self) -> str:
+        from app.providers import provider_registry
+        llm = provider_registry.get_chat_provider()
+        if not llm:
+            return ""
+        bio = self.persona.get("bio", "")
+        handle = (self.persona.get("telegram_handle", "") or "").strip()
+        handle_cap = handle.capitalize() if handle else ""
+        angle = random.choice(fcn._BROADCAST_STYLES)
+        ex = [e.replace("{h}", handle_cap) for e in random.sample(fcn._BROADCAST_EXAMPLES, 2)]
+        no_repeat = ""
+        if self._recent_msgs:
+            no_repeat = ("Do NOT repeat or paraphrase any of these you already sent: "
+                         + " | ".join(f'"{m}"' for m in self._recent_msgs[-5:]) + ". ")
+        system = (
+            f"You are {self.login_name}, a horny Latina woman from Miami in a public adult group "
+            f"chat (18+). Personality: {bio}. Write ONE short broadcast to the WHOLE room (not a "
+            f"reply to one person; never 'where u from'). Angle: {angle} "
+            f"Include a CTA to find you + your handle '{handle_cap}'. Refer to the platform only as "
+            f"'TG' or 'Tela Grahm' — never write 'telegram'. Keep it ONE short punchy line, no emojis, "
+            f"no quotes, no stage directions. {no_repeat}"
+            f"Examples of the vibe (write your OWN): \"{ex[0]}\" / \"{ex[1]}\""
+        )
+        resp = await llm.chat(system, "Write the broadcast.")
+        if not resp:
+            return ""
+        # reuse the FCN guard/sanitizer chain
+        if handle:
+            resp = fcn._scrub_retired_handles(resp, handle)
+            resp = fcn._normalize_handle(resp, handle)
+        tg = fcn._pick_tg_token(is_dm=False)
+        send_text = fcn._obfuscate_handle(resp, handle, tg) if handle else fcn._sanitize_platforms(resp, tg)
+        send_text = fcn._force_group_cta(send_text, handle, tg) if handle else send_text
+        send_text = fcn._strip_ai_tells(send_text, strip_emoji=True)
+        return send_text
+
+    # ── run loop ─────────────────────────────────────────────────────────────────
+    async def run(self):
+        if not await self.login():
+            self.status = "login_failed"; return
+        if not await self.join_room():
+            self.status = "join_failed"; return
+        while not self._stop:
+            try:
+                text = await self._make_broadcast()
+                if text:
+                    sent = await self.send(text)
+                    if sent:
+                        self._recent_msgs.append(text)
+                        self._recent_msgs = self._recent_msgs[-8:]
+                        logger.info(f"[{self.agent_id}] CA BROADCAST room={self.room}: {text}")
+                        # TODO v2: post a photo (reuse self._bw send_photo once upload mapped)
+            except Exception as e:
+                logger.warning(f"[{self.agent_id}] CA loop error: {e}")
+            await asyncio.sleep(random.uniform(BROADCAST_MIN_S, BROADCAST_MAX_S))
+
+    async def stop(self):
+        self._stop = True
+
+
+_FEMALE = ["Mia", "Sofia", "Luna", "Lola", "Bella", "Nina", "Maya", "Jade", "Lexi", "Stella"]
+
+
+def _guest_name() -> str:
+    return f"{random.choice(_FEMALE)}{random.randint(10, 9999)}"
