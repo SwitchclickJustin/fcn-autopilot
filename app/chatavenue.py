@@ -78,20 +78,25 @@ class ChatAvenueWorker:
             self.login_name = name
             self._bw.login_name = name
             await page.fill("#guest_username", name, timeout=5000)
-            # Gender/DOB are selectboxit-styled: the native <select> is hidden, so select_option
-            # times out on actionability. Set the native select value via JS + change (selectboxit
-            # syncs, and the native value is what the form submits).
+            # Gender/DOB are selectboxit widgets — the native <select> is hidden (select_option
+            # times out) AND the form reads selectboxit's state, not the native .value. Click the
+            # option ANCHOR (selectboxit's own click handler selects it + syncs the native select).
+            # Structure: #<id>SelectBoxIt (button) + #<id>SelectBoxItOptions a.selectboxit-option-anchor.
             try:
                 await page.evaluate("""() => {
-                    const byText = (id, txt) => { const s=document.getElementById(id); if(!s) return;
-                        const o=[...s.options].find(o=>o.text.trim().toLowerCase()===String(txt).toLowerCase());
-                        if(o){ s.value=o.value; s.dispatchEvent(new Event('change',{bubbles:true})); } };
-                    const byIdx = (id, i) => { const s=document.getElementById(id); if(!s||!s.options.length) return;
-                        const k=Math.min(Math.max(i,1), s.options.length-1);
-                        s.value=s.options[k].value; s.dispatchEvent(new Event('change',{bubbles:true})); };
-                    byText('guest_gender','Female');
-                    byIdx('date_day',15); byIdx('date_month',6); byIdx('date_year',5);
+                    const pick = (selId, matchFn) => {
+                        const btn = document.getElementById(selId + 'SelectBoxIt');
+                        if (btn) btn.click();                                  // open the dropdown
+                        const opts = [...document.querySelectorAll('#' + selId + 'SelectBoxItOptions a.selectboxit-option-anchor')];
+                        const t = opts.find(matchFn) || opts[1];               // fallback: first real option
+                        if (t) t.click();                                      // select -> syncs native + closes
+                    };
+                    pick('guest_gender', a => /female/i.test(a.textContent));
+                    pick('date_day',   a => a.textContent.trim() === '15');
+                    pick('date_month', a => /^jun/i.test(a.textContent.trim()));
+                    pick('date_year',  a => /^(200[0-6])$/.test(a.textContent.trim()));
                 }""")
+                await page.wait_for_timeout(400)
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA gender/DOB set issue: {e}")
             # Wait for Cloudflare Turnstile to auto-solve (token populated) before submitting.
