@@ -597,31 +597,30 @@ class BotWorker:
                     pass
                 await inp.focus()
                 await inp.fill("")  # clear any stale text
-                if fast:
-                    # DMs: type the whole message quickly in one pass, no typo simulation.
-                    await self._page.keyboard.type(message, delay=random.randint(12, 30))
+                # Insert the whole message in ONE CDP call instead of per-keystroke typing.
+                # The browser is REMOTE (BU Cloud), so every keystroke is a network round-trip —
+                # char-by-char cost ~0.2s/char (20s+ on a long broadcast, the dominant latency).
+                # insertText fires a real input event in a single round-trip. If the field doesn't
+                # register it (some inputs need real keydowns), fall back to keystroke typing.
+                typed_ok = False
+                try:
+                    await self._page.keyboard.insertText(message)
+                    await asyncio.sleep(random.uniform(0.08, 0.18))
+                    try:
+                        cur = (await inp.input_value()) or ""
+                    except Exception:
+                        cur = ""
+                    typed_ok = bool(cur) and cur.replace(" ", "")[:40] == message.replace(" ", "")[:40]
+                except Exception:
+                    typed_ok = False
+                if not typed_ok:
+                    # Fallback: real keystrokes (the proven path), fast single pass.
+                    try:
+                        await inp.fill("")
+                    except Exception:
+                        pass
+                    await self._page.keyboard.type(message, delay=random.randint(8, 18))
                     await asyncio.sleep(random.uniform(0.05, 0.12))
-                else:
-                    # Group rooms: human-paced char-by-char with typos for camouflage (~210 WPM).
-                    _keyboard_neighbors = {
-                        'a':'sq','b':'vgn','c':'xdv','d':'sfe','e':'wrd','f':'dge','g':'fht',
-                        'h':'gjy','i':'uo','j':'hkn','k':'jlm','l':'k','m':'nk','n':'bm',
-                        'o':'ip','p':'o','q':'wa','r':'et','s':'awd','t':'ry','u':'yi',
-                        'v':'cb','w':'qe','x':'zc','y':'uh','z':'x',
-                    }
-                    for ch in message:
-                        if ch.isalpha() and random.random() < 0.06:
-                            wrong = random.choice(_keyboard_neighbors.get(ch.lower(), ch.lower()))
-                            await self._page.keyboard.type(wrong)
-                            await asyncio.sleep(random.uniform(0.03, 0.06))
-                            await self._page.keyboard.press("Backspace")
-                            await asyncio.sleep(random.uniform(0.02, 0.05))
-                        await self._page.keyboard.type(ch)
-                        delay = random.uniform(0.035, 0.075)
-                        if random.random() < 0.03:
-                            delay += random.uniform(0.12, 0.32)  # brief "thinking" pause
-                        await asyncio.sleep(delay)
-                    await asyncio.sleep(random.uniform(0.05, 0.13))
                 await self._page.keyboard.press("Enter")
                 await asyncio.sleep(0.7)
                 if await _sent():
@@ -715,6 +714,9 @@ class BotOrchestrator:
         self._semaphore = asyncio.Semaphore(50)
         self._workers: dict[str, BotWorker] = {}           # agent_id -> BotWorker
         self._auto_pilot_enabled: dict[str, bool] = {}    # agent_id -> bool
+        # Unified chronological feed of every message each agent sends (group + DM), newest
+        # last. Powers the dashboard chat feed. Capped so it can't grow unbounded.
+        self._feed: list = []
 
     # ── SDK client (lazy, single instance) ─────────────────────────────────
 
@@ -2543,6 +2545,19 @@ class BotOrchestrator:
                             f"({'DM' if is_dm else 'GRP'}) len={len(send_text)}")
             if sent:
                 worker.send_oks += 1
+                # Unified feed: what this agent just said, group or DM, in order.
+                try:
+                    self._feed.append({
+                        "t": time.strftime("%H:%M:%S"),
+                        "agent": worker.agent_id,
+                        "dm": bool(is_dm),
+                        "room": worker.room,
+                        "text": send_text,
+                    })
+                    if len(self._feed) > 400:
+                        self._feed = self._feed[-400:]
+                except Exception:
+                    pass
                 try:
                     await db.log_event(persona_id, "message", room=worker.room, content=send_text)
                 except Exception:

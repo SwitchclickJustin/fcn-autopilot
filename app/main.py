@@ -1424,6 +1424,11 @@ async def session_state():
         "auto_pilot": bool(agents),
     }
 
+@app.get("/api/feed")
+async def api_feed():
+    """Unified chronological feed of every message each agent sent (group + DM), newest last."""
+    return list(getattr(browser_manager, "_feed", []))
+
 @app.post("/api/session/send")
 async def send_message(data: dict):
     msg = data.get("message", "")

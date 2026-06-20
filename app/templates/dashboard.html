@@ -149,7 +149,7 @@ function connectWS(){
   ws=new WebSocket(`${proto}//${window.location.host}/ws`);
   ws.onmessage=(event)=>{
     const msg=JSON.parse(event.data);
-    if(msg.type==='chat_update'&&msg.data.messages) updateChatFeed(msg.data.messages);
+    // chat feed is now driven by /api/feed polling (all agents, chronological)
     if(msg.type==='status'&&msg.data.auto_pilot) setAutoPilotUI(true);
   };
   ws.onclose=()=>setTimeout(connectWS,3000);
@@ -232,15 +232,30 @@ function clearAgentGrid(){
   if(lbl) lbl.textContent='';
 }
 
-// ─── Chat Feed ───
-function updateChatFeed(messages,agentLabel){
-  const feed=document.getElementById('chat-feed');
-  if(JSON.stringify(messages)===JSON.stringify(lastMessages)) return;
-  lastMessages=messages;
-  feed.innerHTML=messages.map(m=>`<div class="chat-msg">${escHtml(m)}</div>`).join('');
-  feed.scrollTop=feed.scrollHeight;
+// ─── Chat Feed (all agents, chronological: "Agent N (group|DM) — text") ───
+let lastFeedLen=-1;
+function renderFeed(feed){
+  const el=document.getElementById('chat-feed');
+  if(!el) return;
   const lbl=document.getElementById('chat-agent-label');
-  if(lbl&&agentLabel) lbl.textContent='('+agentLabel+')';
+  if(lbl) lbl.textContent='(all agents · live)';
+  if(!feed||!feed.length){
+    if(lastFeedLen!==0){el.innerHTML='<p class="empty">No messages yet.</p>';lastFeedLen=0;}
+    return;
+  }
+  if(feed.length===lastFeedLen) return;
+  const atBottom=el.scrollHeight-el.scrollTop-el.clientHeight<50;
+  lastFeedLen=feed.length;
+  el.innerHTML=feed.map(m=>{
+    const n=(m.agent||'').split('_').pop();
+    const dm=!!m.dm, kind=dm?'DM':'group', color=dm?'#e0729a':'#6aa0ff';
+    return `<div class="chat-msg" style="margin-bottom:.4rem;line-height:1.4">`
+      +`<span style="color:var(--text-dim);font-size:.7rem">${escHtml(m.t||'')}</span> `
+      +`<span style="font-weight:700">Agent ${escHtml(n)}</span> `
+      +`<span style="color:${color};font-weight:600;font-size:.78rem">(${escHtml(kind)})</span> `
+      +`<span>— ${escHtml(m.text||'')}</span></div>`;
+  }).join('');
+  if(atBottom) el.scrollTop=el.scrollHeight;
 }
 
 // ─── Polling ─────────────────────────────────────────────────────────────────
@@ -250,12 +265,11 @@ function startPolling(){
     try{
       const d=await(await fetch('/api/session/state')).json();
       const agents=d.agents||[];
-      if(agents.length>0){
-        updateAgentTiles(agents);
-        // Show chat from first agent
-        const first=agents[0];
-        if(first.messages) updateChatFeed(first.messages, first.agent_id);
-      }
+      if(agents.length>0) updateAgentTiles(agents);
+    }catch(e){}
+    try{
+      const feed=await(await fetch('/api/feed')).json();
+      renderFeed(feed);
     }catch(e){}
   },3000);
 }
