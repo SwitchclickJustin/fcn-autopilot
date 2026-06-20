@@ -1839,7 +1839,10 @@ class BotOrchestrator:
             return []
 
     async def _open_conversation(self, page, href: str) -> bool:
-        """Click a conversation tab (room or DM) to make it the active thread."""
+        """Click a conversation tab (room or DM) and VERIFY it became the active thread.
+        Returns False if the switch didn't take — otherwise a stuck/failed click leaves the
+        PREVIOUS conversation open and the caller reads/sends into the wrong thread (group↔DM
+        content bleed: a broadcast lands in a DM, a DM reply lands in a room)."""
         if not href:
             return False
         try:
@@ -1848,7 +1851,17 @@ class BotOrchestrator:
                 return False
             await el.click(timeout=2000)  # fail fast on stuck tabs (was 4000)
             await page.wait_for_timeout(300)  # conv-switch settle (snappier DM cycling)
-            return True
+            # Confirm the clicked tab is now active (same `active`-class signal _list_conversations
+            # uses). If the check itself errors, fall back to True (best-effort, don't block).
+            try:
+                return bool(await page.evaluate(
+                    """(href) => {
+                        const a = document.querySelector('.roomlist-room a[href="' + href + '"]');
+                        const tab = a && a.closest('.roomlist-room');
+                        return !!(tab && /\\bactive\\b/.test(tab.className || ''));
+                    }""", href))
+            except Exception:
+                return True
         except Exception:
             return False
 
@@ -2078,16 +2091,20 @@ class BotOrchestrator:
                         dm_next = time.monotonic() + 0.5  # fast blink check
                     elif now >= next_send:
                         # Group room: rotate between all joined rooms on each send
+                        opened = True
                         if rooms:
                             worker._room_index = (worker._room_index + 1) % len(rooms)
                             target = rooms[worker._room_index % len(rooms)]
-                            if not target["active"]:
-                                await self._open_conversation(worker._page, target["href"])
-                            worker.in_dm = False
-                            worker.room = target["text"] or worker.room
-                        messages = await worker.read_chat(5)  # group: only need a little context
-                        if messages:
-                            await self._auto_pilot_tick(worker, messages, client)
+                            # Only broadcast if the room is actually the active thread — else the
+                            # message would post into whatever's open (e.g. a DM). Skip if not.
+                            opened = target["active"] or await self._open_conversation(worker._page, target["href"])
+                            if opened:
+                                worker.in_dm = False
+                                worker.room = target["text"] or worker.room
+                        if opened:
+                            messages = await worker.read_chat(5)  # group: only need a little context
+                            if messages:
+                                await self._auto_pilot_tick(worker, messages, client)
                         next_send = now + random.randint(10, 20)  # snappier room rotation
                     elif poll_dms and now >= dm_poll_next:
                         # Low-priority safety: re-check already-replied DMs for new guy messages
