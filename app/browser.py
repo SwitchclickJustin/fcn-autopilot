@@ -774,6 +774,7 @@ class BotOrchestrator:
             worker.agent_id = agent_id
             worker.slot = slot
             worker.agent_total = max(1, agent_total)
+            worker._started_at = time.time()  # for per-agent runtime (agent-hours) in stats
             if rooms:
                 worker.rooms = list(rooms)
             self._workers[agent_id] = worker

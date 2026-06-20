@@ -137,7 +137,7 @@
         </div>
         <div style="background:rgba(74,222,128,.08);border-radius:8px;padding:.7rem;text-align:center">
           <div id="stat-cph" style="font-size:1.6rem;font-weight:700;color:#4ade80">–</div>
-          <div style="font-size:.72rem;opacity:.65">Conv / hr / agent</div>
+          <div style="font-size:.72rem;opacity:.65" id="stat-cph-label">Conv / hr / agent</div>
         </div>
       </div>
     </div>
@@ -385,6 +385,7 @@ async function loadStats(){
     document.getElementById('stat-exposures').textContent=d.handle_exposures??0;
     document.getElementById('stat-convrate').textContent=(d.conversion_rate??0)+'%';
     document.getElementById('stat-cph').textContent=d.conversions_per_hr_per_agent??0;
+    document.getElementById('stat-cph-label').textContent='Conv/hr/agent · ~'+(d.conversions_per_hr_total??0)+'/hr total';
     document.getElementById('stat-uptime').textContent=fmtUptime(d.uptime_seconds??0);
     document.getElementById('stat-agents').textContent=d.agents??0;
   }catch(e){}

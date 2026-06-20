@@ -20,7 +20,7 @@ from app.database import (
     get_providers, create_provider, delete_provider,
     create_session, update_session, get_active_session, get_session,
     log_chat, get_chat_log, get_ban_events, get_rules,
-    get_stats, log_event, get_recent_events,
+    get_stats, count_events_since, log_event, get_recent_events,
     get_dm_conversations, get_dm_thread, get_top_converting_openers,
     get_agent_messages,
     add_persona_photo, get_persona_photos, get_persona_photo, delete_persona_photo,
@@ -1588,20 +1588,32 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
     else:  # today (default)
         s, e = day0, now
     stats = await get_stats(s.strftime(fmt), e.strftime(fmt))
-    # Live fleet runtime + throughput. Rates are computed over the SELECTED range.
+    # Live fleet runtime + throughput.
     import time as _time
+    now_mono = _time.time()
     ss = getattr(browser_manager, "_session_start", None)
-    uptime = (_time.time() - ss) if ss else 0
-    agents = len(browser_manager._workers)
-    range_hours = max((e - s).total_seconds() / 3600, 1 / 60)  # guard div-by-zero
-    conv = stats.get("conversions", 0)
-    conv_per_hr = conv / range_hours
+    uptime = (now_mono - ss) if ss else 0
+    workers = list(browser_manager._workers.values())
+    agents = len(workers)
+    # C — per-agent runtime (agent-hours): credit each agent its ACTUAL time running, so a
+    # banned/recovered agent that ran 10 min counts as 0.17h, not a full hour.
+    agent_hours = sum(max(0.0, now_mono - getattr(w, "_started_at", now_mono)) for w in workers) / 3600
+    # B — rolling last-60-min conversions = predicted next-hour total. Before the fleet has run
+    # a full hour, scale the partial window up to an hourly rate.
+    conv_60 = await count_events_since("telegram_conversion", now - timedelta(minutes=60))
+    window_min = min(60.0, uptime / 60) if uptime else 60.0
+    conv_per_hr_total = round(conv_60 / max(window_min, 1.0) * 60, 2)
+    # C — conversions this session ÷ agent-hours = a stable per-agent-per-hour rate.
+    conv_session = (await count_events_since("telegram_conversion", datetime.utcfromtimestamp(ss))) if ss else 0
+    conv_per_agent_hr = round(conv_session / agent_hours, 2) if agent_hours > 0 else 0.0
     return {
         "range": range, "start": s.strftime(fmt), "end": e.strftime(fmt),
         "uptime_seconds": int(uptime),
         "agents": agents,
-        "conversions_per_hr": round(conv_per_hr, 2),
-        "conversions_per_hr_per_agent": round(conv_per_hr / max(1, agents), 2),
+        "agent_hours": round(agent_hours, 2),
+        "conversions_60m": conv_60,
+        "conversions_per_hr_total": conv_per_hr_total,       # B: predicted next-hour total
+        "conversions_per_hr_per_agent": conv_per_agent_hr,   # C: per agent-hour
         **stats,
     }
 

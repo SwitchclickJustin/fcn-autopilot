@@ -443,6 +443,24 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
         "bans": counts.get("ban", 0),
     }
 
+async def count_events_since(event_type: str, since: datetime) -> int:
+    """Count bot_events of a type created at/after `since` (UTC datetime). Used for
+    rolling-window + session conversion rates."""
+    db = await get_db()
+    try:
+        if USE_NEON:
+            rows = await _fetchall(
+                db, "SELECT COUNT(*) AS c FROM bot_events WHERE event_type = $1 AND created_at >= $2",
+                [event_type, since])
+        else:
+            rows = await _fetchall(
+                db, "SELECT COUNT(*) AS c FROM bot_events WHERE event_type = ? AND created_at >= ?",
+                [event_type, since.strftime("%Y-%m-%d %H:%M:%S")])
+    finally:
+        await close_db(db)
+    return (rows[0]["c"] if rows else 0)
+
+
 async def get_recent_events(limit=40):
     db = await get_db()
     q = "SELECT * FROM bot_events ORDER BY id DESC LIMIT $1" if USE_NEON else "SELECT * FROM bot_events ORDER BY id DESC LIMIT ?"
