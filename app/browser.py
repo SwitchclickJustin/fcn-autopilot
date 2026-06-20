@@ -199,6 +199,9 @@ def _strip_ai_tells(text: str, strip_emoji: bool = False) -> str:
     # Keep only the first block — cut at a blank line, markdown bold, or a "--" rule
     # where models tend to append narration/commentary.
     text = re.split(r"\n\s*\n|\*\*|\n\s*-{2,}", text)[0]
+    # Strip roleplay stage directions / actions in asterisks (*sliding into his dms*,
+    # *licks lips*) — a dead AI tell, and nonsensical in a public room broadcast.
+    text = re.sub(r"\*+[^*\n]*\*+", " ", text)
     # Strip a leading meta label the model sometimes prepends: "(public room blast)" / a
     # "Username:" prefix (despite "never prefix your name").
     text = re.sub(r"^\s*\([^)]{0,40}\)\s*", "", text)
