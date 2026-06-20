@@ -282,6 +282,25 @@ def _normalize_handle(text: str, handle: str) -> str:
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
+# Broadcast subject ("someone come find me") before an action verb — fine in a room, wrong in
+# a 1:1 DM. And "in my dms" is redundant when he's already IN your DM.
+_DM_BROADCAST_SUBJ_RE = re.compile(
+    r"\b(?:someone|somebody|anyone|anybody|whoever|some\s+guy)\s+"
+    r"(?=(?:come|comes|find|get|help|wanna|want|make|pull|tell|show|join)\b)", re.I)
+_DM_REDUNDANT_DMS_RE = re.compile(
+    r"\s*(?:come\s+|get\s+)?(?:in|into|to)\s+my\s+dm'?s?\b", re.I)
+
+
+def _tighten_dm(text: str) -> str:
+    """DM-only voice cleanup: drop broadcast subjects and the redundant 'in my dms' so the
+    model's occasional room-blast phrasing reads as a real 1:1 message."""
+    if not text:
+        return text
+    text = _DM_BROADCAST_SUBJ_RE.sub("", text)
+    text = _DM_REDUNDANT_DMS_RE.sub("", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 logger = logging.getLogger(__name__)
 
 # ── Decoda proxy pool ──────────────────────────────────────────────────────────
@@ -2571,6 +2590,8 @@ class BotOrchestrator:
                 if _fixed != response:
                     logger.info(f"[{worker.agent_id}] CHATNAME_AS_HANDLE fixed {_login} → {_h}")
                     response = _fixed
+        if response and is_dm:
+            response = _tighten_dm(response)  # drop room-blast phrasing from 1:1 DMs
         worker.last_response = (response or "")[:200]
         if not response:
             return
