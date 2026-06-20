@@ -106,6 +106,15 @@ class ChatAvenueWorker:
                 await page.wait_for_timeout(500)
             await page.click(".theme_btn.full_button", timeout=8000)
             await page.wait_for_timeout(4000)                       # lobby render
+            # Chat Avenue caps guest registrations PER IP. Detect it distinctly from a form
+            # failure — on the native rotating proxy each fresh browser gets a new IP, so the
+            # fix is a fresh provision (recover), not a code change.
+            capped = await page.evaluate(
+                "() => /maximum allowed registrations|try again later/i.test((document.body||{}).innerText||'')")
+            if capped:
+                self.status = "ip_capped"
+                logger.warning(f"[{self.agent_id}] CA IP CAPPED (max guest registrations for this IP — needs a fresh IP)")
+                return False
             ok = await page.evaluate("() => !document.getElementById('guest_username')")
             self.status = "lobby" if ok else "login_failed"
             logger.info(f"[{self.agent_id}] CA login {'OK' if ok else 'FAILED'} as {name}")
