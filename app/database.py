@@ -443,6 +443,72 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
         "bans": counts.get("ban", 0),
     }
 
+async def get_conversion_attribution(start: str, end: str, window_min: int = 10) -> dict:
+    """Statistically attribute batched TG conversions to the IMAGES sent shortly before each.
+    All agents share one handle, so a conversion can't be tied to a specific image — instead we
+    split each conversion across the images sent in the `window_min` before it (weighted by how
+    often each was sent), then accumulate. Yields conversions-per-100-sends per image: a slow,
+    volume-normalised signal that converges as data builds. Conversion time = event time (~5-min
+    batched receipt); the window is wide enough to cover the real conversion moment."""
+    import re as _re
+    from collections import Counter, defaultdict
+    if USE_NEON:
+        s = datetime.strptime(start, "%Y-%m-%d %H:%M:%S"); e = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+    else:
+        s, e = start, end
+    db = await get_db()
+    try:
+        q = ("SELECT event_type, content, created_at FROM bot_events "
+             "WHERE event_type IN ('photo_sent','telegram_conversion') "
+             f"AND created_at >= {_p(1)} AND created_at < {_p(2)} ORDER BY created_at")
+        rows = await _fetchall(db, q, [s, e])
+    finally:
+        await close_db(db)
+
+    def _epoch(v):
+        if hasattr(v, "timestamp"):
+            return v.timestamp()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                return datetime.strptime(str(v)[:19], fmt).timestamp()
+            except Exception:
+                continue
+        return None
+
+    def _img(content):
+        fn = (content or "").strip()
+        m = _re.match(r"(.+)_\d+\.\w+$", fn)          # "17_829721.jpg" -> "17"; "IMG_9444_3.JPG" -> "IMG_9444"
+        return (m.group(1) if m else _re.sub(r"\.\w+$", "", fn)) or "?"
+
+    sends, convs = [], []
+    for r in rows:
+        t = _epoch(r["created_at"])
+        if t is None:
+            continue
+        if r["event_type"] == "photo_sent":
+            sends.append((t, _img(r["content"])))
+        else:
+            convs.append(t)
+    img_sends = Counter(img for _, img in sends)
+    W = window_min * 60
+    attributed = defaultdict(float)
+    for ct in convs:
+        win = [img for (t, img) in sends if ct - W <= t <= ct]
+        if not win:
+            continue
+        cnt = Counter(win); total = len(win)
+        for img, c in cnt.items():
+            attributed[img] += c / total
+    images = []
+    for img, sc in img_sends.items():
+        a = attributed.get(img, 0.0)
+        images.append({"image": img, "sends": sc, "attributed_conversions": round(a, 2),
+                       "conv_per_100_sends": round(100 * a / sc, 2) if sc else 0.0})
+    images.sort(key=lambda x: (-x["conv_per_100_sends"], -x["attributed_conversions"]))
+    return {"window_min": window_min, "total_conversions": len(convs),
+            "total_sends": len(sends), "images": images}
+
+
 async def count_events_since(event_type: str, since: datetime) -> int:
     """Count bot_events of a type created at/after `since` (UTC datetime). Used for
     rolling-window + session conversion rates."""

@@ -141,6 +141,14 @@
         </div>
       </div>
     </div>
+
+    <!-- Conversion attribution per image (statistical) -->
+    <div class="card" style="margin-top:.75rem">
+      <div class="card-title" style="margin:0 0 .5rem">🎯 What's converting
+        <span class="text-dim" style="font-weight:400;text-transform:none;letter-spacing:0;font-size:.72rem" id="attr-meta"></span>
+      </div>
+      <div id="attr-body" class="text-dim text-sm">Loading…</div>
+    </div>
   </div>
 
 </div>
@@ -393,6 +401,34 @@ async function loadStats(){
     }
     document.getElementById('stat-uptime').textContent=fmtUptime(d.uptime_seconds??0);
     document.getElementById('stat-agents').textContent=d.agents??0;
+  }catch(e){}
+  loadAttribution();
+}
+async function loadAttribution(){
+  const range=document.getElementById('stats-range').value;
+  let url='/api/attribution?range='+range;
+  if(range==='custom'){
+    const s=document.getElementById('stats-start').value, e=document.getElementById('stats-end').value;
+    if(s) url+='&start='+s; if(e) url+='&end='+e;
+  }
+  try{
+    const d=await(await fetch(url)).json();
+    document.getElementById('attr-meta').textContent=`(${d.total_conversions||0} conv · ${d.total_sends||0} sends · ${d.window_min}m window)`;
+    const imgs=(d.images||[]).filter(i=>i.sends>0);
+    const body=document.getElementById('attr-body');
+    if(!imgs.length){ body.innerHTML='No data yet — needs photo sends and conversions in range.'; return; }
+    const max=Math.max(...imgs.map(i=>i.conv_per_100_sends),0.01);
+    body.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:.8rem">'
+      +'<tr style="opacity:.55"><th style="text-align:left">img</th><th style="text-align:right">sends</th><th style="text-align:right">conv*</th><th style="text-align:left;padding-left:.5rem">conv / 100 sends</th></tr>'
+      +imgs.map(i=>{
+        const w=Math.round(100*i.conv_per_100_sends/max);
+        return `<tr><td style="font-weight:700">${escHtml(i.image)}</td>`
+          +`<td style="text-align:right">${i.sends}</td><td style="text-align:right">${i.attributed_conversions}</td>`
+          +`<td style="padding-left:.5rem"><div style="display:flex;align-items:center;gap:.4rem">`
+          +`<div style="height:7px;width:${w}%;min-width:2px;background:#4ade80;border-radius:3px"></div>`
+          +`<span>${i.conv_per_100_sends}</span></div></td></tr>`;
+      }).join('')
+      +'</table><div style="margin-top:.45rem;opacity:.5;font-size:.68rem">*statistically attributed — shared handle means correlation, not exact. Sharpens as data builds.</div>';
   }catch(e){}
 }
 function fmtUptime(s){

@@ -20,7 +20,7 @@ from app.database import (
     get_providers, create_provider, delete_provider,
     create_session, update_session, get_active_session, get_session,
     log_chat, get_chat_log, get_ban_events, get_rules,
-    get_stats, count_events_since, log_event, get_recent_events,
+    get_stats, count_events_since, get_conversion_attribution, log_event, get_recent_events,
     get_dm_conversations, get_dm_thread, get_top_converting_openers,
     get_agent_messages,
     add_persona_photo, get_persona_photos, get_persona_photo, delete_persona_photo,
@@ -1618,6 +1618,29 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
         "conversions_per_hr_total": total_hr,             # = per_agent × agents (reconciles)
         **stats,
     }
+
+@app.get("/api/attribution")
+async def api_attribution(range: str = "today", start: str = "", end: str = "", window_min: int = 10):
+    """Statistical per-image conversion attribution over a date range (see DB fn for method)."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    fmt = "%Y-%m-%d %H:%M:%S"
+    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if range == "yesterday":
+        s, e = day0 - timedelta(days=1), day0
+    elif range == "week":
+        s, e = day0 - timedelta(days=6), now
+    elif range == "month":
+        s, e = day0 - timedelta(days=29), now
+    elif range == "custom" and start:
+        try:
+            s = datetime.strptime(start, "%Y-%m-%d")
+            e = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)) if end else now
+        except Exception:
+            s, e = day0, now
+    else:
+        s, e = day0, now
+    return await get_conversion_attribution(s.strftime(fmt), e.strftime(fmt), max(1, min(window_min, 30)))
 
 @app.get("/api/debug/tabs")
 async def api_debug_tabs():
