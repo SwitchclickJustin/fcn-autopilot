@@ -38,6 +38,7 @@ class PersonaCreate(BaseModel):
     id: str = Field(default_factory=new_id)
     name: str
     username: str
+    platform: str = "fcn"          # fcn | chatavenue
     gender: str = "f"
     bio: str = ""
     goals: str = ""
@@ -63,6 +64,7 @@ class PersonaCreate(BaseModel):
 class PersonaUpdate(BaseModel):
     name: Optional[str] = None
     username: Optional[str] = None
+    platform: Optional[str] = None
     gender: Optional[str] = None
     bio: Optional[str] = None
     goals: Optional[str] = None
