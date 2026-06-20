@@ -257,19 +257,23 @@ function clearAgentGrid(){
 }
 
 // ─── Chat Feed (all agents, chronological: "Agent N (group|DM) — text") ───
-let lastFeedLen=-1;
+let lastFeedKey='';
 function renderFeed(feed){
   const el=document.getElementById('chat-feed');
   if(!el) return;
   const lbl=document.getElementById('chat-agent-label');
   if(lbl) lbl.textContent='(all agents · live)';
   if(!feed||!feed.length){
-    if(lastFeedLen!==0){el.innerHTML='<p class="empty">No messages yet.</p>';lastFeedLen=0;}
+    if(lastFeedKey!=='empty'){el.innerHTML='<p class="empty">No messages yet.</p>';lastFeedKey='empty';}
     return;
   }
-  if(feed.length===lastFeedLen) return;
+  // Re-render on CONTENT change, not length — the buffer caps at 400, so once full the
+  // length stays 400 forever and a length check would freeze the feed even as it flows.
+  const last=feed[feed.length-1];
+  const key=feed.length+'|'+(last.t||'')+'|'+(last.text||'').slice(0,20);
+  if(key===lastFeedKey) return;
   const atBottom=el.scrollHeight-el.scrollTop-el.clientHeight<50;
-  lastFeedLen=feed.length;
+  lastFeedKey=key;
   el.innerHTML=feed.map(m=>{
     const n=(m.agent||'').split('_').pop();
     const dm=!!m.dm, kind=dm?'DM':'group', color=dm?'#e0729a':'#6aa0ff';
