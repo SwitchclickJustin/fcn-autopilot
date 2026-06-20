@@ -156,7 +156,6 @@ class ChatAvenueWorker:
         page = self._page
         if not page:
             return False
-        target = GUEST_ROOMS[self.slot % len(GUEST_ROOMS)]
         try:
             # open the left menu, then "Room list"
             await page.evaluate("""() => {
@@ -170,7 +169,31 @@ class ChatAvenueWorker:
                     .find(e => /^\\s*Room list\\s*$/i.test(e.textContent||'') && e.querySelectorAll('*').length<4);
                 if (rl) (rl.closest('[class*=click i]')||rl).click();
             }""")
-            await page.wait_for_timeout(1200)
+            await page.wait_for_timeout(1400)
+            # Read every room row + its online count, pick the BUSIEST (not just the first).
+            rooms = await page.evaluate("""() => {
+                const cand = Array.from(document.querySelectorAll('a, li, tr, div')).filter(e =>
+                    e.offsetParent!==null && e.children.length<=6 &&
+                    /\\d/.test(e.textContent||'') && (e.textContent||'').trim().length<48);
+                const out = [];
+                for (const e of cand) {
+                    const t = (e.textContent||'').replace(/\\s+/g,' ').trim();
+                    const nums = (t.match(/\\d+/g)||[]).map(Number);
+                    if (!nums.length) continue;
+                    const count = Math.max(...nums);
+                    const name = t.replace(/\\d+/g,'').replace(/[()|·,]/g,' ').replace(/\\s+/g,' ').trim();
+                    if (name.length>=3 && count>0 && count<100000) out.push({name, count});
+                }
+                // dedup by name, keep highest count seen
+                const m = {};
+                for (const r of out) if (!(r.name in m) || r.count>m[r.name]) m[r.name]=r.count;
+                return Object.entries(m).map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count);
+            }""")
+            logger.info(f"[{self.agent_id}] CA room list (by traffic): {rooms[:10]}")
+            target = rooms[0]["name"] if rooms else GUEST_ROOMS[self.slot % len(GUEST_ROOMS)]
+            # agents past the first spread to the 2nd/3rd busiest so they don't stack one room
+            if rooms and self.slot > 0 and self.slot < len(rooms):
+                target = rooms[self.slot]["name"]
             clicked = await page.evaluate("""(name) => {
                 const rows = Array.from(document.querySelectorAll('*')).filter(e =>
                     e.offsetParent!==null && (e.textContent||'').includes(name) &&
