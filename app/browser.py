@@ -111,8 +111,11 @@ _ZWSP = "​"  # zero-width space — invisible to humans, breaks FCN's exact-st
 
 # Max DMs handled per loop tick — bounds tick time so a high-traffic agent stays responsive
 # (newest DMs first; the rest roll to the next tick). Poll = low-priority re-checks.
-_DM_PER_TICK = 2
-_DM_POLL_PER_TICK = 2
+# Kept at 1: each DM round-trip is open→read→LLM→send→photo (~15-25s); processing 2 in one
+# tick stacked to 45-60s branches and starved fresh-message pickup. 1/tick halves worst-case
+# latency; the badge-clears-on-reply design means the rest are picked up next tick, no loss.
+_DM_PER_TICK = 1
+_DM_POLL_PER_TICK = 1
 
 
 def _safe_tg(token: str) -> str:
@@ -719,12 +722,17 @@ class BotOrchestrator:
     # ── Bot lifecycle ───────────────────────────────────────────────────────
 
     async def start_bot(self, persona: dict, agent_id: str = "",
-                        rooms: list = None) -> Optional[BotWorker]:
+                        rooms: list = None, slot: int = 0,
+                        agent_total: int = 1) -> Optional[BotWorker]:
         """Provision a browser, log in via CDP, connect auto-pilot.
 
-        agent_id: unique key (defaults to persona username). Pass e.g. "Alexa_2"
-                  when running multiple agents from the same persona.
-        rooms:    pre-assigned [primary, secondary] rooms for this agent.
+        agent_id:    unique key (defaults to persona username). Pass e.g. "Alexa_2"
+                     when running multiple agents from the same persona.
+        rooms:       pre-assigned [primary, secondary] rooms for this agent.
+        slot:        0-based index of this agent among the persona's fleet.
+        agent_total: total agents running this persona — used to give each agent a
+                     DISJOINT photo slice so no two accounts ever post the same image
+                     (a shared image set across accounts is a botnet fingerprint → ban).
         """
         async with self._semaphore:
             username = persona.get("username", "ChatBot_42")
@@ -734,6 +742,8 @@ class BotOrchestrator:
 
             worker = BotWorker(persona)
             worker.agent_id = agent_id
+            worker.slot = slot
+            worker.agent_total = max(1, agent_total)
             if rooms:
                 worker.rooms = list(rooms)
             self._workers[agent_id] = worker
@@ -765,7 +775,8 @@ class BotOrchestrator:
 
         async def _one(slot: int) -> Optional[BotWorker]:
             aid = f"{username}_{slot + 1}" if count > 1 else username
-            return await self.start_bot(persona, agent_id=aid, rooms=room_pairs[slot])
+            return await self.start_bot(persona, agent_id=aid, rooms=room_pairs[slot],
+                                        slot=slot, agent_total=count)
 
         results = await asyncio.gather(*[_one(i) for i in range(count)],
                                        return_exceptions=True)
@@ -2485,7 +2496,12 @@ class BotOrchestrator:
         sent = False
         if worker._page:
             worker.send_attempts += 1
+            _t_send = time.monotonic()
             sent = await worker.send_message(send_text, fast=is_dm)
+            _send_dt = time.monotonic() - _t_send
+            if _send_dt > 4:
+                logger.info(f"[{worker.agent_id}] SLOW send {_send_dt:.1f}s "
+                            f"({'DM' if is_dm else 'GRP'}) len={len(send_text)}")
             if sent:
                 worker.send_oks += 1
                 try:
@@ -2547,10 +2563,22 @@ class BotOrchestrator:
         base64, then passes to send_photo() for the in-browser drag-drop dispatch.
         Server-side fetch avoids any CORS issues inside the FCN browser context.
         """
+        _pt0 = time.monotonic()
         try:
             photos = await db.get_persona_photos(persona_id)
             if not photos:
                 return False
+            # Per-agent photo slice: each agent posts a DISJOINT subset of the pool so no
+            # two accounts ever share an image (same image set across "different girls" =
+            # botnet fingerprint → ban). Round-robin by slot keeps it balanced for any pool
+            # size (12 photos / 4 agents → 3 each). get_persona_photos is stably ordered, so
+            # a given image always maps to the same agent. Fall back to the full pool if the
+            # slice is empty (fewer photos than agents).
+            total = max(1, getattr(worker, "agent_total", 1))
+            if total > 1:
+                slot = getattr(worker, "slot", 0)
+                mine = [p for i, p in enumerate(photos) if i % total == slot]
+                photos = mine or photos
             chosen = random.choice(photos)
             url = chosen.get("url") or ""
             if not url:
@@ -2570,13 +2598,15 @@ class BotOrchestrator:
             filename = (f"{_stem}_{random.randint(1000, 999999)}.{_ext}" if _dot
                         else f"{base}_{random.randint(1000, 999999)}")
             sent = await worker.send_photo(b64, filename, mime_type)
+            _photo_dt = time.monotonic() - _pt0
             if sent:
-                logger.info(f"[{worker.agent_id}] photo sent: {filename}")
+                _slow = f" SLOW {_photo_dt:.1f}s" if _photo_dt > 3 else ""
+                logger.info(f"[{worker.agent_id}] photo sent: {filename}{_slow}")
                 try:
                     await db.log_event(persona_id, "photo_sent", room=worker.room, content=filename)
                 except Exception:
                     pass
-                await asyncio.sleep(2)
+                await asyncio.sleep(0.6)  # settle time for the drop to register (was 2s — pure latency on every group msg)
             else:
                 logger.warning(f"[{worker.agent_id}] send_photo returned False for {filename}")
             return sent
