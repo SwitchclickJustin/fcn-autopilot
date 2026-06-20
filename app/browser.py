@@ -229,6 +229,27 @@ def _force_group_cta(text: str, handle: str, tg_token: str) -> str:
         else (" if so, find me on " if is_q else ".. find me on ")
     return f"{text.rstrip()}{lead}{target}".strip()
 
+
+# Retired handles the model must NEVER emit. It sometimes regurgitates an OLD handle —
+# hallucinated from the persona name, or fed back from its own past "winning" openers stored
+# in the DB. Emitting a retired handle sends guys to a dead Telegram AND a flagged handle
+# string draws heat (→ captcha/bans), so we HARD-REPLACE any retired handle with the current
+# one before sending. Add a handle here whenever you rotate the username.
+_RETIRED_HANDLES = [
+    r"alexandra\s*swallows",
+]
+_RETIRED_HANDLE_RE = re.compile(r"(?:@\s*)?(?:" + "|".join(_RETIRED_HANDLES) + r")", re.I)
+
+
+def _scrub_retired_handles(text: str, real_handle: str) -> str:
+    """Replace any retired/old handle the model emitted with the current real handle, so a
+    flagged or dead handle is never sent. No-op if no real handle is configured."""
+    clean = (real_handle or "").lstrip("@")
+    if not clean or not text:
+        return text
+    return _RETIRED_HANDLE_RE.sub(clean, text)
+
+
 logger = logging.getLogger(__name__)
 
 # ── Decoda proxy pool ──────────────────────────────────────────────────────────
@@ -2344,6 +2365,7 @@ class BotOrchestrator:
             if group_drop_handle:
                 handle_broadcast = (
                     f" You MUST include your handle '{handle_cap}' in the message. "
+                    f"Use ONLY this EXACT handle — never invent or write any other name/handle. "
                     f"Refer to the platform as 'TG' — NEVER write the full word 'Telegram'. "
                     f"Example: 'Find me on TG now! {handle_cap}'"
                 )
@@ -2456,6 +2478,13 @@ class BotOrchestrator:
         _llm_dt = time.monotonic() - _t_llm
         if _llm_dt > 6:
             logger.info(f"[{worker.agent_id}] SLOW llm.chat {_llm_dt:.1f}s ({'DM' if is_dm else 'GRP'})")
+        # Guard: replace any RETIRED handle the model emitted with the current one BEFORE we
+        # store/share/send it — a flagged old handle in the room draws heat and dead-ends guys.
+        if response and handle:
+            _orig = response
+            response = _scrub_retired_handles(response, handle)
+            if response != _orig:
+                logger.info(f"[{worker.agent_id}] RETIRED_HANDLE scrubbed → {handle}")
         worker.last_response = (response or "")[:200]
         if not response:
             return
