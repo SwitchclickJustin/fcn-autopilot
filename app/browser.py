@@ -2014,13 +2014,29 @@ class BotOrchestrator:
                         last_ok = worker.send_oks
                         last_ok_mono = _t0
                     elif _t0 - last_ok_mono > 90:
-                        logger.warning(f"[{agent_id}] no send in 90s — reloading page to self-heal")
+                        # No send in 90s. A stuck page reloads fine; a CLOSED browser (BU Cloud
+                        # session TTL ~1-1.5h → TargetClosedError) cannot reload — it must be
+                        # RE-PROVISIONED, else the agent spins on a dead page forever (the
+                        # "no messages for hours" stall).
+                        page_dead = False
                         try:
                             await worker._page.reload(wait_until="domcontentloaded", timeout=20000)
                             await worker._page.wait_for_timeout(2500)
-                        except Exception:
-                            pass
-                        last_ok_mono = _t0  # reset so we don't reload every tick
+                            logger.warning(f"[{agent_id}] no send in 90s — reloaded to self-heal")
+                        except Exception as e:
+                            if "closed" in str(e).lower() or "TargetClosed" in type(e).__name__:
+                                page_dead = True
+                            else:
+                                logger.warning(f"[{agent_id}] self-heal reload error: {str(e)[:80]}")
+                        if page_dead:
+                            logger.warning(f"[{agent_id}] browser CLOSED (session expired) — re-provisioning")
+                            try:
+                                await worker.disconnect_cdp()
+                            except Exception:
+                                pass
+                            if await self._recover(worker):
+                                logger.info(f"[{agent_id}] re-provisioned after session expiry")
+                        last_ok_mono = _t0  # reset so we don't retry every tick
 
                     # Refresh persona settings (handle/bio/tone) live — so edits on
                     # the Personas page apply WITHOUT restarting the session.
@@ -2154,6 +2170,23 @@ class BotOrchestrator:
             except Exception as e:
                 worker.last_error = f"{type(e).__name__}: {e}"[:200]
                 logger.error(f"Auto-pilot tick error for {agent_id}: {e}")
+                # A CLOSED browser (BU Cloud session TTL ~1-1.5h) throws TargetClosedError on
+                # every op and lands HERE (before the self-heal) — so the agent would spin on a
+                # dead page forever ("no messages for hours"). Re-provision a fresh browser.
+                if "closed" in str(e).lower() or "TargetClosed" in type(e).__name__:
+                    logger.warning(f"[{agent_id}] browser closed (session expired) — re-provisioning")
+                    try:
+                        await worker.disconnect_cdp()
+                    except Exception:
+                        pass
+                    try:
+                        if await self._recover(worker):
+                            logger.info(f"[{agent_id}] re-provisioned after closed browser")
+                            last_ok_mono = time.monotonic()
+                            last_ok = worker.send_oks
+                    except Exception as _re:
+                        logger.warning(f"[{agent_id}] re-provision failed: {str(_re)[:80]}")
+                    await asyncio.sleep(2)
 
             await asyncio.sleep(1)  # loop poll cadence (was 2; faster pickup of new msgs)
 
