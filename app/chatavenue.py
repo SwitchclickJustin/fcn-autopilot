@@ -33,7 +33,9 @@ CHAT_URL = "https://adultchat.chat-avenue.com/"
 # room-selection page on each. slot 0 -> site 0, slot 1 -> site 1, round-robin.
 CA_SITES = [
     "https://adultchat.chat-avenue.com/",
-    "https://www.chat-avenue.com/sexchat/",
+    # The chat APP subdomain (mirrors adultchat's full guest form). www.chat-avenue.com/sexchat/
+    # is just the landing portal (name-only) that forwards here.
+    "https://sexchat.chat-avenue.com/",
 ]
 # High-traffic, guest-allowed rooms (from recon). Avoid registered-only (DICE, Desktop).
 GUEST_ROOMS = ["Adult Chat", "Taboo", "Seniors Room"]
@@ -100,12 +102,31 @@ class ChatAvenueWorker:
         try:
             logger.info(f"[{self.agent_id}] CA site: {self.site_url}")
             await page.goto(self.site_url, wait_until="domcontentloaded", timeout=45000)
-            await page.click(".intro_guest_btn", timeout=8000)
+            # Intro "Guest login" button — present on the chat-app subdomains, absent on some
+            # variants; don't hard-fail if it isn't there.
+            try:
+                await page.click(".intro_guest_btn", timeout=8000)
+            except Exception:
+                logger.info(f"[{self.agent_id}] CA no .intro_guest_btn (form may be inline)")
             await page.wait_for_timeout(1200)
             name = fcn.BotOrchestrator._unique_username.__func__(None) if False else _guest_name()
             self.login_name = name
             self._bw.login_name = name
-            await page.fill("#guest_username", name, timeout=5000)
+            try:
+                await page.fill("#guest_username", name, timeout=5000)
+            except Exception:
+                filled = await page.evaluate("""(name) => {
+                    const f = document.getElementById('guest_username')
+                        || document.querySelector('input[name*=user i],input[name*=nick i],input[id*=user i],input[id*=nick i]')
+                        || Array.from(document.querySelectorAll('input')).find(i =>
+                             i.offsetParent!==null && /^(text|search|)$/.test(i.type||''));
+                    if (!f) return false;
+                    f.focus(); f.value = name;
+                    f.dispatchEvent(new Event('input',{bubbles:true}));
+                    f.dispatchEvent(new Event('change',{bubbles:true}));
+                    return true;
+                }""", name)
+                logger.info(f"[{self.agent_id}] CA name-field fallback used: {filled}")
             # Gender/DOB are selectboxit widgets. The ONLY thing that updates both selectboxit's
             # display AND the native <select> the form submits is jQuery .val().trigger('change')
             # — verified in Chrome (anchor-click and vanilla dispatchEvent do NOT sync selectboxit).
@@ -136,7 +157,19 @@ class ChatAvenueWorker:
                 await page.wait_for_timeout(500)
             if not solved:
                 logger.warning(f"[{self.agent_id}] CA turnstile NOT solved in 22s — submitting anyway")
-            await page.click(".theme_btn.full_button", timeout=8000)
+            try:
+                await page.click(".theme_btn.full_button", timeout=8000)
+            except Exception:
+                await page.evaluate("""() => {
+                    const b = document.querySelector('button[type=submit],input[type=submit],.theme_btn,.full_button')
+                        || Array.from(document.querySelectorAll('button,a,input')).find(e =>
+                             /login|enter|chat|start|join/i.test((e.value||e.textContent||'')));
+                    if (b) b.click();
+                }""")
+                try:
+                    await page.keyboard.press("Enter")
+                except Exception:
+                    pass
             await page.wait_for_timeout(4000)                       # lobby render
             # Per-IP guest-registration cap (distinct from a form failure).
             capped = await page.evaluate(
@@ -145,13 +178,20 @@ class ChatAvenueWorker:
                 self.status = "ip_capped"
                 logger.warning(f"[{self.agent_id}] CA IP CAPPED (max guest registrations — needs a fresh IP)")
                 return False
-            ok = await page.evaluate("() => !document.getElementById('guest_username')")
+            # Logged in if a chat/lobby element appeared (room-selection or in-room), or the
+            # guest form is gone. Log the post-submit URL so a new site's flow is visible.
+            state = await page.evaluate("""() => ({
+                url: location.href,
+                formGone: !document.querySelector('#guest_username, .intro_guest_btn'),
+                inApp: !!(document.getElementById('content') || document.getElementById('container_rooms') || document.querySelector('.room_element')),
+                snip: ((document.body||{}).innerText||'').replace(/\\s+/g,' ').slice(0,160)
+            })""")
+            ok = bool(state.get("inApp")) or (bool(state.get("formGone")) and "guest login" not in state.get("snip","").lower())
             self.status = "lobby" if ok else "login_failed"
             if ok:
-                logger.info(f"[{self.agent_id}] CA login OK as {name}")
+                logger.info(f"[{self.agent_id}] CA login OK as {name} @ {state.get('url')}")
             else:
-                snip = await page.evaluate("() => ((document.body||{}).innerText||'').replace(/\\s+/g,' ').slice(0,160)")
-                logger.warning(f"[{self.agent_id}] CA login FAILED (turnstile_solved={solved}) — page: {snip}")
+                logger.warning(f"[{self.agent_id}] CA login FAILED (turnstile={solved}) @ {state.get('url')} — page: {state.get('snip')}")
             return bool(ok)
         except Exception as e:
             logger.warning(f"[{self.agent_id}] CA login error: {e}")
