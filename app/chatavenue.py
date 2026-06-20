@@ -1,9 +1,10 @@
 """Chat Avenue (adultchat.chat-avenue.com) broadcast adapter.
 
-GROUP-ONLY: log in as a guest, join a high-traffic guest room, and broadcast every
-20-45s (text + handle, photo later), reusing the FCN AI brain — BU Cloud provisioning,
-LLM, sanitizers, handle obfuscation. No DM engine: the Chat Avenue funnel is
-broadcast -> Telegram add (confirmed fast in manual tests).
+GROUP-ONLY, TEXT-ONLY: log in as a guest, join a high-traffic guest room, and broadcast
+every 20-45s — the obfuscated handle rides in the TEXT every message (no photos on Chat
+Avenue), reusing the FCN AI brain — BU Cloud provisioning, LLM, sanitizers, handle
+obfuscation. No DM engine, no photos: the Chat Avenue funnel is broadcast -> Telegram add
+(confirmed fast in manual tests).
 
 Selectors mapped live 2026-06-20 (Chrome recon):
   entry         https://adultchat.chat-avenue.com/
@@ -14,7 +15,6 @@ Selectors mapped live 2026-06-20 (Chrome recon):
   room list     hamburger menu -> "Room list" -> click a room row (e.g. "Adult Chat" ~964)
   send input    #content  (placeholder "Type here...")
   send button   button#submit_button.send_btn   (paper-plane)
-  attach/photo  i.fa-plus.input_icon  (upload trigger — TBD, photos deferred to v2)
 
 Each browser step is marked LIVE-TEST: validate against the running site (deploy +
 watch the live_url) before trusting it. Built incrementally.
@@ -216,7 +216,6 @@ class ChatAvenueWorker:
                         self._recent_msgs.append(text)
                         self._recent_msgs = self._recent_msgs[-8:]
                         logger.info(f"[{self.agent_id}] CA BROADCAST room={self.room}: {text}")
-                        # TODO v2: post a photo (reuse self._bw send_photo once upload mapped)
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA loop error: {e}")
             await asyncio.sleep(random.uniform(BROADCAST_MIN_S, BROADCAST_MAX_S))
