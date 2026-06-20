@@ -1598,22 +1598,24 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
     # C — per-agent runtime (agent-hours): credit each agent its ACTUAL time running, so a
     # banned/recovered agent that ran 10 min counts as 0.17h, not a full hour.
     agent_hours = sum(max(0.0, now_mono - getattr(w, "_started_at", now_mono)) for w in workers) / 3600
-    # B — rolling last-60-min conversions = predicted next-hour total. Before the fleet has run
-    # a full hour, scale the partial window up to an hourly rate.
-    conv_60 = await count_events_since("telegram_conversion", now - timedelta(minutes=60))
-    window_min = min(60.0, uptime / 60) if uptime else 60.0
-    conv_per_hr_total = round(conv_60 / max(window_min, 1.0) * 60, 2)
-    # C — conversions this session ÷ agent-hours = a stable per-agent-per-hour rate.
+    # Rates reconcile BY CONSTRUCTION (total = per-agent × agents) and use only THIS session,
+    # so a relaunch doesn't fold in the previous run's conversions. Suppressed until the fleet
+    # has ~10 min of runtime — extrapolating a 2-minute window gives nonsense (the old 171/hr bug).
     conv_session = (await count_events_since("telegram_conversion", datetime.utcfromtimestamp(ss))) if ss else 0
-    conv_per_agent_hr = round(conv_session / agent_hours, 2) if agent_hours > 0 else 0.0
+    conv_60 = await count_events_since("telegram_conversion", now - timedelta(minutes=60))  # raw context count
+    warming = (not ss) or uptime < 600 or agent_hours <= 0
+    per_agent_hr = None if warming else round(conv_session / agent_hours, 2)
+    total_hr = None if per_agent_hr is None else round(per_agent_hr * agents, 2)
     return {
         "range": range, "start": s.strftime(fmt), "end": e.strftime(fmt),
         "uptime_seconds": int(uptime),
         "agents": agents,
         "agent_hours": round(agent_hours, 2),
-        "conversions_60m": conv_60,
-        "conversions_per_hr_total": conv_per_hr_total,       # B: predicted next-hour total
-        "conversions_per_hr_per_agent": conv_per_agent_hr,   # C: per agent-hour
+        "warming_up": warming,
+        "conversions_session": conv_session,
+        "conversions_last_60m": conv_60,                  # actual count, not extrapolated
+        "conversions_per_hr_per_agent": per_agent_hr,     # null while warming up
+        "conversions_per_hr_total": total_hr,             # = per_agent × agents (reconciles)
         **stats,
     }
 

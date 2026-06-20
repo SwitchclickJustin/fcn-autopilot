@@ -384,8 +384,13 @@ async function loadStats(){
     document.getElementById('stat-conversions').textContent=d.conversions??0;
     document.getElementById('stat-exposures').textContent=d.handle_exposures??0;
     document.getElementById('stat-convrate').textContent=(d.conversion_rate??0)+'%';
-    document.getElementById('stat-cph').textContent=d.conversions_per_hr_per_agent??0;
-    document.getElementById('stat-cph-label').textContent='Conv/hr/agent · ~'+(d.conversions_per_hr_total??0)+'/hr total';
+    if(d.warming_up || d.conversions_per_hr_per_agent==null){
+      document.getElementById('stat-cph').textContent='–';
+      document.getElementById('stat-cph-label').textContent='Conv/hr/agent · warming up…';
+    }else{
+      document.getElementById('stat-cph').textContent=d.conversions_per_hr_per_agent;
+      document.getElementById('stat-cph-label').textContent='Conv/hr/agent · ~'+(d.conversions_per_hr_total??0)+'/hr total';
+    }
     document.getElementById('stat-uptime').textContent=fmtUptime(d.uptime_seconds??0);
     document.getElementById('stat-agents').textContent=d.agents??0;
   }catch(e){}
