@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS personas (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     username TEXT NOT NULL,
+    platform TEXT DEFAULT 'fcn',
     gender TEXT DEFAULT 'm',
     bio TEXT DEFAULT '',
     goals TEXT DEFAULT '',
@@ -164,6 +165,11 @@ async def get_db():
     if USE_NEON:
         conn = await asyncpg.connect(settings.neon_database_url)
         await conn.execute(SCHEMA_SQL)
+        # personas migration: platform tag (fcn | chatavenue) on existing prod tables
+        try:
+            await conn.execute("ALTER TABLE personas ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'fcn'")
+        except Exception:
+            pass
         # persona_photos migration: add url column if the table was created with the old schema
         try:
             await conn.execute("ALTER TABLE persona_photos ADD COLUMN IF NOT EXISTS url TEXT DEFAULT ''")

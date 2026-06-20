@@ -43,12 +43,8 @@
     <select id="ap-persona" style="width:auto;max-width:200px">
       <option value="">Select persona...</option>
       {% for p in personas %}
-      <option value="{{ p.id }}">{{ p.name }} ({{ p.username }})</option>
+      <option value="{{ p.id }}">{{ p.name }} ({{ p.username }}) · {{ p.platform or 'fcn' }}</option>
       {% endfor %}
-    </select>
-    <select id="platform" style="width:auto" title="Which platform to launch on">
-      <option value="fcn" selected>FCN (FreeChatNow)</option>
-      <option value="chatavenue">Chat Avenue</option>
     </select>
     <select id="agent-count" style="width:auto" title="How many agents to launch">
       <option value="1">1 Agent</option>
@@ -311,7 +307,6 @@ async function startSession(){
   const personaId=document.getElementById('ap-persona').value;
   if(!personaId){toast('Select a persona first');return;}
   const count=parseInt(document.getElementById('agent-count').value)||1;
-  const platform=document.getElementById('platform').value||'fcn';
 
   const btn=document.getElementById('btn-start');
   btn.disabled=true;
@@ -327,7 +322,7 @@ async function startSession(){
     const r=await fetch('/api/session/start-multi',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({persona_id:personaId,count,platform})
+      body:JSON.stringify({persona_id:personaId,count})
     });
     const data=await r.json();
     if(data.detail||data.error){

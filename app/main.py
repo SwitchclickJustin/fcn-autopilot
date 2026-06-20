@@ -1340,12 +1340,13 @@ async def start_multi_session(data: dict):
     import traceback
     persona_id = data.get("persona_id", "")
     count = max(1, min(int(data.get("count", 5)), 10))
-    platform = (data.get("platform") or "fcn").lower()
     if not persona_id:
         raise HTTPException(400, "persona_id required")
     persona = await get_persona(persona_id)
     if not persona:
         raise HTTPException(404, "Persona not found")
+    # The persona owns its platform (fcn | chatavenue) — launch routes off it.
+    platform = (persona.get("platform") or "fcn").lower()
     for field in ["selected_rooms", "dm_gender_filter", "dm_blocklist"]:
         if isinstance(persona.get(field), str):
             try:

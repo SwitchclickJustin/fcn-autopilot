@@ -26,6 +26,13 @@
           </select>
         </div>
       </div>
+      <div class="mb"><label>📡 Platform</label>
+        <select id="p-platform">
+          <option value="fcn" selected>FCN (FreeChatNow) — group + DMs</option>
+          <option value="chatavenue">Chat Avenue — group broadcast only</option>
+        </select>
+        <div class="text-sm text-dim" style="margin-top:.25rem">Which site this persona runs on. Prompt &amp; behavior differ per platform — launching picks the platform from here.</div>
+      </div>
       <div class="form-row two">
         <div><label>FCN Username</label>
           <div class="flex" style="gap:.35rem">
@@ -188,6 +195,7 @@ async function savePersona(e) {
   const data = {
     name: document.getElementById('p-name').value.trim(),
     username: username,
+    platform: document.getElementById('p-platform').value || 'fcn',
     gender: document.getElementById('p-gender').value,
     bio: document.getElementById('p-bio').value.trim(),
     goals: document.getElementById('p-goals').value.trim(),
@@ -238,6 +246,7 @@ async function editPersona(id) {
     document.getElementById('p-id').value = p.id;
     document.getElementById('p-name').value = p.name || '';
     document.getElementById('p-username').value = p.username || '';
+    document.getElementById('p-platform').value = p.platform || 'fcn';
     document.getElementById('p-gender').value = p.gender || 'f';
     document.getElementById('p-bio').value = p.bio || '';
     document.getElementById('p-goals').value = p.goals || '';
