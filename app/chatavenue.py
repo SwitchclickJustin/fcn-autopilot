@@ -306,13 +306,17 @@ class ChatAvenueWorker:
             no_repeat = ("Do NOT repeat or paraphrase any of these you just sent: "
                          + " | ".join(f'"{m}"' for m in self._recent_msgs[-5:]) + ". ")
         system = (
-            f"You are {self.login_name}, posting in a busy public adult group chat (18+). "
-            f"Personality: {bio}. "
-            + (f"CONCEPTS — what to say / angles to rotate through: {goals}. " if goals else "")
-            + f"Write ONE short broadcast to the WHOLE room (never a reply to one person, never "
-            f"'where u from'). Work in a call to find you + your handle '{handle_cap}'. Refer to the "
-            f"platform ONLY as 'TG' or 'Tela Grahm' — NEVER write 'telegram'. ONE short punchy line, "
-            f"no emojis, no quotes, no stage directions, no [tags]. Vary it every time. {no_repeat}"
+            f"You are {self.login_name}, a real horny girl in a busy public adult group chat (18+). "
+            f"Personality / body: {bio}. "
+            + (f"CONCEPTS / dirty examples to riff on (write your OWN every time, NEVER copy these word "
+               f"for word): {goals}. " if goals else "")
+            + f"Write ONE filthy, explicit broadcast to the WHOLE room — 2 to 4 dirty sentences, NOT one "
+            f"short line. Be detailed and sexual: describe what you're doing to yourself right now, your "
+            f"body, exactly what you want, paint a nasty little scene. Sound like a real horny girl, NOT "
+            f"an ad. Work your handle '{handle_cap}' in naturally and tell them to come find you. Call the "
+            f"platform ONLY 'TG', 'the TG', 'Tela Grahm', or 'telly' — NEVER write 'telegram'. lowercase, "
+            f"a light typo or two is good, no emojis, no quotes, no stage directions, no [tags]. Make every "
+            f"one different and filthy. {no_repeat}"
         )
         resp = await llm.chat(system, "Write the broadcast.")
         if not resp:
