@@ -31,7 +31,21 @@ logger = logging.getLogger(__name__)
 CHAT_URL = "https://adultchat.chat-avenue.com/"
 # High-traffic, guest-allowed rooms (from recon). Avoid registered-only (DICE, Desktop).
 GUEST_ROOMS = ["Adult Chat", "Taboo", "Seniors Room"]
-BROADCAST_MIN_S, BROADCAST_MAX_S = 15, 25   # one message every 15-25s
+BROADCAST_MIN_S, BROADCAST_MAX_S = 15, 25   # default cadence when the persona has none
+
+
+def _broadcast_interval(persona: dict) -> tuple:
+    """Seconds between broadcasts (min, max), read from the persona's cooldown_min/max so
+    operators tune cadence per-persona. Falls back to 15-25s when unset/invalid, and never
+    blasts faster than 5s."""
+    try:
+        lo = int(persona.get("cooldown_min") or BROADCAST_MIN_S)
+        hi = int(persona.get("cooldown_max") or BROADCAST_MAX_S)
+    except (TypeError, ValueError):
+        lo, hi = BROADCAST_MIN_S, BROADCAST_MAX_S
+    lo = max(5, lo)
+    hi = max(lo, hi)
+    return lo, hi
 
 
 class ChatAvenueWorker:
@@ -52,6 +66,8 @@ class ChatAvenueWorker:
         self._recent_msgs: list = []          # no-repeat memory
         self._task = None
         self._stop = False
+        # Cadence (seconds between blasts) from the persona's cooldown_min/max, 15-25s default.
+        self.cd_min, self.cd_max = _broadcast_interval(persona)
         # Composition: a BotWorker carries the CDP page + send_photo + slicing slot.
         self._bw = fcn.BotWorker(persona)
         self._bw.agent_id = agent_id
@@ -243,6 +259,7 @@ class ChatAvenueWorker:
             self.status = "login_failed"; return
         if not await self.join_room():
             self.status = "join_failed"; return
+        logger.info(f"[{self.agent_id}] CA broadcasting every {self.cd_min}-{self.cd_max}s in '{self.room}'")
         while not self._stop:
             try:
                 text = await self._make_broadcast()
@@ -254,7 +271,7 @@ class ChatAvenueWorker:
                         logger.info(f"[{self.agent_id}] CA BROADCAST room={self.room}: {text}")
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA loop error: {e}")
-            await asyncio.sleep(random.uniform(BROADCAST_MIN_S, BROADCAST_MAX_S))
+            await asyncio.sleep(random.uniform(self.cd_min, self.cd_max))
 
     async def stop(self):
         self._stop = True
