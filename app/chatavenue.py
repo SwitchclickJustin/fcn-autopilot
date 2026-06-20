@@ -33,9 +33,9 @@ CHAT_URL = "https://adultchat.chat-avenue.com/"
 # room-selection page on each. slot 0 -> site 0, slot 1 -> site 1, round-robin.
 CA_SITES = [
     "https://adultchat.chat-avenue.com/",
-    # The chat APP subdomain (mirrors adultchat's full guest form). www.chat-avenue.com/sexchat/
-    # is just the landing portal (name-only) that forwards here.
-    "https://sexchat.chat-avenue.com/",
+    # Sex Chat: real guest login lives here (Username + Turnstile only — NO gender/DOB, unlike
+    # adultchat). The adaptive login handles the missing gender/DOB fields.
+    "https://www.chat-avenue.com/sexchat/",
 ]
 # High-traffic, guest-allowed rooms (from recon). Avoid registered-only (DICE, Desktop).
 GUEST_ROOMS = ["Adult Chat", "Taboo", "Seniors Room"]
@@ -107,7 +107,14 @@ class ChatAvenueWorker:
             try:
                 await page.click(".intro_guest_btn", timeout=8000)
             except Exception:
-                logger.info(f"[{self.agent_id}] CA no .intro_guest_btn (form may be inline)")
+                # Variant: a button/text labelled "Guest login" opens the modal.
+                clicked = await page.evaluate("""() => {
+                    const b = Array.from(document.querySelectorAll('button,a,div,span')).find(e =>
+                        /^\\s*guest login\\s*$/i.test((e.textContent||'').trim()) && e.querySelectorAll('*').length<3);
+                    if (b) { (b.closest('[class*=click i]')||b).click(); return true; }
+                    return false;
+                }""")
+                logger.info(f"[{self.agent_id}] CA guest-btn fallback clicked={clicked}")
             await page.wait_for_timeout(1200)
             name = fcn.BotOrchestrator._unique_username.__func__(None) if False else _guest_name()
             self.login_name = name
