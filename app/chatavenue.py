@@ -40,6 +40,7 @@ CA_SITES = [
 # High-traffic, guest-allowed rooms (from recon). Avoid registered-only (DICE, Desktop).
 GUEST_ROOMS = ["Adult Chat", "Taboo", "Seniors Room"]
 BROADCAST_MIN_S, BROADCAST_MAX_S = 15, 25   # default cadence when the persona has none
+BROADCAST_MAX_CHARS = 240                    # Chat Avenue truncates long messages — stay under it
 
 
 def _broadcast_interval(persona: dict) -> tuple:
@@ -310,13 +311,13 @@ class ChatAvenueWorker:
             f"Personality / body: {bio}. "
             + (f"CONCEPTS / dirty examples to riff on (write your OWN every time, NEVER copy these word "
                f"for word): {goals}. " if goals else "")
-            + f"Write ONE filthy, explicit broadcast to the WHOLE room — 2 to 4 dirty sentences, NOT one "
-            f"short line. Be detailed and sexual: describe what you're doing to yourself right now, your "
-            f"body, exactly what you want, paint a nasty little scene. Sound like a real horny girl, NOT "
-            f"an ad. Work your handle '{handle_cap}' in naturally and tell them to come find you. Call the "
-            f"platform ONLY 'TG', 'the TG', 'Tela Grahm', or 'telly' — NEVER write 'telegram'. lowercase, "
-            f"a light typo or two is good, no emojis, no quotes, no stage directions, no [tags]. Make every "
-            f"one different and filthy. {no_repeat}"
+            + f"Write ONE filthy, explicit broadcast to the WHOLE room — 2 to 3 short dirty sentences, "
+            f"UNDER ~230 characters total so the chat never cuts it off. Be detailed and sexual: describe "
+            f"what you're doing to yourself right now, your body, what you want, a quick nasty scene. Sound "
+            f"like a real horny girl, NOT an ad. Put your handle '{handle_cap}' in the FIRST sentence so it "
+            f"can never get cut, and tell them to come find you. Call the platform ONLY 'TG', 'the TG', "
+            f"'Tela Grahm', or 'telly' — NEVER write 'telegram'. lowercase, a light typo or two is good, no "
+            f"emojis, no quotes, no stage directions, no [tags]. Make every one different and filthy. {no_repeat}"
         )
         resp = await llm.chat(system, "Write the broadcast.")
         if not resp:
@@ -329,6 +330,14 @@ class ChatAvenueWorker:
         send_text = fcn._obfuscate_handle(resp, handle, tg) if handle else fcn._sanitize_platforms(resp, tg)
         send_text = fcn._force_group_cta(send_text, handle, tg) if handle else send_text
         send_text = fcn._strip_ai_tells(send_text, strip_emoji=True)
+        # Backstop: never post past the limit. The handle is in the first sentence, so trimming
+        # the tail to a clean boundary keeps it intact rather than cutting mid-word.
+        if len(send_text) > BROADCAST_MAX_CHARS:
+            cut = send_text[:BROADCAST_MAX_CHARS]
+            idx = max(cut.rfind(".."), cut.rfind(". "), cut.rfind("! "))
+            if idx < BROADCAST_MAX_CHARS * 0.5:          # no sentence break — fall back to a word
+                idx = cut.rfind(" ")
+            send_text = (cut[:idx] if idx > 0 else cut).rstrip(" .,!") + ".."
         return send_text
 
     # ── run loop ─────────────────────────────────────────────────────────────────
