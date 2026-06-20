@@ -76,6 +76,7 @@ class ChatAvenueWorker:
         self._task = None
         self._stop = False
         self._orchestrator = None       # set by start_multi_chatavenue; feeds the dashboard
+        self.tabs: list = []            # one {page, site, room} per Chat Avenue site, one browser
         # Cadence (seconds between blasts) from the persona's cooldown_min/max, 15-25s default.
         self.cd_min, self.cd_max = _broadcast_interval(persona)
         # Which Chat Avenue site this agent blasts (round-robin by slot across CA_SITES).
@@ -342,31 +343,57 @@ class ChatAvenueWorker:
 
     # ── run loop ─────────────────────────────────────────────────────────────────
     async def run(self):
-        if not await self.login():
+        """One browser, one tab per Chat Avenue site (same IP is safe — each site sees only one
+        guest registration). login/join/send operate on whichever tab _page points at, so we just
+        swap _page per tab. Broadcasts round-robin across the joined rooms."""
+        page1 = self._bw._page
+        if not page1:
+            self.status = "no_page"; return
+        site_pages = [(page1, CA_SITES[0])]
+        for site in CA_SITES[1:]:
+            try:
+                site_pages.append((await page1.context.new_page(), site))
+            except Exception as e:
+                logger.warning(f"[{self.agent_id}] CA could not open tab for {site}: {e}")
+        # Log in + join the busiest room on each site (point _page at each tab in turn).
+        for page, site in site_pages:
+            self._bw._page = page
+            self.site_url = site
+            try:
+                if await self.login() and await self.join_room():
+                    self.tabs.append({"page": page, "site": site, "room": self.room})
+                    logger.info(f"[{self.agent_id}] CA tab live: {site} -> '{self.room}'")
+                else:
+                    logger.warning(f"[{self.agent_id}] CA tab setup failed @ {site}")
+            except Exception as e:
+                logger.warning(f"[{self.agent_id}] CA tab error @ {site}: {e}")
+        if not self.tabs:
             self.status = "login_failed"; return
-        if not await self.join_room():
-            self.status = "join_failed"; return
-        logger.info(f"[{self.agent_id}] CA broadcasting every {self.cd_min}-{self.cd_max}s in '{self.room}'")
+        self.status = "running"
+        self.room = " + ".join(t["room"] for t in self.tabs)
+        logger.info(f"[{self.agent_id}] CA broadcasting every {self.cd_min}-{self.cd_max}s "
+                    f"across {len(self.tabs)} room(s): {self.room}")
+        i = 0
         while not self._stop:
+            tab = self.tabs[i % len(self.tabs)]; i += 1
+            self._bw._page = tab["page"]        # point send() at this tab
             try:
                 text = await self._make_broadcast()
-                if text:
-                    sent = await self.send(text)
-                    if sent:
-                        self._recent_msgs.append(text)
-                        self._recent_msgs = self._recent_msgs[-8:]
-                        logger.info(f"[{self.agent_id}] CA BROADCAST room={self.room}: {text}")
-                        if self._orchestrator:
-                            self._orchestrator.push_feed({
-                                "t": time.strftime("%H:%M:%S"),
-                                "agent": self.agent_id,
-                                "dm": False,
-                                "room": self.room,
-                                "text": text,
-                                "platform": "chatavenue",
-                            })
+                if text and await self.send(text):
+                    self._recent_msgs.append(text)
+                    self._recent_msgs = self._recent_msgs[-8:]
+                    logger.info(f"[{self.agent_id}] CA BROADCAST [{tab['room']}]: {text}")
+                    if self._orchestrator:
+                        self._orchestrator.push_feed({
+                            "t": time.strftime("%H:%M:%S"),
+                            "agent": self.agent_id,
+                            "dm": False,
+                            "room": tab["room"],
+                            "text": text,
+                            "platform": "chatavenue",
+                        })
             except Exception as e:
-                logger.warning(f"[{self.agent_id}] CA loop error: {e}")
+                logger.warning(f"[{self.agent_id}] CA loop error [{tab.get('room')}]: {e}")
             await asyncio.sleep(random.uniform(self.cd_min, self.cd_max))
 
     async def stop(self):

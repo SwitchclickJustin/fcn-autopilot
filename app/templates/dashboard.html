@@ -276,7 +276,7 @@ function renderFeed(feed){
   lastFeedKey=key;
   el.innerHTML=feed.map(m=>{
     const n=(m.agent||'').split('_').pop();
-    const dm=!!m.dm, kind=dm?'DM':'group', color=dm?'#e0729a':'#6aa0ff';
+    const dm=!!m.dm, kind=dm?'DM':((m.room||'group')), color=dm?'#e0729a':'#6aa0ff';
     const ca=(m.platform||'fcn')==='chatavenue';
     const pBadge=`<span style="background:${ca?'#7c3aed':'#2563eb'};color:#fff;font-size:.6rem;font-weight:700;padding:.05rem .3rem;border-radius:3px;vertical-align:middle">${ca?'CHAT-AVE':'FCN'}</span>`;
     return `<div class="chat-msg" style="margin-bottom:.4rem;line-height:1.4">`
