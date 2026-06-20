@@ -253,6 +253,27 @@ def _scrub_retired_handles(text: str, real_handle: str) -> str:
     return _RETIRED_HANDLE_RE.sub(clean, text)
 
 
+def _normalize_handle(text: str, handle: str) -> str:
+    """Repair model misspellings of the handle (doubled letters / stray spaces → canonical)
+    and keep at most ONE occurrence. Without this, a misspelled handle ('juiccyalexandra') is
+    unfindable on Telegram AND isn't recognised by the CTA backstop, which then appends a second
+    correct one → 'juiccyalexandra.. find me JuicyAlexandra'."""
+    clean = (handle or "").lstrip("@")
+    if not clean or len(clean) < 4:
+        return text
+    # Fuzzy: each letter one-or-more times (tolerates doubled letters), optional spaces between.
+    fuzzy = re.compile(r"\s*".join(re.escape(c) + "+" for c in clean), re.I)
+    text = fuzzy.sub(clean, text)
+    # De-dupe: keep the first occurrence, drop the rest (plus a short 'find me '/'im ' lead-in).
+    if len(re.findall(re.escape(clean), text, re.I)) > 1:
+        seen = {"n": 0}
+        def _repl(m):
+            seen["n"] += 1
+            return clean if seen["n"] == 1 else ""
+        text = re.sub(r"(?:\b(?:find me|im|i'?m|on)\s+)?" + re.escape(clean), _repl, text, flags=re.I)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 logger = logging.getLogger(__name__)
 
 # ── Decoda proxy pool ──────────────────────────────────────────────────────────
@@ -2505,6 +2526,7 @@ class BotOrchestrator:
             response = _scrub_retired_handles(response, handle)
             if response != _orig:
                 logger.info(f"[{worker.agent_id}] RETIRED_HANDLE scrubbed → {handle}")
+            response = _normalize_handle(response, handle)  # fix misspellings + drop duplicate handle
         worker.last_response = (response or "")[:200]
         if not response:
             return
