@@ -29,6 +29,12 @@ from app import browser as fcn  # reuse helpers + BU Cloud provisioning
 logger = logging.getLogger(__name__)
 
 CHAT_URL = "https://adultchat.chat-avenue.com/"
+# Chat Avenue sites the blaster rotates agents across by slot — same guest-login flow + same
+# room-selection page on each. slot 0 -> site 0, slot 1 -> site 1, round-robin.
+CA_SITES = [
+    "https://adultchat.chat-avenue.com/",
+    "https://www.chat-avenue.com/sexchat/",
+]
 # High-traffic, guest-allowed rooms (from recon). Avoid registered-only (DICE, Desktop).
 GUEST_ROOMS = ["Adult Chat", "Taboo", "Seniors Room"]
 BROADCAST_MIN_S, BROADCAST_MAX_S = 15, 25   # default cadence when the persona has none
@@ -68,6 +74,8 @@ class ChatAvenueWorker:
         self._stop = False
         # Cadence (seconds between blasts) from the persona's cooldown_min/max, 15-25s default.
         self.cd_min, self.cd_max = _broadcast_interval(persona)
+        # Which Chat Avenue site this agent blasts (round-robin by slot across CA_SITES).
+        self.site_url = CA_SITES[slot % len(CA_SITES)]
         # Composition: a BotWorker carries the CDP page + send_photo + slicing slot.
         self._bw = fcn.BotWorker(persona)
         self._bw.agent_id = agent_id
@@ -90,7 +98,8 @@ class ChatAvenueWorker:
         if not page:
             return False
         try:
-            await page.goto(CHAT_URL, wait_until="domcontentloaded", timeout=45000)
+            logger.info(f"[{self.agent_id}] CA site: {self.site_url}")
+            await page.goto(self.site_url, wait_until="domcontentloaded", timeout=45000)
             await page.click(".intro_guest_btn", timeout=8000)
             await page.wait_for_timeout(1200)
             name = fcn.BotOrchestrator._unique_username.__func__(None) if False else _guest_name()
