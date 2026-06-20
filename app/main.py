@@ -1681,6 +1681,31 @@ async def api_delete_photo(persona_id: str, photo_id: str):
     await delete_persona_photo(photo_id)
     return {"deleted": True}
 
+@app.post("/api/personas/{persona_id}/photos/prune-broken")
+async def api_prune_broken_photos(persona_id: str):
+    """HEAD-check every photo URL for this persona and delete any that don't resolve
+    (404/403/timeout/etc). Lets an operator one-click clean broken CDN URLs that would
+    otherwise silently fail the send-time fetch. Returns the count + URLs removed."""
+    import httpx
+    photos = await get_persona_photos(persona_id)
+    removed = []
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        for p in photos:
+            url = (p.get("url") or "").strip()
+            ok = False
+            if url:
+                try:
+                    resp = await client.head(url)
+                    if resp.status_code in (403, 405, 501):  # CDN rejects HEAD → confirm with GET
+                        resp = await client.get(url)
+                    ok = resp.status_code < 400
+                except Exception:
+                    ok = False
+            if not ok:
+                await delete_persona_photo(p["id"])
+                removed.append(url or p.get("id"))
+    return {"removed": len(removed), "urls": removed}
+
 # ─── SirenDM Telegram Conversion Webhook ───
 @app.post("/api/telegram-conversion")
 async def siren_dm_webhook(request: Request):

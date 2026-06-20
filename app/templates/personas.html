@@ -127,9 +127,15 @@
     <div class="card-title" style="margin:0" id="photo-card-title">Photos</div>
     <span id="photo-count" class="text-dim text-sm"></span>
   </div>
-  <div class="flex" style="gap:.5rem;margin-bottom:.75rem">
-    <input type="text" id="photo-url-input" placeholder="Paste Bunny.net CDN URL…" style="flex:1;font-size:.85rem">
-    <button class="btn btn-primary btn-sm" onclick="addPhotoUrl()" id="add-photo-btn">+ Add</button>
+  <div style="margin-bottom:.75rem">
+    <textarea id="photo-url-input" rows="3"
+      placeholder="Paste one or more Bunny.net CDN URLs — one per line"
+      style="width:100%;font-size:.85rem;box-sizing:border-box;font-family:monospace"></textarea>
+    <div class="flex" style="gap:.5rem;margin-top:.4rem">
+      <button class="btn btn-primary btn-sm" onclick="addPhotoUrl()" id="add-photo-btn">+ Add</button>
+      <button class="btn btn-sm" onclick="removeBroken()" id="prune-photo-btn"
+        title="Check every photo and delete any that no longer load (404)">Remove broken</button>
+    </div>
   </div>
   <div id="photo-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.75rem">
     <p class="empty" style="grid-column:1/-1">No photos yet. Paste a Bunny.net URL above.</p>
@@ -300,18 +306,56 @@ async function loadPhotos(personaId) {
 
 async function addPhotoUrl() {
   const input = document.getElementById('photo-url-input');
-  const url = (input.value || '').trim();
-  if (!url || !_photoPersonaId) return;
+  const raw = (input.value || '').trim();
+  if (!raw || !_photoPersonaId) return;
+  // Accept one OR many URLs: split on any whitespace/commas, keep only http(s), dedupe the paste.
+  const urls = [...new Set(
+    raw.split(/[\s,]+/).map(s => s.trim()).filter(u => /^https?:\/\//i.test(u))
+  )];
+  if (!urls.length) { toast('No valid URLs found'); return; }
+  // Skip URLs already on this persona so re-pasting can't create duplicates.
+  let existing = new Set();
   try {
-    const filename = url.split('/').pop().split('?')[0] || 'photo.jpg';
-    const r = await fetch(`/api/personas/${_photoPersonaId}/photos`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ url, filename }),
-    });
-    if (r.ok) { input.value = ''; toast('Photo added!'); await loadPhotos(_photoPersonaId); }
-    else { toast('Failed to add photo'); }
+    const cur = await (await fetch(`/api/personas/${_photoPersonaId}/photos`)).json();
+    existing = new Set((cur || []).map(p => (p.url || '').trim()));
+  } catch(e) {}
+  const toAdd = urls.filter(u => !existing.has(u));
+  const skipped = urls.length - toAdd.length;
+  if (!toAdd.length) { toast(`All ${urls.length} already added`); input.value = ''; return; }
+  const btn = document.getElementById('add-photo-btn');
+  const orig = btn.textContent; btn.disabled = true;
+  let added = 0, failed = 0;
+  for (let i = 0; i < toAdd.length; i++) {
+    const url = toAdd[i];
+    btn.textContent = `Adding ${i + 1}/${toAdd.length}…`;
+    try {
+      const filename = url.split('/').pop().split('?')[0] || 'photo.jpg';
+      const r = await fetch(`/api/personas/${_photoPersonaId}/photos`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ url, filename }),
+      });
+      r.ok ? added++ : failed++;
+    } catch(e) { failed++; }
+  }
+  btn.disabled = false; btn.textContent = orig; input.value = '';
+  toast(`Added ${added}` + (skipped ? `, ${skipped} dupe${skipped > 1 ? 's' : ''} skipped` : '')
+        + (failed ? `, ${failed} failed` : ''));
+  await loadPhotos(_photoPersonaId);
+}
+
+async function removeBroken() {
+  if (!_photoPersonaId) return;
+  if (!confirm('Check every photo and delete any that no longer load (404)?')) return;
+  const btn = document.getElementById('prune-photo-btn');
+  const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const r = await fetch(`/api/personas/${_photoPersonaId}/photos/prune-broken`, { method: 'POST' });
+    const d = await r.json();
+    toast(d.removed ? `Removed ${d.removed} broken photo${d.removed > 1 ? 's' : ''}` : 'No broken photos found');
+    await loadPhotos(_photoPersonaId);
   } catch(e) { toast('Error: ' + e.message); }
+  btn.disabled = false; btn.textContent = orig;
 }
 
 async function deletePhoto(photoId) {
