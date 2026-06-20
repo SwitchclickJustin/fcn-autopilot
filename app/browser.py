@@ -2213,6 +2213,9 @@ class BotOrchestrator:
             "NEVER write the full word 'telegram', 'kik', 'snap', 'whatsapp', or any URL. "
             "In DMs: use 'TG' or 'the TG'. In group rooms: use 'Tela Grahm' (two words, misspelled). "
             "Never name other platforms."
+            + (f" Your Telegram handle is EXACTLY '{handle}'. Your chat name here ('{username}') is "
+               f"NOT your Telegram — NEVER give your chat name as your handle; only ever '{handle}'."
+               if handle else "")
         )
 
         if is_dm:
@@ -2535,6 +2538,16 @@ class BotOrchestrator:
             if response != _orig:
                 logger.info(f"[{worker.agent_id}] RETIRED_HANDLE scrubbed → {handle}")
             response = _normalize_handle(response, handle)  # fix misspellings + drop duplicate handle
+            # Guard: model sometimes hands out its OWN FCN chat name as the Telegram handle
+            # ("find me on TG SweetLola71904") → sends guys to a Telegram that doesn't exist.
+            # Replace the bot's chat/login name with the REAL handle.
+            _login = (worker.login_name or "").strip().lstrip("@")
+            _h = handle.lstrip("@")
+            if _login and len(_login) >= 4 and _login.lower() != _h.lower():
+                _fixed = re.sub(re.escape(_login), _h, response, flags=re.I)
+                if _fixed != response:
+                    logger.info(f"[{worker.agent_id}] CHATNAME_AS_HANDLE fixed {_login} → {_h}")
+                    response = _fixed
         worker.last_response = (response or "")[:200]
         if not response:
             return
