@@ -157,57 +157,51 @@ class ChatAvenueWorker:
         if not page:
             return False
         try:
-            # open the left menu, then "Room list"
-            await page.evaluate("""() => {
-                const burger = document.querySelector('.menu_toggle, [class*=burger i], #menu_button')
-                    || document.querySelectorAll('.fa-bars, [class*=bars i]')[0];
-                if (burger) (burger.closest('[class*=click i]')||burger).click();
-            }""")
-            await page.wait_for_timeout(800)
-            await page.evaluate("""() => {
-                const rl = Array.from(document.querySelectorAll('*'))
-                    .find(e => /^\\s*Room list\\s*$/i.test(e.textContent||'') && e.querySelectorAll('*').length<4);
-                if (rl) (rl.closest('[class*=click i]')||rl).click();
-            }""")
-            await page.wait_for_timeout(1400)
-            # Read every room row + its online count, pick the BUSIEST (not just the first).
-            rooms = await page.evaluate("""() => {
-                const cand = Array.from(document.querySelectorAll('a, li, tr, div')).filter(e =>
-                    e.offsetParent!==null && e.children.length<=6 &&
-                    /\\d/.test(e.textContent||'') && (e.textContent||'').trim().length<48);
-                const out = [];
-                for (const e of cand) {
-                    const t = (e.textContent||'').replace(/\\s+/g,' ').trim();
-                    const nums = (t.match(/\\d+/g)||[]).map(Number);
-                    if (!nums.length) continue;
-                    const count = Math.max(...nums);
-                    const name = t.replace(/\\d+/g,'').replace(/[()|·,]/g,' ').replace(/\\s+/g,' ').trim();
-                    if (name.length>=3 && count>0 && count<100000) out.push({name, count});
-                }
-                // dedup by name, keep highest count seen
-                const m = {};
-                for (const r of out) if (!(r.name in m) || r.count>m[r.name]) m[r.name]=r.count;
-                return Object.entries(m).map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count);
-            }""")
-            logger.info(f"[{self.agent_id}] CA room list (by traffic): {rooms[:10]}")
-            target = rooms[0]["name"] if rooms else GUEST_ROOMS[self.slot % len(GUEST_ROOMS)]
-            # agents past the first spread to the 2nd/3rd busiest so they don't stack one room
-            if rooms and self.slot > 0 and self.slot < len(rooms):
-                target = rooms[self.slot]["name"]
-            clicked = await page.evaluate("""(name) => {
-                const rows = Array.from(document.querySelectorAll('*')).filter(e =>
-                    e.offsetParent!==null && (e.textContent||'').includes(name) &&
-                    (e.textContent||'').length < 120 && e.querySelectorAll('*').length < 12);
-                const row = rows[rows.length-1];
-                if (row) { (row.closest('[class*=room i]')||row).click(); return true; }
-                return false;
-            }""", target)
+            # After guest login Chat Avenue lands on the room-selection page: #container_rooms
+            # with `.room_element` rows, each holding a `.room_count`. If we're already inside a
+            # room instead, open the menu -> "Room list" to surface the same rows.
+            await page.wait_for_timeout(900)
+            has_list = await page.evaluate("() => !!document.querySelector('.room_element .room_count')")
+            if not has_list:
+                await page.evaluate("""() => {
+                    const b = document.querySelector('.menu_toggle, [class*=burger i], #menu_button')
+                        || document.querySelectorAll('.fa-bars, [class*=bars i]')[0];
+                    if (b) (b.closest('[class*=click i]')||b).click();
+                }""")
+                await page.wait_for_timeout(800)
+                await page.evaluate("""() => {
+                    const rl = Array.from(document.querySelectorAll('*'))
+                        .find(e => /^\\s*Room list\\s*$/i.test(e.textContent||'') && e.querySelectorAll('*').length<4);
+                    if (rl) (rl.closest('[class*=click i]')||rl).click();
+                }""")
+                await page.wait_for_timeout(1400)
+            # Pick the busiest GUEST-accessible room and click it. Rooms that say "no guests" /
+            # "registered users only" (e.g. Adult Chat - Desktop Version) are skipped — a guest
+            # can't post there. slot N takes the Nth-busiest so agents don't all stack one room.
+            chosen = await page.evaluate("""(slot) => {
+                const rooms = Array.from(document.querySelectorAll('.room_element, .blisting'))
+                    .filter(r => r.offsetParent !== null && r.querySelector('.room_count'));
+                const data = rooms.map(r => {
+                    const count = parseInt((r.querySelector('.room_count').textContent||'').trim()) || 0;
+                    const lines = (r.innerText||'').split('\\n').map(s=>s.trim()).filter(Boolean);
+                    const name = lines[0] || '?';
+                    const noGuests = /no guests|registered users only/i.test(r.textContent||'');
+                    return {r, name, count, ok: !noGuests};
+                }).filter(x => x.ok).sort((a,b) => b.count - a.count);
+                if (!data.length) return null;
+                const pick = data[Math.min(slot, data.length-1)];
+                pick.r.click();
+                return {name: pick.name, count: pick.count,
+                        list: data.slice(0,8).map(d => ({n:d.name, c:d.count}))};
+            }""", self.slot)
+            if chosen:
+                logger.info(f"[{self.agent_id}] CA rooms by traffic: {chosen['list']}")
             await page.wait_for_timeout(2500)
             in_room = await page.evaluate("() => !!document.getElementById('content')")
             if in_room:
-                self.room = target
+                self.room = chosen["name"] if chosen else "?"
                 self.status = "running"
-                logger.info(f"[{self.agent_id}] CA joined room '{target}'")
+                logger.info(f"[{self.agent_id}] CA joined room '{self.room}' ({chosen['count'] if chosen else '?'} online)")
             return bool(in_room)
         except Exception as e:
             logger.warning(f"[{self.agent_id}] CA join_room error: {e}")
