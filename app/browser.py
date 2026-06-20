@@ -643,42 +643,36 @@ class BotWorker:
         for attempt in range(2):
             try:
                 try:
-                    await inp.scroll_into_view_if_needed(timeout=2000)
+                    await inp.scroll_into_view_if_needed(timeout=1500)
                 except Exception:
                     pass
-                await inp.focus()
-                await inp.fill("")  # clear any stale text
-                # NOTE: keyboard.insertText was tried (2026-06-20) to avoid per-char round-trips
-                # but FCN's input didn't register it → fell back + added overhead (DM sends 11s→30s,
-                # 341s ticks). Reverted to keystroke typing. A real speedup needs a DOM value-set
-                # confirmed against FCN's actual input element — investigate before retrying.
-                if fast:
-                    # DMs: type the whole message quickly in one pass, no typo simulation.
-                    await self._page.keyboard.type(message, delay=random.randint(12, 30))
-                    await asyncio.sleep(random.uniform(0.05, 0.12))
-                else:
-                    # Group rooms: human-paced char-by-char with typos for camouflage (~210 WPM).
-                    _keyboard_neighbors = {
-                        'a':'sq','b':'vgn','c':'xdv','d':'sfe','e':'wrd','f':'dge','g':'fht',
-                        'h':'gjy','i':'uo','j':'hkn','k':'jlm','l':'k','m':'nk','n':'bm',
-                        'o':'ip','p':'o','q':'wa','r':'et','s':'awd','t':'ry','u':'yi',
-                        'v':'cb','w':'qe','x':'zc','y':'uh','z':'x',
-                    }
-                    for ch in message:
-                        if ch.isalpha() and random.random() < 0.06:
-                            wrong = random.choice(_keyboard_neighbors.get(ch.lower(), ch.lower()))
-                            await self._page.keyboard.type(wrong)
-                            await asyncio.sleep(random.uniform(0.03, 0.06))
-                            await self._page.keyboard.press("Backspace")
-                            await asyncio.sleep(random.uniform(0.02, 0.05))
-                        await self._page.keyboard.type(ch)
-                        delay = random.uniform(0.035, 0.075)
-                        if random.random() < 0.03:
-                            delay += random.uniform(0.12, 0.32)  # brief "thinking" pause
-                        await asyncio.sleep(delay)
-                    await asyncio.sleep(random.uniform(0.05, 0.13))
+                try:
+                    await inp.focus(timeout=1500)
+                except Exception:
+                    pass
+                # FAST PATH: set the whole message in ONE DOM op via fill() — proven to work on
+                # FCN's plain input (it's how we clear/verify it). Replaces per-char keystrokes
+                # (which cost ~0.2s/char = 20-48s over the remote browser) AND the unbounded 30s
+                # fill-timeout stalls (short timeout → fail fast). Verify the value registered;
+                # fall back to a fast keystroke pass only if it didn't.
+                typed = False
+                try:
+                    await inp.fill(message, timeout=2500)
+                    typed = ((await inp.input_value()) or "").strip() == message.strip()
+                except Exception:
+                    typed = False
+                if not typed:
+                    try:
+                        await inp.fill("", timeout=1500)
+                    except Exception:
+                        pass
+                    try:
+                        await self._page.keyboard.type(message, delay=random.randint(8, 16))
+                    except Exception:
+                        pass
+                await asyncio.sleep(random.uniform(0.1, 0.35))  # small human-ish pause (not per-char)
                 await self._page.keyboard.press("Enter")
-                await asyncio.sleep(0.7)
+                await asyncio.sleep(0.6)
                 if await _sent():
                     return True
                 # Enter didn't submit — try clicking a send control
