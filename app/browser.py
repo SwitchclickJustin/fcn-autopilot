@@ -213,6 +213,10 @@ def _strip_ai_tells(text: str, strip_emoji: bool = False) -> str:
     text = re.sub(r"\s*[—–]\s*", ".. ", text)   # ' — ' -> '.. '
     if strip_emoji:
         text = _EMOJI_RE.sub("", text)          # group only — no emojis in public rooms
+        # Group only: a 1:1 "where you from" opener never belongs in a public broadcast
+        # (the prompt forbids it but the model still slips it in). Deterministic backstop.
+        text = re.sub(r"\bwhere\s+(?:are\s+|r\s+)?(?:u|you|ya)\s+(?:from|at)\b\??", "", text, flags=re.I)
+        text = re.sub(r"(\.{2,}\s*){2,}", ".. ", text)   # collapse orphaned '.. ..'
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -1275,9 +1279,11 @@ class BotOrchestrator:
         "Hazel", "Willow", "Sienna", "Eva", "Nia", "Gemma", "Faye", "Elle", "Juno", "Cora",
         "Stella", "Penny", "Naomi", "Iris", "Layla", "Hanna", "Riley", "Paige", "Mila", "Joss",
     ]
+    # Softer prefixes only — dropped Naughty/Wild/Sultry/Kitten/Foxy/Babe, which read as
+    # suggestive and risk FCN's "problematic username" ban (seen 2026-06-20).
     _FLIRTY_PREFIX = [
-        "Sweet", "Foxy", "Babe", "Honey", "Sassy", "Cherry", "Sugar", "Velvet", "Kitten",
-        "Angel", "Star", "Silk", "Peach", "Misty", "Lush", "Naughty", "Wild", "Cozy", "Sultry",
+        "Sweet", "Honey", "Sassy", "Cherry", "Sugar", "Velvet",
+        "Angel", "Star", "Silk", "Peach", "Misty", "Lush", "Cozy",
     ]
 
     def _unique_username(self) -> str:
