@@ -368,11 +368,27 @@ class ChatAvenueWorker:
                     await page.bring_to_front()
                 except Exception:
                     pass
-                if await self.login() and await self.join_room():
+                if not await self.login():
+                    logger.warning(f"[{self.agent_id}] CA login failed @ {site}")
+                    continue
+                # join can miss in a busy 2-tab browser — retry just the join (login already
+                # succeeded, so no extra guest registration / IP hit).
+                joined = False
+                for jtry in range(3):
+                    try:
+                        await page.bring_to_front()
+                    except Exception:
+                        pass
+                    if await self.join_room():
+                        joined = True
+                        break
+                    logger.info(f"[{self.agent_id}] CA join retry {jtry+1} @ {site}")
+                    await asyncio.sleep(2)
+                if joined:
                     self.tabs.append({"page": page, "site": site, "room": self.room})
                     logger.info(f"[{self.agent_id}] CA tab live: {site} -> '{self.room}'")
                 else:
-                    logger.warning(f"[{self.agent_id}] CA tab setup failed @ {site}")
+                    logger.warning(f"[{self.agent_id}] CA tab setup failed @ {site} (join)")
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA tab error @ {site}: {e}")
         if not self.tabs:
