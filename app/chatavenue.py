@@ -180,22 +180,24 @@ class ChatAvenueWorker:
                     await page.keyboard.press("Enter")
                 except Exception:
                     pass
-            await page.wait_for_timeout(4000)                       # lobby render
-            # Per-IP guest-registration cap (distinct from a form failure).
-            capped = await page.evaluate(
-                "() => /maximum allowed registrations|try again later/i.test((document.body||{}).innerText||'')")
-            if capped:
-                self.status = "ip_capped"
-                logger.warning(f"[{self.agent_id}] CA IP CAPPED (max guest registrations — needs a fresh IP)")
-                return False
-            # Logged in if a chat/lobby element appeared (room-selection or in-room), or the
-            # guest form is gone. Log the post-submit URL so a new site's flow is visible.
-            state = await page.evaluate("""() => ({
-                url: location.href,
-                formGone: !document.querySelector('#guest_username, .intro_guest_btn'),
-                inApp: !!(document.getElementById('content') || document.getElementById('container_rooms') || document.querySelector('.room_element')),
-                snip: ((document.body||{}).innerText||'').replace(/\\s+/g,' ').slice(0,160)
-            })""")
+            # Wait for the app to render — some sites (sexchat) redirect through a portal first,
+            # so poll up to ~12s for a chat/lobby element rather than a single check.
+            state = {}
+            for _ in range(12):
+                await page.wait_for_timeout(1000)
+                state = await page.evaluate("""() => ({
+                    url: location.href,
+                    formGone: !document.querySelector('#guest_username, .intro_guest_btn'),
+                    inApp: !!(document.getElementById('content') || document.getElementById('container_rooms') || document.querySelector('.room_element')),
+                    capped: /maximum allowed registrations|try again later/i.test((document.body||{}).innerText||''),
+                    snip: ((document.body||{}).innerText||'').replace(/\\s+/g,' ').slice(0,160)
+                })""")
+                if state.get("capped"):
+                    self.status = "ip_capped"
+                    logger.warning(f"[{self.agent_id}] CA IP CAPPED (max guest registrations — needs a fresh IP)")
+                    return False
+                if state.get("inApp"):
+                    break
             ok = bool(state.get("inApp")) or (bool(state.get("formGone")) and "guest login" not in state.get("snip","").lower())
             self.status = "lobby" if ok else "login_failed"
             if ok:
@@ -360,6 +362,12 @@ class ChatAvenueWorker:
             self._bw._page = page
             self.site_url = site
             try:
+                # Bring THIS tab to the front so login/join form input lands on it, not the
+                # other tab (remote browsers route input to the foreground page).
+                try:
+                    await page.bring_to_front()
+                except Exception:
+                    pass
                 if await self.login() and await self.join_room():
                     self.tabs.append({"page": page, "site": site, "room": self.room})
                     logger.info(f"[{self.agent_id}] CA tab live: {site} -> '{self.room}'")
