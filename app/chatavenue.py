@@ -88,7 +88,9 @@ class ChatAvenueWorker:
         self._bw.agent_total = self.agent_total
         # Distinct US Decodo IP per agent (first 50 entries = us.decodo.com) so every guest
         # registration comes from a fresh, unused IP — avoids Chat Avenue's per-IP cap.
-        self.custom_proxy = fcn.DECODA_PROXIES[slot % 50]
+        # _proxy_idx advances on each kick-recovery to grab a fresh IP.
+        self._proxy_idx = slot % 50
+        self.custom_proxy = fcn.DECODA_PROXIES[self._proxy_idx]
 
     @property
     def _page(self):
@@ -348,31 +350,83 @@ class ChatAvenueWorker:
         """One browser, one tab per Chat Avenue site (same IP is safe — each site sees only one
         guest registration). login/join/send operate on whichever tab _page points at, so we just
         swap _page per tab. Broadcasts round-robin across the joined rooms."""
+        if not await self._setup_tabs():
+            if not await self._recover():       # nothing came up — try once on a fresh IP
+                self.status = "login_failed"; return
+        self.status = "running"
+        self.room = " + ".join(t["room"] for t in self.tabs)
+        logger.info(f"[{self.agent_id}] CA broadcasting every {self.cd_min}-{self.cd_max}s "
+                    f"across {len(self.tabs)} room(s): {self.room}")
+        i = 0
+        fails = 0
+        while not self._stop:
+            tab = self.tabs[i % len(self.tabs)]; i += 1
+            self._bw._page = tab["page"]        # point send() at this tab
+            try:
+                # Force the right tab to the foreground — remote browsers route input to the
+                # active tab, so without this an "Adult Chat" send can land in the Sex Chat tab.
+                try:
+                    await tab["page"].bring_to_front()
+                except Exception:
+                    pass
+                # Kicked/banned out of the room? Log out, switch IP+UA, re-login (FCN protocol).
+                if await self._is_kicked(tab["page"]):
+                    logger.warning(f"[{self.agent_id}] CA KICKED from [{tab['room']}] — switching IP")
+                    if await self._recover():
+                        fails = 0; i = 0
+                    await asyncio.sleep(2)
+                    continue
+                text = await self._make_broadcast()
+                if text and await self.send(text):
+                    fails = 0
+                    self._recent_msgs.append(text)
+                    self._recent_msgs = self._recent_msgs[-8:]
+                    logger.info(f"[{self.agent_id}] CA BROADCAST [{tab['room']}] @ {tab['page'].url[:42]}: {text}")
+                    if self._orchestrator:
+                        self._orchestrator.push_feed({
+                            "t": time.strftime("%H:%M:%S"),
+                            "agent": self.agent_id,
+                            "dm": False,
+                            "room": tab["room"],
+                            "text": text,
+                            "platform": "chatavenue",
+                        })
+                else:
+                    fails += 1
+                    if fails >= 4:               # persistent send failure ~= kicked/dead room
+                        logger.warning(f"[{self.agent_id}] CA {fails} send fails — switching IP")
+                        if await self._recover():
+                            fails = 0; i = 0
+            except Exception as e:
+                logger.warning(f"[{self.agent_id}] CA loop error [{tab.get('room')}]: {e}")
+            await asyncio.sleep(random.uniform(self.cd_min, self.cd_max))
+
+    async def _setup_tabs(self) -> bool:
+        """Open one tab per CA site, log in, and join the busiest guest room on each. login/join
+        operate on whichever tab _page points at, so we swap _page per tab. True if any tab is live."""
+        self.tabs = []
         page1 = self._bw._page
         if not page1:
-            self.status = "no_page"; return
+            return False
         site_pages = [(page1, CA_SITES[0])]
         for site in CA_SITES[1:]:
             try:
                 site_pages.append((await page1.context.new_page(), site))
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA could not open tab for {site}: {e}")
-        # Log in + join the busiest room on each site (point _page at each tab in turn).
         for page, site in site_pages:
             self._bw._page = page
             self.site_url = site
             try:
-                # Bring THIS tab to the front so login/join form input lands on it, not the
-                # other tab (remote browsers route input to the foreground page).
                 try:
-                    await page.bring_to_front()
+                    await page.bring_to_front()      # route login/join input to THIS tab
                 except Exception:
                     pass
                 if not await self.login():
                     logger.warning(f"[{self.agent_id}] CA login failed @ {site}")
                     continue
-                # join can miss in a busy 2-tab browser — retry just the join (login already
-                # succeeded, so no extra guest registration / IP hit).
+                # Join can miss in a busy 2-tab browser — retry just the join (no re-login,
+                # so no extra guest registration / IP hit).
                 joined = False
                 for jtry in range(3):
                     try:
@@ -391,40 +445,44 @@ class ChatAvenueWorker:
                     logger.warning(f"[{self.agent_id}] CA tab setup failed @ {site} (join)")
             except Exception as e:
                 logger.warning(f"[{self.agent_id}] CA tab error @ {site}: {e}")
-        if not self.tabs:
-            self.status = "login_failed"; return
-        self.status = "running"
-        self.room = " + ".join(t["room"] for t in self.tabs)
-        logger.info(f"[{self.agent_id}] CA broadcasting every {self.cd_min}-{self.cd_max}s "
-                    f"across {len(self.tabs)} room(s): {self.room}")
-        i = 0
-        while not self._stop:
-            tab = self.tabs[i % len(self.tabs)]; i += 1
-            self._bw._page = tab["page"]        # point send() at this tab
-            try:
-                # Force the right tab to the foreground — remote browsers route input to the
-                # active tab, so without this an "Adult Chat" send can land in the Sex Chat tab.
-                try:
-                    await tab["page"].bring_to_front()
-                except Exception:
-                    pass
-                text = await self._make_broadcast()
-                if text and await self.send(text):
-                    self._recent_msgs.append(text)
-                    self._recent_msgs = self._recent_msgs[-8:]
-                    logger.info(f"[{self.agent_id}] CA BROADCAST [{tab['room']}] @ {tab['page'].url[:42]}: {text}")
-                    if self._orchestrator:
-                        self._orchestrator.push_feed({
-                            "t": time.strftime("%H:%M:%S"),
-                            "agent": self.agent_id,
-                            "dm": False,
-                            "room": tab["room"],
-                            "text": text,
-                            "platform": "chatavenue",
-                        })
-            except Exception as e:
-                logger.warning(f"[{self.agent_id}] CA loop error [{tab.get('room')}]: {e}")
-            await asyncio.sleep(random.uniform(self.cd_min, self.cd_max))
+        return bool(self.tabs)
+
+    async def _is_kicked(self, page) -> bool:
+        """True if a kick/ban notice is on this tab."""
+        try:
+            return await page.evaluate("""() => {
+                const t = (document.body ? document.body.innerText : '').toLowerCase();
+                return /you (have been|were|are) (kicked|banned|removed)|been kicked|temporarily banned|you are banned|kicked from|you got kicked/.test(t);
+            }""")
+        except Exception:
+            return False
+
+    async def _recover(self) -> bool:
+        """FCN-style recovery: drop the session, rotate to a fresh Decodo IP (a fresh provision
+        also rotates the User-Agent + clears cookies), then re-login/re-join both sites."""
+        if not self._orchestrator:
+            return False
+        self.status = "recovering"
+        logger.warning(f"[{self.agent_id}] CA recovering — fresh IP + UA + clean cookies")
+        try:
+            await self._bw.disconnect_cdp()
+        except Exception:
+            pass
+        self._proxy_idx = (self._proxy_idx + 13) % 50         # fresh, distinct US Decodo IP
+        proxy = fcn.DECODA_PROXIES[self._proxy_idx]
+        try:
+            if not await self._orchestrator._provision_and_connect(self._bw, custom_proxy=proxy):
+                logger.warning(f"[{self.agent_id}] CA recover: provision failed")
+                return False
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] CA recover: provision error: {e}")
+            return False
+        ok = await self._setup_tabs()
+        if ok:
+            self.status = "running"
+            self.room = " + ".join(t["room"] for t in self.tabs)
+            logger.info(f"[{self.agent_id}] CA recovered on decodo:{proxy['port']} -> {self.room}")
+        return ok
 
     async def stop(self):
         self._stop = True
