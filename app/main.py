@@ -1588,7 +1588,22 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
     else:  # today (default)
         s, e = day0, now
     stats = await get_stats(s.strftime(fmt), e.strftime(fmt))
-    return {"range": range, "start": s.strftime(fmt), "end": e.strftime(fmt), **stats}
+    # Live fleet runtime + throughput. Rates are computed over the SELECTED range.
+    import time as _time
+    ss = getattr(browser_manager, "_session_start", None)
+    uptime = (_time.time() - ss) if ss else 0
+    agents = len(browser_manager._workers)
+    range_hours = max((e - s).total_seconds() / 3600, 1 / 60)  # guard div-by-zero
+    conv = stats.get("conversions", 0)
+    conv_per_hr = conv / range_hours
+    return {
+        "range": range, "start": s.strftime(fmt), "end": e.strftime(fmt),
+        "uptime_seconds": int(uptime),
+        "agents": agents,
+        "conversions_per_hr": round(conv_per_hr, 2),
+        "conversions_per_hr_per_agent": round(conv_per_hr / max(1, agents), 2),
+        **stats,
+    }
 
 @app.get("/api/debug/tabs")
 async def api_debug_tabs():

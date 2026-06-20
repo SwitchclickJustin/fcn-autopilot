@@ -123,6 +123,22 @@
           <div id="stat-conversions" style="font-size:1.6rem;font-weight:700;color:#4ade80">–</div>
           <div style="font-size:.72rem;opacity:.65">Conversions ✅</div>
         </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-exposures" style="font-size:1.6rem;font-weight:700">–</div>
+          <div style="font-size:.72rem;opacity:.65">Exposures (shares + photos)</div>
+        </div>
+        <div style="background:rgba(96,160,255,.08);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-convrate" style="font-size:1.6rem;font-weight:700;color:#6aa0ff">–</div>
+          <div style="font-size:.72rem;opacity:.65">Conversion rate</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-uptime" style="font-size:1.6rem;font-weight:700">–</div>
+          <div style="font-size:.72rem;opacity:.65">Uptime · <span id="stat-agents">0</span> agents</div>
+        </div>
+        <div style="background:rgba(74,222,128,.08);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-cph" style="font-size:1.6rem;font-weight:700;color:#4ade80">–</div>
+          <div style="font-size:.72rem;opacity:.65">Conv / hr / agent</div>
+        </div>
       </div>
     </div>
   </div>
@@ -366,7 +382,19 @@ async function loadStats(){
     document.getElementById('stat-handles').textContent=d.handle_shares??0;
     document.getElementById('stat-dms').textContent=d.dms??0;
     document.getElementById('stat-conversions').textContent=d.conversions??0;
+    document.getElementById('stat-exposures').textContent=d.handle_exposures??0;
+    document.getElementById('stat-convrate').textContent=(d.conversion_rate??0)+'%';
+    document.getElementById('stat-cph').textContent=d.conversions_per_hr_per_agent??0;
+    document.getElementById('stat-uptime').textContent=fmtUptime(d.uptime_seconds??0);
+    document.getElementById('stat-agents').textContent=d.agents??0;
   }catch(e){}
+}
+function fmtUptime(s){
+  s=Math.max(0,Math.floor(s));
+  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
+  if(h>0) return h+'h '+m+'m';
+  if(m>0) return m+'m';
+  return s+'s';
 }
 function onStatsRange(){
   document.getElementById('stats-custom').style.display=

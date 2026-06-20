@@ -426,11 +426,20 @@ async def get_stats(start: str, end: str, persona_id: str = "") -> dict:
         drows = []
     await close_db(db)
     counts = {r["event_type"]: r["c"] for r in rows}
+    handle_shares = counts.get("handle_share", 0)
+    photo_sends = counts.get("photo_sent", 0)
+    conversions = counts.get("telegram_conversion", 0)
+    # A photo carries the handle in the image, so every photo send is also a handle exposure.
+    # Conversion rate = conversions / total handle exposures (text shares + photo sends).
+    handle_exposures = handle_shares + photo_sends
     return {
         "messages": counts.get("message", 0),
-        "handle_shares": counts.get("handle_share", 0),
+        "handle_shares": handle_shares,
+        "photo_sends": photo_sends,
+        "handle_exposures": handle_exposures,
         "dms": (drows[0]["c"] if drows else 0),
-        "conversions": counts.get("telegram_conversion", 0),
+        "conversions": conversions,
+        "conversion_rate": round(100 * conversions / handle_exposures, 2) if handle_exposures else 0.0,
         "bans": counts.get("ban", 0),
     }
 

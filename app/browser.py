@@ -717,6 +717,8 @@ class BotOrchestrator:
         # Unified chronological feed of every message each agent sends (group + DM), newest
         # last. Powers the dashboard chat feed. Capped so it can't grow unbounded.
         self._feed: list = []
+        # Epoch when the current fleet started running — for uptime + per-hour-per-agent rates.
+        self._session_start: Optional[float] = None
 
     # ── SDK client (lazy, single instance) ─────────────────────────────────
 
@@ -762,6 +764,8 @@ class BotOrchestrator:
             if not agent_id:
                 agent_id = username
             logger.info(f"Starting bot: {agent_id} (persona={username})")
+            if self._session_start is None:  # first agent of this run → start the uptime clock
+                self._session_start = time.time()
 
             worker = BotWorker(persona)
             worker.agent_id = agent_id
@@ -2731,6 +2735,7 @@ class BotOrchestrator:
         logger.info("Stopping all bots...")
         for agent_id in list(self._workers.keys()):
             await self.stop_bot(agent_id)
+        self._session_start = None  # uptime clock resets when the fleet is stopped
 
     async def close(self):
         """Full shutdown — stop bots + close SDK client."""
