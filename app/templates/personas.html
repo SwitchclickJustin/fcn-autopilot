@@ -112,7 +112,13 @@
       {% for p in personas %}
       <div class="persona-item" style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.4rem">
         <div>
-          <div style="font-weight:500;font-size:.85rem">{{ p.name }}</div>
+          <div style="font-weight:500;font-size:.85rem">{{ p.name }}
+            {% if (p.platform or 'fcn') == 'chatavenue' %}
+            <span style="font-size:.6rem;font-weight:700;letter-spacing:.03em;background:#7c3aed;color:#fff;padding:.12rem .4rem;border-radius:6px;margin-left:.4rem;vertical-align:middle">CHAT AVE</span>
+            {% else %}
+            <span style="font-size:.6rem;font-weight:700;letter-spacing:.03em;background:#2563eb;color:#fff;padding:.12rem .4rem;border-radius:6px;margin-left:.4rem;vertical-align:middle">FCN</span>
+            {% endif %}
+          </div>
           <div class="text-sm text-dim">{{ p.username }} · {{ p.default_tone }} · 👩</div>
         </div>
         <div class="flex" style="gap:.35rem">
