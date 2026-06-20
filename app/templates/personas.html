@@ -82,14 +82,22 @@
         <div class="text-sm text-dim">Applied to the cloud browser before navigating to FCN.</div>
       </div>
 
+      <div class="form-row two">
+        <div><label>⏱️ Interval — min (seconds)</label>
+          <input type="number" id="p-cd-min" value="90" min="5" step="1">
+        </div>
+        <div><label>Interval — max (seconds)</label>
+          <input type="number" id="p-cd-max" value="180" min="5" step="1">
+        </div>
+      </div>
+      <div class="text-sm text-dim" style="margin-top:-.25rem;margin-bottom:.5rem">Chat Avenue: seconds between group blasts (e.g. <b>15 / 30</b>). FCN: cooldown between replies (e.g. 90 / 180).</div>
+
       <!-- Hidden fields (auto-set) -->
       <input type="hidden" id="p-length" value="short">
       <input type="hidden" id="p-proxy" value="us">
       <input type="hidden" id="p-tz" value="">
       <input type="hidden" id="p-lang" value="">
       <input type="hidden" id="p-fp-rotate" value="per_session">
-      <input type="hidden" id="p-cd-min" value="90">
-      <input type="hidden" id="p-cd-max" value="180">
       <input type="hidden" id="p-cap" value="150">
       <input type="hidden" id="p-dm-reply" value="0">
       <input type="hidden" id="p-dm-gender" value="">
@@ -214,8 +222,8 @@ async function savePersona(e) {
     timezone: '',
     language: '',
     fingerprint_rotation: 'per_session',
-    cooldown_min: 90,
-    cooldown_max: 180,
+    cooldown_min: parseInt(document.getElementById('p-cd-min').value) || 90,
+    cooldown_max: parseInt(document.getElementById('p-cd-max').value) || 180,
     daily_cap: 150,
     auto_reply_dms: false,
     dm_gender_filter: [],
@@ -253,6 +261,8 @@ async function editPersona(id) {
     document.getElementById('p-name').value = p.name || '';
     document.getElementById('p-username').value = p.username || '';
     document.getElementById('p-platform').value = p.platform || 'fcn';
+    document.getElementById('p-cd-min').value = p.cooldown_min || 90;
+    document.getElementById('p-cd-max').value = p.cooldown_max || 180;
     document.getElementById('p-gender').value = p.gender || 'f';
     document.getElementById('p-bio').value = p.bio || '';
     document.getElementById('p-goals').value = p.goals || '';
