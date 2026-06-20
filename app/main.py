@@ -1340,6 +1340,7 @@ async def start_multi_session(data: dict):
     import traceback
     persona_id = data.get("persona_id", "")
     count = max(1, min(int(data.get("count", 5)), 10))
+    platform = (data.get("platform") or "fcn").lower()
     if not persona_id:
         raise HTTPException(400, "persona_id required")
     persona = await get_persona(persona_id)
@@ -1356,7 +1357,10 @@ async def start_multi_session(data: dict):
     await browser_manager.stop_all()
 
     try:
-        workers = await browser_manager.start_multi(count, persona)
+        if platform == "chatavenue":
+            workers = await browser_manager.start_multi_chatavenue(count, persona)
+        else:
+            workers = await browser_manager.start_multi(count, persona)
     except Exception as e:
         logger.error(f"MULTI-START ERROR: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, detail=f"Multi-agent start failed: {e}")
@@ -1364,9 +1368,12 @@ async def start_multi_session(data: dict):
     if not workers:
         raise HTTPException(500, detail="No agents started — check Railway logs.")
 
-    agents = [{"agent_id": w.agent_id, "live_url": w.live_url, "rooms": w.rooms,
-                "status": w.status} for w in workers]
-    return {"agents": agents, "count": len(agents), "requested": count}
+    agents = []
+    for w in workers:
+        lu = getattr(w, "live_url", None) or getattr(getattr(w, "_bw", None), "live_url", "")
+        rooms = getattr(w, "rooms", None) or ([w.room] if getattr(w, "room", "") else [])
+        agents.append({"agent_id": w.agent_id, "live_url": lu, "rooms": rooms, "status": w.status})
+    return {"agents": agents, "count": len(agents), "requested": count, "platform": platform}
 
 @app.post("/api/session/stop")
 async def stop_session():
@@ -1414,6 +1421,13 @@ async def session_state():
             "phase": w.phase,
             "last_error": w.last_error,
             "messages": msgs[-10:],
+        })
+    # Chat Avenue broadcasters (separate worker type) — surface them in the same agent grid.
+    for w in getattr(browser_manager, "_ca_workers", []):
+        agents.append({
+            "agent_id": w.agent_id, "live_url": getattr(w._bw, "live_url", ""),
+            "rooms": [w.room] if w.room else [], "room": w.room,
+            "status": w.status, "phase": "ca_broadcast", "last_error": "", "messages": [],
         })
     # Legacy compat: expose first agent's messages + live_url at top level
     first = agents[0] if agents else {}

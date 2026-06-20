@@ -769,6 +769,8 @@ class BotOrchestrator:
         self._feed: list = []
         # Epoch when the current fleet started running — for uptime + per-hour-per-agent rates.
         self._session_start: Optional[float] = None
+        # Chat Avenue broadcaster fleet (separate type from FCN BotWorkers).
+        self._ca_workers: list = []
 
     # ── SDK client (lazy, single instance) ─────────────────────────────────
 
@@ -860,6 +862,33 @@ class BotOrchestrator:
                                        return_exceptions=True)
         workers = [w for w in results if isinstance(w, BotWorker)]
         logger.info(f"start_multi: {len(workers)}/{count} agents live")
+        return workers
+
+    async def start_multi_chatavenue(self, count: int, persona: dict) -> list:
+        """Launch `count` Chat Avenue broadcasters from one persona — each on its own distinct
+        Decodo IP (fresh per registration), running the text-only broadcast loop."""
+        from app.chatavenue import ChatAvenueWorker
+        count = max(1, min(count, 10))
+        username = persona.get("username", "Alexa")
+
+        async def _one(slot: int):
+            aid = f"CA_{username}_{slot + 1}"
+            w = ChatAvenueWorker(persona, aid, slot=slot, agent_total=count)
+            try:
+                if not await self._provision_and_connect(w._bw, custom_proxy=w.custom_proxy):
+                    return None
+            except Exception as e:
+                logger.warning(f"[{aid}] CA provision error: {e}")
+                return None
+            w._task = asyncio.create_task(w.run())
+            return w
+
+        results = await asyncio.gather(*[_one(i) for i in range(count)], return_exceptions=True)
+        workers = [w for w in results if w and not isinstance(w, Exception)]
+        self._ca_workers.extend(workers)
+        if self._session_start is None and workers:
+            self._session_start = time.time()
+        logger.info(f"start_multi_chatavenue: {len(workers)}/{count} CA agents live")
         return workers
 
     async def _provision_and_connect(self, worker: BotWorker, custom_proxy: dict = None) -> bool:
@@ -2872,10 +2901,17 @@ class BotOrchestrator:
         worker.status = "stopped"
 
     async def stop_all(self):
-        """Gracefully stop all bot sessions."""
+        """Gracefully stop all bot sessions (FCN + Chat Avenue)."""
         logger.info("Stopping all bots...")
         for agent_id in list(self._workers.keys()):
             await self.stop_bot(agent_id)
+        for w in self._ca_workers:
+            try:
+                await w.stop()
+                await w._bw.disconnect_cdp()
+            except Exception:
+                pass
+        self._ca_workers = []
         self._session_start = None  # uptime clock resets when the fleet is stopped
 
     async def close(self):
