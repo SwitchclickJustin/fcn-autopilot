@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 CHAT_URL = "https://adultchat.chat-avenue.com/"
 # High-traffic, guest-allowed rooms (from recon). Avoid registered-only (DICE, Desktop).
 GUEST_ROOMS = ["Adult Chat", "Taboo", "Seniors Room"]
-BROADCAST_MIN_S, BROADCAST_MAX_S = 20, 45   # per the manual-test cadence
+BROADCAST_MIN_S, BROADCAST_MAX_S = 15, 25   # one message every 15-25s
 
 
 class ChatAvenueWorker:
@@ -208,22 +208,21 @@ class ChatAvenueWorker:
         if not llm:
             return ""
         bio = self.persona.get("bio", "")
+        goals = (self.persona.get("goals", "") or "").strip()   # the "concepts" the operator gives
         handle = (self.persona.get("telegram_handle", "") or "").strip()
         handle_cap = handle.capitalize() if handle else ""
-        angle = random.choice(fcn._BROADCAST_STYLES)
-        ex = [e.replace("{h}", handle_cap) for e in random.sample(fcn._BROADCAST_EXAMPLES, 2)]
         no_repeat = ""
         if self._recent_msgs:
-            no_repeat = ("Do NOT repeat or paraphrase any of these you already sent: "
+            no_repeat = ("Do NOT repeat or paraphrase any of these you just sent: "
                          + " | ".join(f'"{m}"' for m in self._recent_msgs[-5:]) + ". ")
         system = (
-            f"You are {self.login_name}, a horny Latina woman from Miami in a public adult group "
-            f"chat (18+). Personality: {bio}. Write ONE short broadcast to the WHOLE room (not a "
-            f"reply to one person; never 'where u from'). Angle: {angle} "
-            f"Include a CTA to find you + your handle '{handle_cap}'. Refer to the platform only as "
-            f"'TG' or 'Tela Grahm' — never write 'telegram'. Keep it ONE short punchy line, no emojis, "
-            f"no quotes, no stage directions. {no_repeat}"
-            f"Examples of the vibe (write your OWN): \"{ex[0]}\" / \"{ex[1]}\""
+            f"You are {self.login_name}, posting in a busy public adult group chat (18+). "
+            f"Personality: {bio}. "
+            + (f"CONCEPTS — what to say / angles to rotate through: {goals}. " if goals else "")
+            + f"Write ONE short broadcast to the WHOLE room (never a reply to one person, never "
+            f"'where u from'). Work in a call to find you + your handle '{handle_cap}'. Refer to the "
+            f"platform ONLY as 'TG' or 'Tela Grahm' — NEVER write 'telegram'. ONE short punchy line, "
+            f"no emojis, no quotes, no stage directions, no [tags]. Vary it every time. {no_repeat}"
         )
         resp = await llm.chat(system, "Write the broadcast.")
         if not resp:
