@@ -1482,15 +1482,17 @@ async def api_cost():
         raise HTTPException(500, detail=f"cost summary failed: {e}")
 
 @app.get("/debug/seed-balance")
-async def debug_seed_balance(balance: float, at: str = ""):
+async def debug_seed_balance(balance: float, at: str = "", clear: int = 0):
     """One-off backfill: insert a BU credits-balance snapshot at `at` (UTC, 'YYYY-MM-DD HH:MM:SS'
     or ISO; default = now), so a day's spend stat has an opening baseline before live snapshots
-    began. Key-gated; idempotent enough (just adds a data point)."""
-    from app.database import seed_balance_snapshot
+    began. clear=1 wipes existing snapshots first (reset a polluted backfill). Key-gated."""
+    from app.database import seed_balance_snapshot, clear_balance_snapshots
     from datetime import datetime
+    if clear:
+        await clear_balance_snapshots()
     at = (at or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")).replace("T", " ")[:19]
     await seed_balance_snapshot(float(balance), at)
-    return {"ok": True, "balance_usd": float(balance), "at_utc": at}
+    return {"ok": True, "balance_usd": float(balance), "at_utc": at, "cleared": bool(clear)}
 
 @app.get("/api/feed")
 async def api_feed():

@@ -626,6 +626,15 @@ async def get_spend_from_snapshots(start: str, end: str) -> float:
     return round(spend, 4)
 
 
+async def clear_balance_snapshots():
+    """Wipe all balance snapshots (used to reset a polluted backfill before re-seeding)."""
+    db = await get_db()
+    try:
+        await _execute(db, "DELETE FROM balance_snapshots", [])
+    finally:
+        await close_db(db)
+
+
 async def seed_balance_snapshot(balance: float, at: str):
     """One-off: insert a balance snapshot at an explicit timestamp (e.g. backfill today's
     opening balance). `at` = 'YYYY-MM-DD HH:MM:SS' UTC."""
