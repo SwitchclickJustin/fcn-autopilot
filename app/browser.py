@@ -2737,9 +2737,24 @@ class BotOrchestrator:
                 # so every post is on-fire + on-brand AND the angles cycle (NASTY -> BBC -> ...).
                 _sections = _parse_goal_sections((getattr(worker, "persona", None) or {}).get("goals", ""))
                 if _sections:
+                    # Bias to a Goals section that fits THIS room's theme; else round-robin all.
+                    _rl = (worker.room or "").lower()
+                    _theme = [
+                        (("younger", "older", "age", "sugar", "daddy", " dad"), ("daddy",)),
+                        (("bbc", "black", "bull", "bnwo"), ("bbc",)),
+                        (("small", "sph", "humiliat", "loser", "tiny", "sissy"), ("sph", "small")),
+                        (("joi", "edg", "stroke", "goon"), ("joi", "edg")),
+                    ]
+                    _pool = _sections
+                    for _kw, _sk in _theme:
+                        if any(k in _rl for k in _kw):
+                            _c = [s for s in _sections if any(x in s[0].lower() for x in _sk)]
+                            if _c:
+                                _pool = _c
+                            break
                     _i = getattr(worker, "_section_idx", 0)
                     worker._section_idx = _i + 1
-                    _name, _lines = _sections[_i % len(_sections)]
+                    _name, _lines = _pool[_i % len(_pool)]
                     _pick = random.sample(_lines, min(2, len(_lines)))
                     _pick = [p.replace("{handle}", handle_cap).replace("{h}", handle_cap) for p in _pick]
                     _e0, _e1 = _pick[0], (_pick[1] if len(_pick) > 1 else _pick[0])
