@@ -628,15 +628,15 @@ class BotWorker:
                     // + .message-text/.message-body (text). Older builds used li.message-item — support
                     // both. NOTE: no raw-children fallback — that returned text blobs the DM sanity-guard
                     // mis-counted as a crowd, which silently broke all DM replies.
-                    // Multiple .room-messages-container can be mounted at once (the room PLUS each
-                    // open DM). querySelector returns the room's, so we read the crowd. Pick the
-                    // VISIBLE panel (non-zero box = the active conversation); fall back to last/first.
-                    const boxes = Array.from(document.querySelectorAll('.room-messages-container'));
-                    const vis = b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-                    const box = boxes.find(vis) || boxes[boxes.length - 1] || boxes[0];
+                    // EVERY open conversation (room + each DM) mounts its own ul.messages, all in the
+                    // DOM at once — reading unscoped grabs them all (a crowd of 14 lists). FCN flags
+                    // the ACTIVE conversation's list with .room-messages.room-active (confirmed via the
+                    // live DOM). Scope to it: a DM open => the 1-on-1 thread; broadcasting => the room.
+                    const box = document.querySelector('.room-messages.room-active')
+                              || document.querySelector('.room-messages-container');
                     if (!box) return [];
-                    let items = box.querySelectorAll('.message-message');
-                    if (!items.length) items = box.querySelectorAll('li.message-item');
+                    let items = box.querySelectorAll('li.message-item');
+                    if (!items.length) items = box.querySelectorAll('.message-message');
                     const out = [];
                     for (let i = Math.max(0, items.length - (limit + 10)); i < items.length; i++) {
                         const el = items[i];
@@ -2374,33 +2374,11 @@ class BotOrchestrator:
                                 # read_chat grabbed a room panel, not the DM — skip (don't crowd-reply).
                                 _sndrs = {m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m}
                                 _dn = getattr(worker, "_dm_diag_n", 0)
-                                if _dn < 2:
+                                if _dn < 3:
                                     worker._dm_diag_n = _dn + 1
-                                    try:
-                                        _pan = await worker._page.evaluate("""() => {
-                                            const mm = location.pathname.match(/\\/conv\\/(.+)/);
-                                            const partner = (mm ? decodeURIComponent(mm[1]) : '').toLowerCase();
-                                            const hits = [];
-                                            document.querySelectorAll('li.message-item, .message-message').forEach(m => {
-                                                const me = m.querySelector('.message-meta');
-                                                const sender = me ? (me.textContent||'').trim().toLowerCase() : '';
-                                                if (partner && sender.includes(partner)) {
-                                                    let chain = [], a = m.parentElement;
-                                                    for (let i=0;i<5 && a;i++){ chain.push(a.tagName.toLowerCase()+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
-                                                    const te = m.querySelector('.message-text, .message-body');
-                                                    hits.push({cls:(m.className+'').slice(0,38), chain, txt:(te?(te.textContent||''):'').trim().slice(0,34)});
-                                                }
-                                            });
-                                            // also: total message-meta senders that look like a DM badge / count of all msgs
-                                            return {partner, found: hits.length, hits: hits.slice(0,3)};
-                                        }""")
-                                        logger.info(f"[{worker.agent_id}] DM_FIND partner={_pan.get('partner')} found={_pan.get('found')}")
-                                        for _h in (_pan.get('hits') or [])[:3]:
-                                            logger.info(f"[{worker.agent_id}] DM_HIT cls={_h.get('cls')!r} txt={_h.get('txt')!r} chain={_h.get('chain')}")
-                                    except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_FIND err {str(_e)[:100]}")
+                                    logger.info(f"[{worker.agent_id}] DM_READ {len(msgs or [])}msgs senders={sorted(_sndrs)[:6]} first={(msgs[0] if msgs else '')[:70]!r}")
                                 if len(_sndrs) > 2:
-                                    logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
+                                    logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room)")
                                     worker.in_dm = False
                                 elif msgs:
                                     state = worker._dm_state.get(other_user, {})
@@ -2441,33 +2419,11 @@ class BotOrchestrator:
                                 # read_chat grabbed a room panel, not the DM — skip (don't crowd-reply).
                                 _sndrs = {m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m}
                                 _dn = getattr(worker, "_dm_diag_n", 0)
-                                if _dn < 2:
+                                if _dn < 3:
                                     worker._dm_diag_n = _dn + 1
-                                    try:
-                                        _pan = await worker._page.evaluate("""() => {
-                                            const mm = location.pathname.match(/\\/conv\\/(.+)/);
-                                            const partner = (mm ? decodeURIComponent(mm[1]) : '').toLowerCase();
-                                            const hits = [];
-                                            document.querySelectorAll('li.message-item, .message-message').forEach(m => {
-                                                const me = m.querySelector('.message-meta');
-                                                const sender = me ? (me.textContent||'').trim().toLowerCase() : '';
-                                                if (partner && sender.includes(partner)) {
-                                                    let chain = [], a = m.parentElement;
-                                                    for (let i=0;i<5 && a;i++){ chain.push(a.tagName.toLowerCase()+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
-                                                    const te = m.querySelector('.message-text, .message-body');
-                                                    hits.push({cls:(m.className+'').slice(0,38), chain, txt:(te?(te.textContent||''):'').trim().slice(0,34)});
-                                                }
-                                            });
-                                            // also: total message-meta senders that look like a DM badge / count of all msgs
-                                            return {partner, found: hits.length, hits: hits.slice(0,3)};
-                                        }""")
-                                        logger.info(f"[{worker.agent_id}] DM_FIND partner={_pan.get('partner')} found={_pan.get('found')}")
-                                        for _h in (_pan.get('hits') or [])[:3]:
-                                            logger.info(f"[{worker.agent_id}] DM_HIT cls={_h.get('cls')!r} txt={_h.get('txt')!r} chain={_h.get('chain')}")
-                                    except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_FIND err {str(_e)[:100]}")
+                                    logger.info(f"[{worker.agent_id}] DM_READ {len(msgs or [])}msgs senders={sorted(_sndrs)[:6]} first={(msgs[0] if msgs else '')[:70]!r}")
                                 if len(_sndrs) > 2:
-                                    logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
+                                    logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room)")
                                     worker.in_dm = False
                                 elif msgs:
                                     state = worker._dm_state.get(other_user, {})
