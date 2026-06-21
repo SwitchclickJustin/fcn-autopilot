@@ -1310,7 +1310,7 @@ class BotOrchestrator:
     # Room names to skip — gay/trans/femboy + mature/milf (persona is <30, doesn't fit those).
     # NOTE: deliberately NOT "older" — that would block YoungerforOlder, which is the daddy
     # dynamic we WANT. Verified against the live room directory.
-    _GAY_ROOM_RE = "gay|trans|femboy|sissy|lgbt|lgtb|bisex|m4m|men4men|mature|milf|gilf|granny|cougar"
+    _GAY_ROOM_RE = "gay|trans|femboy|sissy|lgbt|lgtb|bisex|m4m|men4men|mature|milf|gilf|granny|cougar|bbw"
 
     async def _join_top_rooms(self, worker: BotWorker, n: int = 3, min_traffic: int = 300) -> list:
         """Open FCN's room directory, rank non-gay rooms with >= min_traffic by traffic, and
@@ -2748,10 +2748,10 @@ class BotOrchestrator:
                         (("joi", "edg", "stroke", "goon"), ("joi", "edg")),
                         (("subsanddom", "sub", "dom", "domme"), ("dom", "sub")),
                         (("kink", "fetish"), ("kink", "fetish")),
-                        (("bbw", "curvy", "thick", "chubby"), ("bbw", "thick", "curvy")),
                         (("booty", "butt"), ("booty", "butt", "ass")),
                         (("selfie",), ("selfie",)),
-                        (("rating", "rate", "pussyrating"), ("rating", "rate")),
+                        (("dickrating", "dickrate", "ratemydick", "cockrat"), ("dick rat",)),
+                        (("pussyrating", "pussyrate", "pussyrat"), ("pussy rat",)),
                         (("camchat", "cam"), ("cam",)),
                     ]
                     _pool = _sections
