@@ -83,6 +83,12 @@
       <div style="font-size:1.3rem;font-weight:700;color:#7c3aed" id="cost-ca">$—</div>
       <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Chat Ave cost</div></div>
     <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
+      <div style="font-size:1.3rem;font-weight:700;color:#5ec8a0" id="cost-browser">$—</div>
+      <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Browser time</div></div>
+    <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
+      <div style="font-size:1.3rem;font-weight:700;color:#e0734a" id="cost-proxy">$—</div>
+      <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Proxy <span id="cost-proxy-share" style="color:#e0734a"></span></div></div>
+    <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
       <div style="font-size:1.3rem;font-weight:700" id="cost-balance">$—</div>
       <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Credits left</div></div>
   </div>
@@ -490,6 +496,9 @@ async function refreshCost(){
     set('cost-conv', d.conversions==null?'—':d.conversions);
     set('cost-fcn', money(d.by_platform_usd&&d.by_platform_usd.fcn));
     set('cost-ca', money(d.by_platform_usd&&d.by_platform_usd.chatavenue));
+    set('cost-browser', money4(d.browser_cost_usd));
+    set('cost-proxy', money4(d.proxy_cost_usd));
+    set('cost-proxy-share', d.proxy_share_pct==null?'':'('+d.proxy_share_pct+'%)');
     set('cost-balance', money(d.balance_usd));
     set('cost-updated', d.updated_at?('· '+d.updated_at):'');
   }catch(e){}

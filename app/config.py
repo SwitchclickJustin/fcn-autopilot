@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     admin_password: str = "changeme"
     log_level: str = "INFO"
     capsolver_api_key: str = ""
+    # Block image/media/font downloads on the bot pages. These resource types are the bulk
+    # of Browser Use proxy bandwidth ($5/GB) and the bots never need to SEE them (they read
+    # text + send photos from base64, neither of which loads inbound media). Set BLOCK_MEDIA=false
+    # to disable if a page misbehaves.
+    block_media: bool = True
 
     class Config:
         env_file = ".env"

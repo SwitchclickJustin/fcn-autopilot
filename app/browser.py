@@ -979,6 +979,7 @@ class BotOrchestrator:
         except Exception as e:
             logger.warning(f"cost: billing.account: {e}")
         by_platform = {"fcn": 0.0, "chatavenue": 0.0}
+        sum_browser = sum_proxy = 0.0   # raw per-session split (browser time vs proxy bandwidth)
         counted = 0
         start_dt = self._cost_start_dt
         if start_dt:                       # only meaningful while a session is running
@@ -995,9 +996,12 @@ class BotOrchestrator:
                         if started and started.replace(tzinfo=None) < start_dt:
                             reached_old = True
                             continue
-                        c = float(s.browser_cost or 0) + float(s.proxy_cost or 0)
+                        bc = float(s.browser_cost or 0)
+                        pc = float(s.proxy_cost or 0)
+                        sum_browser += bc
+                        sum_proxy += pc
                         plat = self._session_platform.get(str(s.id), "fcn")
-                        by_platform[plat] = by_platform.get(plat, 0.0) + c
+                        by_platform[plat] = by_platform.get(plat, 0.0) + (bc + pc)
                         counted += 1
                     if reached_old or len(items) < 100:
                         break
@@ -1041,9 +1045,16 @@ class BotOrchestrator:
         except Exception:
             from datetime import timezone as _tz, timedelta as _td
             _ny = (datetime.now(_tz.utc) - _td(hours=4)).strftime("%-I:%M:%S %p ET")
+        # Browser-time vs proxy-bandwidth split (raw per-session sums from BU billing). These lag
+        # finalization like by_platform, but the RATIO is the real story: proxy bandwidth at $5/GB
+        # is ~90%+ of spend. Surfaced on the dashboard so the bandwidth-cost trend is visible.
+        _split_total = sum_browser + sum_proxy
         data = {
             "session_cost_usd": total,
             "by_platform_usd": {k: round(v, 4) for k, v in by_platform.items()},
+            "browser_cost_usd": round(sum_browser, 4),
+            "proxy_cost_usd": round(sum_proxy, 4),
+            "proxy_share_pct": round(sum_proxy / _split_total * 100) if _split_total > 0 else None,
             "balance_usd": round(bal, 2) if bal is not None else None,
             "conversions": conv,
             "cost_per_conversion_usd": round(total / conv, 4) if conv else None,
@@ -1524,6 +1535,31 @@ class BotOrchestrator:
                          "popunder.net", "adnium.com", "juicyads.com"):
                 try:
                     await worker._page.route(f"**{host}**", _ad_guard)
+                except Exception:
+                    pass
+
+            # Bandwidth guard: abort image/media/font downloads — the bulk of BU proxy
+            # bandwidth ($5/GB) and useless to a text-only bot (read_chat parses text;
+            # send_photo builds the File from base64, not a network fetch). Registered
+            # LAST so it runs FIRST: non-blocked types fall back to the ad-guard/default
+            # chain above, so ad-blocking is preserved. Gated by settings.block_media.
+            if settings.block_media:
+                _BLOCKED_TYPES = {"image", "media", "font"}
+
+                async def _media_guard(route):
+                    try:
+                        if route.request.resource_type in _BLOCKED_TYPES:
+                            await route.abort()
+                        else:
+                            await route.fallback()
+                    except Exception:
+                        try:
+                            await route.fallback()
+                        except Exception:
+                            pass
+
+                try:
+                    await worker._page.route("**/*", _media_guard)
                 except Exception:
                     pass
 
