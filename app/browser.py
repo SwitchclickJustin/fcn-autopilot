@@ -2846,7 +2846,13 @@ class BotOrchestrator:
             except Exception:
                 pass
 
-        prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
+        if is_dm:
+            prompt = f"Recent chat:\n\"\"\"\n{context}\n\"\"\"\n\nRespond naturally."
+        else:
+            # GROUP = one-way blast. Do NOT feed her the room chat or she greets/replies to people
+            # ("heyy samuraisam", "london huh.."). Just have her fire the broadcast.
+            prompt = ("Write your ONE-LINE broadcast to the whole room now. Do NOT greet, name, "
+                      "quote, or reply to anyone in the room — this is a blast, not a conversation.")
         _t_llm = time.monotonic()
         response = await llm.chat(system, prompt)
         _llm_dt = time.monotonic() - _t_llm
