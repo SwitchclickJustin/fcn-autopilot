@@ -112,9 +112,10 @@ _ZWSP = "​"  # zero-width space — invisible to humans, breaks FCN's exact-st
 # Max DMs handled per loop tick — bounds tick time so a high-traffic agent stays responsive
 # (newest DMs first; the rest roll to the next tick). Poll = low-priority re-checks.
 # Kept at 1: each DM round-trip is open→read→LLM→send→photo (~15-25s); processing 2 in one
-# tick stacked to 45-60s branches and starved fresh-message pickup. 1/tick halves worst-case
-# latency; the badge-clears-on-reply design means the rest are picked up next tick, no loss.
-_DM_PER_TICK = 1
+# tick stacked to 45-60s branches and starved fresh-message pickup. We answer up to 3 hot DMs
+# per tick (bounded so a tick can't run away) — a DM burst drains ~3x faster while the cap keeps
+# worst-case tick ~18s; the badge-clears-on-reply design picks up the rest next tick, no loss.
+_DM_PER_TICK = 3
 _DM_POLL_PER_TICK = 1
 
 
