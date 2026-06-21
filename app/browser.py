@@ -1010,6 +1010,13 @@ class BotOrchestrator:
 
         Rotates up to 3 browser instances on transient API failures.
         """
+        # INVARIANT: a worker never holds more than one browser. Kill any browser it already has
+        # before opening a new one, so we never pay for two — regardless of which path got us here.
+        if getattr(worker, "browser_id", ""):
+            try:
+                await self._teardown_browser(worker)
+            except Exception:
+                pass
         client = await self._get_client()
         for attempt in range(3):
             try:

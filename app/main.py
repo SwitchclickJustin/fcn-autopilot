@@ -83,6 +83,22 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"startup reap failed: {e}")
     _asyncio.create_task(_reap_on_boot())
+
+    # Safety net: every 7 min, stop any browser running but not owned by a live worker (older
+    # than 2 min so in-flight provisions are spared). Guarantees "never more browsers billed
+    # than there are active agents" even if some path forgets to terminate.
+    async def _reap_loop():
+        from datetime import timedelta
+        while True:
+            await _asyncio.sleep(420)
+            try:
+                cutoff = _dt.utcnow() - timedelta(seconds=120)
+                n = await browser_manager.reap_orphan_browsers(older_than=cutoff)
+                if n:
+                    logger.warning(f"periodic reap: {n} orphan browser(s) stopped")
+            except Exception as e:
+                logger.warning(f"periodic reap failed: {e}")
+    _asyncio.create_task(_reap_loop())
     yield
     logger.info("Shutting down...")
     await auto_pilot.stop()
