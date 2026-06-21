@@ -2380,23 +2380,23 @@ class BotOrchestrator:
                                         _pan = await worker._page.evaluate("""() => {
                                             const mm = location.pathname.match(/\\/conv\\/(.+)/);
                                             const partner = mm ? decodeURIComponent(mm[1]) : '';
-                                            const pl = partner.toLowerCase();
-                                            const views = [];
-                                            let dmPanel = null, dmLen = 1e9;
-                                            document.querySelectorAll('.room-chat, .room-messages-container, [class*=conversation i], [class*=private i]').forEach(v => {
-                                                const r = v.getBoundingClientRect();
-                                                const txt = (v.textContent || '');
-                                                const hasP = !!(pl && txt.toLowerCase().includes(pl));
-                                                views.push({c: (v.className+'').slice(0,38), vis: r.width>0 && r.height>0, h: Math.round(r.height), hasP, tl: txt.length});
-                                                if (hasP && txt.length < dmLen && txt.length < 4000) { dmPanel = v; dmLen = txt.length; }
-                                            });
-                                            return {partner, views: views.slice(0,8), dmHtml: dmPanel ? dmPanel.outerHTML.replace(/\\s+/g,' ').slice(0,1300) : ''};
+                                            const priv = document.querySelector('.room-private');
+                                            const privHtml = priv ? priv.outerHTML.replace(/\\s+/g,' ').slice(0,1200) : 'NONE';
+                                            // does .room-private hold a message list? count its messages + senders
+                                            let privMsgs = 0; const privSenders = new Set();
+                                            if (priv) {
+                                                priv.querySelectorAll('li.message-item, .message-message').forEach(m => {
+                                                    privMsgs++;
+                                                    const me = m.querySelector('.message-meta');
+                                                    if (me) privSenders.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,16));
+                                                });
+                                            }
+                                            return {partner, privMsgs, privSenders: [...privSenders].slice(0,5), privHtml};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_VIEWS partner={_pan.get('partner')} views={_pan.get('views')}")
-                                        if _pan.get('dmHtml'):
-                                            logger.info(f"[{worker.agent_id}] DM_HTML {_pan.get('dmHtml')}")
+                                        logger.info(f"[{worker.agent_id}] DM_PRIV partner={_pan.get('partner')} privMsgs={_pan.get('privMsgs')} privSenders={_pan.get('privSenders')}")
+                                        logger.info(f"[{worker.agent_id}] DM_PRIVHTML {_pan.get('privHtml')}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_VIEWS err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_PRIV err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
@@ -2445,23 +2445,23 @@ class BotOrchestrator:
                                         _pan = await worker._page.evaluate("""() => {
                                             const mm = location.pathname.match(/\\/conv\\/(.+)/);
                                             const partner = mm ? decodeURIComponent(mm[1]) : '';
-                                            const pl = partner.toLowerCase();
-                                            const views = [];
-                                            let dmPanel = null, dmLen = 1e9;
-                                            document.querySelectorAll('.room-chat, .room-messages-container, [class*=conversation i], [class*=private i]').forEach(v => {
-                                                const r = v.getBoundingClientRect();
-                                                const txt = (v.textContent || '');
-                                                const hasP = !!(pl && txt.toLowerCase().includes(pl));
-                                                views.push({c: (v.className+'').slice(0,38), vis: r.width>0 && r.height>0, h: Math.round(r.height), hasP, tl: txt.length});
-                                                if (hasP && txt.length < dmLen && txt.length < 4000) { dmPanel = v; dmLen = txt.length; }
-                                            });
-                                            return {partner, views: views.slice(0,8), dmHtml: dmPanel ? dmPanel.outerHTML.replace(/\\s+/g,' ').slice(0,1300) : ''};
+                                            const priv = document.querySelector('.room-private');
+                                            const privHtml = priv ? priv.outerHTML.replace(/\\s+/g,' ').slice(0,1200) : 'NONE';
+                                            // does .room-private hold a message list? count its messages + senders
+                                            let privMsgs = 0; const privSenders = new Set();
+                                            if (priv) {
+                                                priv.querySelectorAll('li.message-item, .message-message').forEach(m => {
+                                                    privMsgs++;
+                                                    const me = m.querySelector('.message-meta');
+                                                    if (me) privSenders.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,16));
+                                                });
+                                            }
+                                            return {partner, privMsgs, privSenders: [...privSenders].slice(0,5), privHtml};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_VIEWS partner={_pan.get('partner')} views={_pan.get('views')}")
-                                        if _pan.get('dmHtml'):
-                                            logger.info(f"[{worker.agent_id}] DM_HTML {_pan.get('dmHtml')}")
+                                        logger.info(f"[{worker.agent_id}] DM_PRIV partner={_pan.get('partner')} privMsgs={_pan.get('privMsgs')} privSenders={_pan.get('privSenders')}")
+                                        logger.info(f"[{worker.agent_id}] DM_PRIVHTML {_pan.get('privHtml')}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_VIEWS err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_PRIV err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
