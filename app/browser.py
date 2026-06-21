@@ -1004,9 +1004,29 @@ class BotOrchestrator:
                     page += 1
             except Exception as e:
                 logger.warning(f"cost: browsers.list: {e}")
-        # Per-session browser+proxy cost = the real spend on any plan (the credits balance can
-        # read $0 on subscriptions, so a balance delta is unreliable).
-        total = round(sum(by_platform.values()), 4)
+        # AUTHORITATIVE total = balance delta. BU per-session browser_cost/proxy_cost do NOT
+        # finalize until a session ENDS, so summing them reads near-$0 while agents run (a 4-agent
+        # fleet burns ~$0.30+/min the per-session sum never sees). The credits balance is the only
+        # real-time-accurate source on a prepaid account; fall back to the per-session sum only if
+        # no balance is available (e.g. a $0-balance subscription plan).
+        persession_total = round(sum(by_platform.values()), 4)
+        total = persession_total
+        if bal is not None and self._cost_start_balance is not None:
+            bal_delta = round(max(0.0, self._cost_start_balance - bal), 4)
+            total = bal_delta
+            # apportion the authoritative total across platforms by the per-session ratio
+            if persession_total > 0:
+                by_platform = {k: round(bal_delta * v / persession_total, 4) for k, v in by_platform.items()}
+            else:
+                by_platform = {"fcn": bal_delta, "chatavenue": 0.0}
+        # Persist the balance so day/week/month stats derive spend from balance drops (survives the
+        # reboots that reset the in-memory baseline). cost_summary is 60s-cached, so ~1 snap/min.
+        if bal is not None:
+            try:
+                from app.database import record_balance_snapshot
+                await record_balance_snapshot(bal)
+            except Exception as e:
+                logger.warning(f"cost: snapshot: {e}")
         conv = 0
         try:
             if start_dt:

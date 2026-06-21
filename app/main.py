@@ -113,7 +113,8 @@ _PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 # so an operator can poll logs + agent status without logging in. Exposes NO secrets and
 # NO controls. The bypass is INERT unless DEBUG_KEY is set in the environment.
 _KEY_READABLE = {"/debug/logs", "/debug/browser-status",
-                 "/debug/ca-launch", "/debug/ca-status", "/debug/ca-stop", "/api/cost"}
+                 "/debug/ca-launch", "/debug/ca-status", "/debug/ca-stop", "/api/cost",
+                 "/debug/seed-balance"}
 _DEBUG_KEY = os.environ.get("DEBUG_KEY", "").strip()
 
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
@@ -1480,6 +1481,17 @@ async def api_cost():
         logger.error(f"COST SUMMARY ERROR: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, detail=f"cost summary failed: {e}")
 
+@app.get("/debug/seed-balance")
+async def debug_seed_balance(balance: float, at: str = ""):
+    """One-off backfill: insert a BU credits-balance snapshot at `at` (UTC, 'YYYY-MM-DD HH:MM:SS'
+    or ISO; default = now), so a day's spend stat has an opening baseline before live snapshots
+    began. Key-gated; idempotent enough (just adds a data point)."""
+    from app.database import seed_balance_snapshot
+    from datetime import datetime
+    at = (at or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")).replace("T", " ")[:19]
+    await seed_balance_snapshot(float(balance), at)
+    return {"ok": True, "balance_usd": float(balance), "at_utc": at}
+
 @app.get("/api/feed")
 async def api_feed():
     """Unified chronological feed of every message each agent sent (group + DM), newest last."""
@@ -1662,25 +1674,26 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
     warming = (not ss) or uptime < 600 or agent_hours <= 0
     per_agent_hr = None if warming else round(conv_session / agent_hours, 2)
     total_hr = None if per_agent_hr is None else round(per_agent_hr * agents, 2)
-    # BU Cloud cost for the range: persisted (stopped) browser costs + the live running session
-    # when the range reaches "now". cost-per-conversion uses the range's conversions.
-    from app.database import get_cost_stats
-    cost = await get_cost_stats(s.strftime(fmt), e.strftime(fmt))
-    cost_by = dict(cost["by_platform"])
+    # BU Cloud cost for the range = AUTHORITATIVE balance-derived spend (sum of credits-balance
+    # DROPS). BU per-session browser/proxy costs don't finalize until a session ends, so summing
+    # them undercounts badly while agents run; the account balance is the only real-time-accurate
+    # source. The per-session split (browser_costs) is used ONLY to apportion the total FCN/Chat-Ave.
+    from app.database import get_cost_stats, get_spend_from_snapshots
+    cost_total = await get_spend_from_snapshots(s.strftime(fmt), e.strftime(fmt))
+    rby = dict((await get_cost_stats(s.strftime(fmt), e.strftime(fmt)))["by_platform"])
+    if rby.get("unknown"):
+        rby["fcn"] = round(rby.get("fcn", 0.0) + rby.pop("unknown"), 4)
+    rsum = sum(rby.values())
+    if cost_total > 0 and rsum > 0:
+        cost_by = {k: round(cost_total * v / rsum, 4) for k, v in rby.items() if k != "unknown"}
+    else:
+        cost_by = {"fcn": round(cost_total, 4), "chatavenue": 0.0}
     live = None
     try:
-        live = await browser_manager.cost_summary()
+        live = await browser_manager.cost_summary()   # for the live balance display
     except Exception:
         pass
-    if live and e >= now - timedelta(minutes=1):
-        for k, v in (live.get("by_platform_usd") or {}).items():
-            cost_by[k] = round(cost_by.get(k, 0.0) + float(v or 0), 4)
-    # Fold untaggable orphan/leak costs (recorded as 'unknown' when reaped after a restart) into
-    # FCN so the total reconciles with the FCN/Chat-Ave split shown on the dashboard. Going
-    # forward there are no orphans (leak fixed), so 'unknown' stays ~0.
-    if cost_by.get("unknown"):
-        cost_by["fcn"] = round(cost_by.get("fcn", 0.0) + cost_by.pop("unknown"), 4)
-    cost_total = round(sum(cost_by.values()), 4)
+    cost_total = round(cost_total, 4)
     range_conversions = stats.get("conversions", 0)
     return {
         "range": range, "start": s.strftime(fmt), "end": e.strftime(fmt),

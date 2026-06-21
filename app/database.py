@@ -165,6 +165,11 @@ CREATE TABLE IF NOT EXISTS browser_costs (
     proxy_cost REAL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP   -- when the browser was stopped/recorded
 );
+CREATE TABLE IF NOT EXISTS balance_snapshots (
+    id TEXT PRIMARY KEY,           -- uuid per snapshot
+    balance_usd REAL NOT NULL,     -- BU Cloud credits balance at this moment (authoritative)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 async def get_db():
@@ -563,6 +568,77 @@ async def record_browser_cost(browser_id: str, platform: str, browser_cost, prox
                     "VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
                     "platform=excluded.platform, browser_cost=excluded.browser_cost, proxy_cost=excluded.proxy_cost",
                 [browser_id, plat, bc, pc])
+    finally:
+        await close_db(db)
+
+
+async def record_balance_snapshot(balance):
+    """Persist the BU Cloud credits balance. Spend is derived from balance DROPS between
+    snapshots — the only real-time-accurate cost source (BU per-session costs don't finalize
+    until a session ends, so summing them undercounts massively while agents run)."""
+    if balance is None:
+        return
+    import uuid
+    db = await get_db()
+    try:
+        if USE_NEON:
+            await _execute(db, "INSERT INTO balance_snapshots (id, balance_usd) VALUES ($1,$2)",
+                           [str(uuid.uuid4()), float(balance)])
+        else:
+            await _execute(db, "INSERT INTO balance_snapshots (id, balance_usd) VALUES (?,?)",
+                           [str(uuid.uuid4()), float(balance)])
+    finally:
+        await close_db(db)
+
+
+async def get_spend_from_snapshots(start: str, end: str) -> float:
+    """Authoritative spend over [start, end): sum of balance DECREASES between consecutive
+    snapshots. Ignores increases (credit top-ups) so a mid-period reload doesn't zero the cost.
+    Includes the last snapshot BEFORE `start` as the opening baseline so the first in-window
+    drop isn't missed. Returns USD."""
+    db = await get_db()
+    try:
+        if USE_NEON:
+            s = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+            e = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+            base = await _fetchall(
+                db, "SELECT balance_usd FROM balance_snapshots WHERE created_at < $1 "
+                    "ORDER BY created_at DESC LIMIT 1", [s])
+            rows = await _fetchall(
+                db, "SELECT balance_usd FROM balance_snapshots WHERE created_at >= $1 AND created_at < $2 "
+                    "ORDER BY created_at", [s, e])
+        else:
+            base = await _fetchall(
+                db, "SELECT balance_usd FROM balance_snapshots WHERE created_at < ? "
+                    "ORDER BY created_at DESC LIMIT 1", [start])
+            rows = await _fetchall(
+                db, "SELECT balance_usd FROM balance_snapshots WHERE created_at >= ? AND created_at < ? "
+                    "ORDER BY created_at", [start, end])
+    finally:
+        await close_db(db)
+    spend = 0.0
+    prev = float(base[0]["balance_usd"]) if base else None
+    for r in rows:
+        b = float(r["balance_usd"] or 0)
+        if prev is not None and b < prev:
+            spend += (prev - b)
+        prev = b
+    return round(spend, 4)
+
+
+async def seed_balance_snapshot(balance: float, at: str):
+    """One-off: insert a balance snapshot at an explicit timestamp (e.g. backfill today's
+    opening balance). `at` = 'YYYY-MM-DD HH:MM:SS' UTC."""
+    import uuid
+    db = await get_db()
+    try:
+        if USE_NEON:
+            t = datetime.strptime(at, "%Y-%m-%d %H:%M:%S")
+            await _execute(db, "INSERT INTO balance_snapshots (id, balance_usd, created_at) VALUES ($1,$2,$3)",
+                           [str(uuid.uuid4()), float(balance), t])
+        else:
+            await _execute(db, "INSERT INTO balance_snapshots (id, balance_usd, created_at) VALUES (?,?,?)",
+                           [str(uuid.uuid4()), float(balance), at])
     finally:
         await close_db(db)
 
