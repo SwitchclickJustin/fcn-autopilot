@@ -1307,8 +1307,10 @@ class BotOrchestrator:
             logger.error(f"Bot setup failed for {agent_id}: {e}")
             worker.status = "error"
 
-    # Room names to skip (gay/trans/femboy/etc) — verified against the live room directory.
-    _GAY_ROOM_RE = "gay|trans|femboy|sissy|lgbt|lgtb|bisex|m4m|men4men"
+    # Room names to skip — gay/trans/femboy + mature/milf (persona is <30, doesn't fit those).
+    # NOTE: deliberately NOT "older" — that would block YoungerforOlder, which is the daddy
+    # dynamic we WANT. Verified against the live room directory.
+    _GAY_ROOM_RE = "gay|trans|femboy|sissy|lgbt|lgtb|bisex|m4m|men4men|mature|milf|gilf|granny|cougar"
 
     async def _join_top_rooms(self, worker: BotWorker, n: int = 3, min_traffic: int = 300) -> list:
         """Open FCN's room directory, rank non-gay rooms with >= min_traffic by traffic, and
