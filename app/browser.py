@@ -628,10 +628,12 @@ class BotWorker:
                     // + .message-text/.message-body (text). Older builds used li.message-item — support
                     // both. NOTE: no raw-children fallback — that returned text blobs the DM sanity-guard
                     // mis-counted as a crowd, which silently broke all DM replies.
-                    // SCOPE to the single active conversation panel — the room list stays mounted
-                    // behind an open DM, so an unscoped query swept in other threads' messages and
-                    // made a 1-on-1 look like a crowd.
-                    const box = document.querySelector('.room-messages-container');
+                    // Multiple .room-messages-container can be mounted at once (the room PLUS each
+                    // open DM). querySelector returns the room's, so we read the crowd. Pick the
+                    // VISIBLE panel (non-zero box = the active conversation); fall back to last/first.
+                    const boxes = Array.from(document.querySelectorAll('.room-messages-container'));
+                    const vis = b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+                    const box = boxes.find(vis) || boxes[boxes.length - 1] || boxes[0];
                     if (!box) return [];
                     let items = box.querySelectorAll('.message-message');
                     if (!items.length) items = box.querySelectorAll('li.message-item');
@@ -2355,15 +2357,31 @@ class BotOrchestrator:
                                     dm_st["partner_age"] = info.get("age")
                                     dm_st["partner_country"] = info.get("country")
                                 msgs = await worker.read_chat(15)  # DM: last 15 is plenty of context
-                                # _open_conversation confirmed via URL that this DM is the active thread,
-                                # and read_chat is scoped to that panel — so msgs is this 1-on-1. Log the
-                                # first couple reads per launch so we can eyeball senders/content.
+                                # Guard: a real 1-on-1 has the bot + ONE other sender. >2 distinct =
+                                # read_chat grabbed a room panel, not the DM — skip (don't crowd-reply).
+                                _sndrs = {m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m}
                                 _dn = getattr(worker, "_dm_diag_n", 0)
                                 if _dn < 2:
                                     worker._dm_diag_n = _dn + 1
-                                    _snd = sorted({m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m})
-                                    logger.info(f"[{worker.agent_id}] DM_READ {len(msgs or [])}msgs senders={_snd[:6]} first={(msgs[0] if msgs else '')[:80]!r}")
-                                if msgs:
+                                    try:
+                                        _pan = await worker._page.evaluate("""() => {
+                                            const out = [];
+                                            document.querySelectorAll('.room-messages-container').forEach((b, i) => {
+                                                const it = b.querySelectorAll('.message-message');
+                                                const sn = new Set();
+                                                it.forEach(m => { const me = m.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,18)); });
+                                                const r = b.getBoundingClientRect();
+                                                out.push({i, vis: r.width>0 && r.height>0, n: it.length, s: [...sn].slice(0,4), p: (b.parentElement ? (b.parentElement.className+'') : '').slice(0,32)});
+                                            });
+                                            return {u: location.pathname, panels: out};
+                                        }""")
+                                        logger.info(f"[{worker.agent_id}] DM_PANELS {json.dumps(_pan)[:650]}")
+                                    except Exception as _e:
+                                        logger.info(f"[{worker.agent_id}] DM_PANELS err {str(_e)[:100]}")
+                                if len(_sndrs) > 2:
+                                    logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
+                                    worker.in_dm = False
+                                elif msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
@@ -2398,15 +2416,31 @@ class BotOrchestrator:
                                 worker.in_dm = True
                                 worker.room = other_user
                                 msgs = await worker.read_chat(15)  # DM: last 15 is plenty of context
-                                # _open_conversation confirmed via URL that this DM is the active thread,
-                                # and read_chat is scoped to that panel — so msgs is this 1-on-1. Log the
-                                # first couple reads per launch so we can eyeball senders/content.
+                                # Guard: a real 1-on-1 has the bot + ONE other sender. >2 distinct =
+                                # read_chat grabbed a room panel, not the DM — skip (don't crowd-reply).
+                                _sndrs = {m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m}
                                 _dn = getattr(worker, "_dm_diag_n", 0)
                                 if _dn < 2:
                                     worker._dm_diag_n = _dn + 1
-                                    _snd = sorted({m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m})
-                                    logger.info(f"[{worker.agent_id}] DM_READ {len(msgs or [])}msgs senders={_snd[:6]} first={(msgs[0] if msgs else '')[:80]!r}")
-                                if msgs:
+                                    try:
+                                        _pan = await worker._page.evaluate("""() => {
+                                            const out = [];
+                                            document.querySelectorAll('.room-messages-container').forEach((b, i) => {
+                                                const it = b.querySelectorAll('.message-message');
+                                                const sn = new Set();
+                                                it.forEach(m => { const me = m.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,18)); });
+                                                const r = b.getBoundingClientRect();
+                                                out.push({i, vis: r.width>0 && r.height>0, n: it.length, s: [...sn].slice(0,4), p: (b.parentElement ? (b.parentElement.className+'') : '').slice(0,32)});
+                                            });
+                                            return {u: location.pathname, panels: out};
+                                        }""")
+                                        logger.info(f"[{worker.agent_id}] DM_PANELS {json.dumps(_pan)[:650]}")
+                                    except Exception as _e:
+                                        logger.info(f"[{worker.agent_id}] DM_PANELS err {str(_e)[:100]}")
+                                if len(_sndrs) > 2:
+                                    logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
+                                    worker.in_dm = False
+                                elif msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
