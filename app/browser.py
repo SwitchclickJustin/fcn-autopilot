@@ -2380,20 +2380,23 @@ class BotOrchestrator:
                                         _pan = await worker._page.evaluate("""() => {
                                             const mm = location.pathname.match(/\\/conv\\/(.+)/);
                                             const partner = mm ? decodeURIComponent(mm[1]) : '';
-                                            const frames = [];
-                                            document.querySelectorAll('iframe').forEach(f => {
-                                                const r = f.getBoundingClientRect();
-                                                if (r.width > 120 && r.height > 120)
-                                                    frames.push({id:(f.id||'').slice(0,24), src:(f.src||'').slice(0,55), w:Math.round(r.width), h:Math.round(r.height)});
+                                            const pl = partner.toLowerCase();
+                                            const views = [];
+                                            let dmPanel = null, dmLen = 1e9;
+                                            document.querySelectorAll('.room-chat, .room-messages-container, [class*=conversation i], [class*=private i]').forEach(v => {
+                                                const r = v.getBoundingClientRect();
+                                                const txt = (v.textContent || '');
+                                                const hasP = !!(pl && txt.toLowerCase().includes(pl));
+                                                views.push({c: (v.className+'').slice(0,38), vis: r.width>0 && r.height>0, h: Math.round(r.height), hasP, tl: txt.length});
+                                                if (hasP && txt.length < dmLen && txt.length < 4000) { dmPanel = v; dmLen = txt.length; }
                                             });
-                                            const area = document.querySelector('.room-messages-container');
-                                            const pInArea = !!(area && partner && (area.textContent||'').toLowerCase().includes(partner.toLowerCase()));
-                                            const convViews = document.querySelectorAll('.room-chat, [class*=conversation i], [class*=private i], [class*=pm-window i]').length;
-                                            return {partner, pInArea, convViews, frames: frames.slice(0,6)};
+                                            return {partner, views: views.slice(0,8), dmHtml: dmPanel ? dmPanel.outerHTML.replace(/\\s+/g,' ').slice(0,1300) : ''};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_FRAME partner={_pan.get('partner')} pInArea={_pan.get('pInArea')} convViews={_pan.get('convViews')} frames={_pan.get('frames')}")
+                                        logger.info(f"[{worker.agent_id}] DM_VIEWS partner={_pan.get('partner')} views={_pan.get('views')}")
+                                        if _pan.get('dmHtml'):
+                                            logger.info(f"[{worker.agent_id}] DM_HTML {_pan.get('dmHtml')}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_FRAME err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_VIEWS err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
@@ -2442,20 +2445,23 @@ class BotOrchestrator:
                                         _pan = await worker._page.evaluate("""() => {
                                             const mm = location.pathname.match(/\\/conv\\/(.+)/);
                                             const partner = mm ? decodeURIComponent(mm[1]) : '';
-                                            const frames = [];
-                                            document.querySelectorAll('iframe').forEach(f => {
-                                                const r = f.getBoundingClientRect();
-                                                if (r.width > 120 && r.height > 120)
-                                                    frames.push({id:(f.id||'').slice(0,24), src:(f.src||'').slice(0,55), w:Math.round(r.width), h:Math.round(r.height)});
+                                            const pl = partner.toLowerCase();
+                                            const views = [];
+                                            let dmPanel = null, dmLen = 1e9;
+                                            document.querySelectorAll('.room-chat, .room-messages-container, [class*=conversation i], [class*=private i]').forEach(v => {
+                                                const r = v.getBoundingClientRect();
+                                                const txt = (v.textContent || '');
+                                                const hasP = !!(pl && txt.toLowerCase().includes(pl));
+                                                views.push({c: (v.className+'').slice(0,38), vis: r.width>0 && r.height>0, h: Math.round(r.height), hasP, tl: txt.length});
+                                                if (hasP && txt.length < dmLen && txt.length < 4000) { dmPanel = v; dmLen = txt.length; }
                                             });
-                                            const area = document.querySelector('.room-messages-container');
-                                            const pInArea = !!(area && partner && (area.textContent||'').toLowerCase().includes(partner.toLowerCase()));
-                                            const convViews = document.querySelectorAll('.room-chat, [class*=conversation i], [class*=private i], [class*=pm-window i]').length;
-                                            return {partner, pInArea, convViews, frames: frames.slice(0,6)};
+                                            return {partner, views: views.slice(0,8), dmHtml: dmPanel ? dmPanel.outerHTML.replace(/\\s+/g,' ').slice(0,1300) : ''};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_FRAME partner={_pan.get('partner')} pInArea={_pan.get('pInArea')} convViews={_pan.get('convViews')} frames={_pan.get('frames')}")
+                                        logger.info(f"[{worker.agent_id}] DM_VIEWS partner={_pan.get('partner')} views={_pan.get('views')}")
+                                        if _pan.get('dmHtml'):
+                                            logger.info(f"[{worker.agent_id}] DM_HTML {_pan.get('dmHtml')}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_FRAME err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_VIEWS err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
