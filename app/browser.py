@@ -2378,25 +2378,22 @@ class BotOrchestrator:
                                     worker._dm_diag_n = _dn + 1
                                     try:
                                         _pan = await worker._page.evaluate("""() => {
-                                            const groups = []; const seen = new Set();
-                                            document.querySelectorAll('.message-message, li.message-item').forEach(m => {
-                                                const p = m.parentElement;
-                                                if (!p || seen.has(p)) return; seen.add(p);
-                                                const msgs = p.querySelectorAll(':scope > .message-message, :scope > li.message-item');
-                                                const sn = new Set();
-                                                msgs.forEach(x => { const me = x.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,14)); });
-                                                let chain = [], a = p;
-                                                for (let i=0;i<5 && a;i++){ chain.push((a.tagName.toLowerCase())+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
-                                                groups.push({n: msgs.length, sct: sn.size, s: [...sn].slice(0,2), vis: p.getBoundingClientRect().height>0, chain});
+                                            const mm = location.pathname.match(/\\/conv\\/(.+)/);
+                                            const partner = mm ? decodeURIComponent(mm[1]) : '';
+                                            const frames = [];
+                                            document.querySelectorAll('iframe').forEach(f => {
+                                                const r = f.getBoundingClientRect();
+                                                if (r.width > 120 && r.height > 120)
+                                                    frames.push({id:(f.id||'').slice(0,24), src:(f.src||'').slice(0,55), w:Math.round(r.width), h:Math.round(r.height)});
                                             });
-                                            const small = groups.filter(g => g.sct <= 3 && g.n >= 1);
-                                            return {u: location.pathname, nbig: groups.length - small.length, dm: small.slice(0,5)};
+                                            const area = document.querySelector('.room-messages-container');
+                                            const pInArea = !!(area && partner && (area.textContent||'').toLowerCase().includes(partner.toLowerCase()));
+                                            const convViews = document.querySelectorAll('.room-chat, [class*=conversation i], [class*=private i], [class*=pm-window i]').length;
+                                            return {partner, pInArea, convViews, frames: frames.slice(0,6)};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_LOC url={_pan.get('u')} nbig={_pan.get('nbig')} dmgroups={len(_pan.get('dm') or [])}")
-                                        for _g in (_pan.get('dm') or [])[:5]:
-                                            logger.info(f"[{worker.agent_id}] DM_GRP sct={_g.get('sct')} n={_g.get('n')} vis={_g.get('vis')} s={_g.get('s')} chain={_g.get('chain')}")
+                                        logger.info(f"[{worker.agent_id}] DM_FRAME partner={_pan.get('partner')} pInArea={_pan.get('pInArea')} convViews={_pan.get('convViews')} frames={_pan.get('frames')}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_LOC err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_FRAME err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
@@ -2443,25 +2440,22 @@ class BotOrchestrator:
                                     worker._dm_diag_n = _dn + 1
                                     try:
                                         _pan = await worker._page.evaluate("""() => {
-                                            const groups = []; const seen = new Set();
-                                            document.querySelectorAll('.message-message, li.message-item').forEach(m => {
-                                                const p = m.parentElement;
-                                                if (!p || seen.has(p)) return; seen.add(p);
-                                                const msgs = p.querySelectorAll(':scope > .message-message, :scope > li.message-item');
-                                                const sn = new Set();
-                                                msgs.forEach(x => { const me = x.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,14)); });
-                                                let chain = [], a = p;
-                                                for (let i=0;i<5 && a;i++){ chain.push((a.tagName.toLowerCase())+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
-                                                groups.push({n: msgs.length, sct: sn.size, s: [...sn].slice(0,2), vis: p.getBoundingClientRect().height>0, chain});
+                                            const mm = location.pathname.match(/\\/conv\\/(.+)/);
+                                            const partner = mm ? decodeURIComponent(mm[1]) : '';
+                                            const frames = [];
+                                            document.querySelectorAll('iframe').forEach(f => {
+                                                const r = f.getBoundingClientRect();
+                                                if (r.width > 120 && r.height > 120)
+                                                    frames.push({id:(f.id||'').slice(0,24), src:(f.src||'').slice(0,55), w:Math.round(r.width), h:Math.round(r.height)});
                                             });
-                                            const small = groups.filter(g => g.sct <= 3 && g.n >= 1);
-                                            return {u: location.pathname, nbig: groups.length - small.length, dm: small.slice(0,5)};
+                                            const area = document.querySelector('.room-messages-container');
+                                            const pInArea = !!(area && partner && (area.textContent||'').toLowerCase().includes(partner.toLowerCase()));
+                                            const convViews = document.querySelectorAll('.room-chat, [class*=conversation i], [class*=private i], [class*=pm-window i]').length;
+                                            return {partner, pInArea, convViews, frames: frames.slice(0,6)};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_LOC url={_pan.get('u')} nbig={_pan.get('nbig')} dmgroups={len(_pan.get('dm') or [])}")
-                                        for _g in (_pan.get('dm') or [])[:5]:
-                                            logger.info(f"[{worker.agent_id}] DM_GRP sct={_g.get('sct')} n={_g.get('n')} vis={_g.get('vis')} s={_g.get('s')} chain={_g.get('chain')}")
+                                        logger.info(f"[{worker.agent_id}] DM_FRAME partner={_pan.get('partner')} pInArea={_pan.get('pInArea')} convViews={_pan.get('convViews')} frames={_pan.get('frames')}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_LOC err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_FRAME err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
