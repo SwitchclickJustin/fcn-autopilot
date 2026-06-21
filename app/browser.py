@@ -628,9 +628,13 @@ class BotWorker:
                     // + .message-text/.message-body (text). Older builds used li.message-item — support
                     // both. NOTE: no raw-children fallback — that returned text blobs the DM sanity-guard
                     // mis-counted as a crowd, which silently broke all DM replies.
-                    let items = document.querySelectorAll('.messages .message-message');
-                    if (!items.length) items = document.querySelectorAll('.room-messages-container li.message-item');
-                    if (!items.length) items = document.querySelectorAll('.message-message');
+                    // SCOPE to the single active conversation panel — the room list stays mounted
+                    // behind an open DM, so an unscoped query swept in other threads' messages and
+                    // made a 1-on-1 look like a crowd.
+                    const box = document.querySelector('.room-messages-container');
+                    if (!box) return [];
+                    let items = box.querySelectorAll('.message-message');
+                    if (!items.length) items = box.querySelectorAll('li.message-item');
                     const out = [];
                     for (let i = Math.max(0, items.length - (limit + 10)); i < items.length; i++) {
                         const el = items[i];
@@ -2100,16 +2104,20 @@ class BotOrchestrator:
                 return False
             await el.click(timeout=2000)  # fail fast on stuck tabs
             await page.wait_for_timeout(550)  # let the message PANEL switch, not just the tab
-            # Confirm the clicked tab is active. The downstream sender-guard (skip if 3+ senders)
-            # is what actually prevents a crowd-read, so opening stays lenient here — being too
-            # strict made real DMs fail to open at all (they piled up unanswered).
+            # Confirm the open. For a DM the URL is authoritative — FCN sets location to /conv/<id>
+            # for the active thread — so we require both the tab active AND the URL matching the DM.
+            # (Rooms stay on the lenient tab-active check; their href↔URL forms can differ.)
             try:
                 return bool(await page.evaluate(
-                    """(href) => {
+                    """(args) => {
+                        const href = args.href, isDm = args.isDm;
                         const a = document.querySelector('.roomlist-room a[href="' + href + '"]');
                         const tab = a && a.closest('.roomlist-room');
-                        return !!(tab && /\\bactive\\b/.test(tab.className || ''));
-                    }""", href))
+                        const tabActive = !!(tab && /\\bactive\\b/.test(tab.className || ''));
+                        if (!isDm) return tabActive;
+                        const urlOk = (location.pathname + location.search).indexOf(href) !== -1;
+                        return tabActive && urlOk;
+                    }""", {"href": href, "isDm": "/conv/" in href}))
             except Exception:
                 return True
         except Exception:
@@ -2347,50 +2355,15 @@ class BotOrchestrator:
                                     dm_st["partner_age"] = info.get("age")
                                     dm_st["partner_country"] = info.get("country")
                                 msgs = await worker.read_chat(15)  # DM: last 15 is plenty of context
-                                # DM sanity: a real 1-on-1 thread has the bot + ONE other sender. 3+
-                                # distinct senders = the DM didn't actually open and the panel is still
-                                # on a ROOM — skip so we don't reply to a crowd / leak a broadcast.
-                                _sndrs = {m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m}
-                                if len(_sndrs) > 2:
-                                    logger.warning(f"[{worker.agent_id}] DM open didn't take ({len(_sndrs)} senders = room) — skip")
-                                    worker.in_dm = False
-                                    # One-shot DOM diagnostic (first 3 fails per launch): why didn't the
-                                    # panel switch? Dumps URL, the actually-active tab, the read container's
-                                    # size, any OTHER message-like containers (DM may render elsewhere),
-                                    # and blocking overlays. Remove once root-caused.
-                                    _dn = getattr(worker, "_dm_diag_n", 0)
-                                    if _dn < 3:
-                                        worker._dm_diag_n = _dn + 1
-                                        try:
-                                            _diag = await worker._page.evaluate(
-                                                """(href) => {
-                                                    const act = document.querySelector('.roomlist-room.active a[href]');
-                                                    const box = document.querySelector('.room-messages-container');
-                                                    const others = [];
-                                                    document.querySelectorAll('[class*=message i],[class*=conversation i],[class*=chat i],[class*=thread i]').forEach(e => {
-                                                        const kids = e.children ? e.children.length : 0;
-                                                        const c = (e.className + '').slice(0,55);
-                                                        if (kids >= 2 && c && !others.find(o => o.c === c)) others.push({c, kids});
-                                                    });
-                                                    const ov = [];
-                                                    document.querySelectorAll('*').forEach(e => {
-                                                        const s = getComputedStyle(e);
-                                                        if ((s.position==='fixed'||s.position==='absolute') && parseInt(s.zIndex||'0')>=50) {
-                                                            const r = e.getBoundingClientRect();
-                                                            if (r.width>250 && r.height>150) ov.push((e.tagName.toLowerCase()+'.'+(e.className+'')).slice(0,38));
-                                                        }
-                                                    });
-                                                    const sm = document.querySelector('.messages .message-message:last-of-type') || document.querySelector('.message-message');
-                                                    return {url: location.href, tried: href,
-                                                            activeHref: act ? act.getAttribute('href') : null,
-                                                            boxKids: box ? box.children.length : -1,
-                                                            containers: others.slice(0,14), overlays: ov.slice(0,6),
-                                                            sampleMsg: sm ? sm.outerHTML.slice(0,420) : null};
-                                                }""", c["href"])
-                                            logger.warning(f"[{worker.agent_id}] DM_DIAG {json.dumps(_diag)[:700]}")
-                                        except Exception as _e:
-                                            logger.warning(f"[{worker.agent_id}] DM_DIAG err {str(_e)[:120]}")
-                                elif msgs:
+                                # _open_conversation confirmed via URL that this DM is the active thread,
+                                # and read_chat is scoped to that panel — so msgs is this 1-on-1. Log the
+                                # first couple reads per launch so we can eyeball senders/content.
+                                _dn = getattr(worker, "_dm_diag_n", 0)
+                                if _dn < 2:
+                                    worker._dm_diag_n = _dn + 1
+                                    _snd = sorted({m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m})
+                                    logger.info(f"[{worker.agent_id}] DM_READ {len(msgs or [])}msgs senders={_snd[:6]} first={(msgs[0] if msgs else '')[:80]!r}")
+                                if msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
@@ -2425,50 +2398,15 @@ class BotOrchestrator:
                                 worker.in_dm = True
                                 worker.room = other_user
                                 msgs = await worker.read_chat(15)  # DM: last 15 is plenty of context
-                                # DM sanity: a real 1-on-1 thread has the bot + ONE other sender. 3+
-                                # distinct senders = the DM didn't actually open and the panel is still
-                                # on a ROOM — skip so we don't reply to a crowd / leak a broadcast.
-                                _sndrs = {m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m}
-                                if len(_sndrs) > 2:
-                                    logger.warning(f"[{worker.agent_id}] DM open didn't take ({len(_sndrs)} senders = room) — skip")
-                                    worker.in_dm = False
-                                    # One-shot DOM diagnostic (first 3 fails per launch): why didn't the
-                                    # panel switch? Dumps URL, the actually-active tab, the read container's
-                                    # size, any OTHER message-like containers (DM may render elsewhere),
-                                    # and blocking overlays. Remove once root-caused.
-                                    _dn = getattr(worker, "_dm_diag_n", 0)
-                                    if _dn < 3:
-                                        worker._dm_diag_n = _dn + 1
-                                        try:
-                                            _diag = await worker._page.evaluate(
-                                                """(href) => {
-                                                    const act = document.querySelector('.roomlist-room.active a[href]');
-                                                    const box = document.querySelector('.room-messages-container');
-                                                    const others = [];
-                                                    document.querySelectorAll('[class*=message i],[class*=conversation i],[class*=chat i],[class*=thread i]').forEach(e => {
-                                                        const kids = e.children ? e.children.length : 0;
-                                                        const c = (e.className + '').slice(0,55);
-                                                        if (kids >= 2 && c && !others.find(o => o.c === c)) others.push({c, kids});
-                                                    });
-                                                    const ov = [];
-                                                    document.querySelectorAll('*').forEach(e => {
-                                                        const s = getComputedStyle(e);
-                                                        if ((s.position==='fixed'||s.position==='absolute') && parseInt(s.zIndex||'0')>=50) {
-                                                            const r = e.getBoundingClientRect();
-                                                            if (r.width>250 && r.height>150) ov.push((e.tagName.toLowerCase()+'.'+(e.className+'')).slice(0,38));
-                                                        }
-                                                    });
-                                                    const sm = document.querySelector('.messages .message-message:last-of-type') || document.querySelector('.message-message');
-                                                    return {url: location.href, tried: href,
-                                                            activeHref: act ? act.getAttribute('href') : null,
-                                                            boxKids: box ? box.children.length : -1,
-                                                            containers: others.slice(0,14), overlays: ov.slice(0,6),
-                                                            sampleMsg: sm ? sm.outerHTML.slice(0,420) : null};
-                                                }""", c["href"])
-                                            logger.warning(f"[{worker.agent_id}] DM_DIAG {json.dumps(_diag)[:700]}")
-                                        except Exception as _e:
-                                            logger.warning(f"[{worker.agent_id}] DM_DIAG err {str(_e)[:120]}")
-                                elif msgs:
+                                # _open_conversation confirmed via URL that this DM is the active thread,
+                                # and read_chat is scoped to that panel — so msgs is this 1-on-1. Log the
+                                # first couple reads per launch so we can eyeball senders/content.
+                                _dn = getattr(worker, "_dm_diag_n", 0)
+                                if _dn < 2:
+                                    worker._dm_diag_n = _dn + 1
+                                    _snd = sorted({m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m})
+                                    logger.info(f"[{worker.agent_id}] DM_READ {len(msgs or [])}msgs senders={_snd[:6]} first={(msgs[0] if msgs else '')[:80]!r}")
+                                if msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
