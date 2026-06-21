@@ -2072,23 +2072,42 @@ class BotOrchestrator:
         content bleed: a broadcast lands in a DM, a DM reply lands in a room)."""
         if not href:
             return False
+        is_dm = "/conv/" in href            # DM tabs use /conv/X; rooms use /room/X
         try:
             el = await page.query_selector(f'.roomlist-room a[href="{href}"]')
             if el is None:
                 return False
-            await el.click(timeout=2000)  # fail fast on stuck tabs (was 4000)
-            await page.wait_for_timeout(300)  # conv-switch settle (snappier DM cycling)
-            # Confirm the clicked tab is now active (same `active`-class signal _list_conversations
-            # uses). If the check itself errors, fall back to True (best-effort, don't block).
-            try:
-                return bool(await page.evaluate(
-                    """(href) => {
-                        const a = document.querySelector('.roomlist-room a[href="' + href + '"]');
-                        const tab = a && a.closest('.roomlist-room');
-                        return !!(tab && /\\bactive\\b/.test(tab.className || ''));
-                    }""", href))
-            except Exception:
-                return True
+            for _attempt in range(3):
+                try:
+                    await el.click(timeout=2000)  # fail fast on stuck tabs
+                except Exception:
+                    pass
+                # Poll up to ~1.8s for the switch to take in the message PANEL, not just the tab —
+                # a tab can go active while the panel still shows the previous room, which is what
+                # made the bot read a crowd and "reply" to a DM. For a DM, require a genuine 1-on-1
+                # panel (<=2 distinct senders: bot + partner). Re-click and retry if it didn't take.
+                for _ in range(6):
+                    await page.wait_for_timeout(300)
+                    st = await page.evaluate(
+                        """(href) => {
+                            const a = document.querySelector('.roomlist-room a[href="' + href + '"]');
+                            const tab = a && a.closest('.roomlist-room');
+                            const tabActive = !!(tab && /\\bactive\\b/.test(tab.className || ''));
+                            const box = document.querySelector('.room-messages-container');
+                            const names = new Set();
+                            if (box) box.querySelectorAll('li.message-item .message-meta').forEach(m => {
+                                const t = (m.textContent || '').trim().replace(/:+$/, '');
+                                if (t) names.add(t);
+                            });
+                            return {tabActive: tabActive, senders: names.size};
+                        }""", href)
+                    if not st.get("tabActive"):
+                        continue
+                    if not is_dm:
+                        return True                       # room: tab active is enough
+                    if st.get("senders", 99) <= 2:
+                        return True                       # genuine 1-on-1 DM panel
+            return False
         except Exception:
             return False
 
