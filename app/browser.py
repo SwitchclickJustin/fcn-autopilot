@@ -206,6 +206,9 @@ def _strip_ai_tells(text: str, strip_emoji: bool = False) -> str:
     # Strip roleplay stage directions / actions in asterisks (*sliding into his dms*,
     # *licks lips*) — a dead AI tell, and nonsensical in a public room broadcast.
     text = re.sub(r"\*+[^*\n]*\*+", " ", text)
+    # Strip stage directions in (parens) ANYWHERE, not just leading — "(send the pic)",
+    # "(sends a pic)", "(winks)" leak mid-message. Capped so a genuine short aside is rare.
+    text = re.sub(r"\s*\([^)\n]{0,40}\)\s*", " ", text)
     # Strip a leading meta label the model sometimes prepends: "(public room blast)" / a
     # "Username:" prefix (despite "never prefix your name").
     text = re.sub(r"^\s*\([^)]{0,40}\)\s*", "", text)
