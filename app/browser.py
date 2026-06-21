@@ -3014,16 +3014,61 @@ class BotOrchestrator:
         for w in self._ca_workers:
             try:
                 await w.stop()
-                await w._bw.disconnect_cdp()
+                await self._teardown_browser(w._bw)   # disconnect AND stop the BU browser (billing)
             except Exception:
                 pass
         self._ca_workers = []
 
+    async def reap_orphan_browsers(self, older_than=None) -> int:
+        """Stop every BU Cloud browser still running but NOT owned by a current worker — kills
+        leaked sessions (disconnects that never terminated, or browsers orphaned by an app
+        restart) so they stop billing. `finished_at is None` == still running == still billing.
+        `older_than` (UTC datetime) limits reaping to sessions started before it, so a boot-time
+        reap can't kill a browser launched moments later."""
+        try:
+            client = await self._get_client()
+        except Exception as e:
+            logger.warning(f"reap: client: {e}")
+            return 0
+        active = {str(w.browser_id) for w in self._workers.values() if getattr(w, "browser_id", "")}
+        active |= {str(getattr(w._bw, "browser_id", "")) for w in self._ca_workers}
+        active.discard("")
+        reaped = 0
+        try:
+            page = 1
+            while page <= 8:
+                resp = await client.browsers.list(page=page, page_size=100)
+                items = getattr(resp, "items", None) or []
+                if not items:
+                    break
+                for s in items:
+                    sid = str(s.id)
+                    if sid in active or getattr(s, "finished_at", None) is not None:
+                        continue                       # ours, or already stopped (not billing)
+                    if older_than is not None:
+                        st = getattr(s, "started_at", None)
+                        if st and st.replace(tzinfo=None) >= older_than:
+                            continue                   # newer than cutoff — could be a fresh launch
+                    try:
+                        await client.browsers.stop(sid)
+                        reaped += 1
+                    except Exception:
+                        pass
+                if len(items) < 100:
+                    break
+                page += 1
+        except Exception as e:
+            logger.warning(f"reap: list/stop: {e}")
+        if reaped:
+            logger.warning(f"reaped {reaped} orphan BU browser(s) — stopped billing")
+        return reaped
+
     async def stop_all(self):
-        """Gracefully stop all bot sessions (FCN + Chat Avenue)."""
+        """Gracefully stop all bot sessions (FCN + Chat Avenue) + reap any orphans."""
         logger.info("Stopping all bots...")
         await self.stop_fcn()
         await self.stop_chatavenue()
+        await self.reap_orphan_browsers()   # nuke anything still running but untracked
         self._session_start = None  # uptime clock resets when the fleet is stopped
         # New session next launch → fresh cost baseline.
         self._cost_start_dt = None

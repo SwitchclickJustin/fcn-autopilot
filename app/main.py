@@ -70,6 +70,19 @@ async def lifespan(app: FastAPI):
     providers = await get_providers()
     provider_registry.load_from_db(providers)
     logger.info(f"Loaded {len(providers)} LLM providers from database")
+    # Reap BU Cloud browsers orphaned by the PREVIOUS run — an app restart doesn't auto-stop
+    # cloud browsers, so they keep billing until TTL. Only reap sessions started before now,
+    # and run in the background so a slow billing API can't delay startup.
+    import asyncio as _asyncio
+    from datetime import datetime as _dt
+    _boot = _dt.utcnow()
+    async def _reap_on_boot():
+        try:
+            n = await browser_manager.reap_orphan_browsers(older_than=_boot)
+            logger.info(f"startup reap: {n} orphan browser(s) stopped")
+        except Exception as e:
+            logger.warning(f"startup reap failed: {e}")
+    _asyncio.create_task(_reap_on_boot())
     yield
     logger.info("Shutting down...")
     await auto_pilot.stop()

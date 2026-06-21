@@ -464,8 +464,9 @@ class ChatAvenueWorker:
             return False
         self.status = "recovering"
         logger.warning(f"[{self.agent_id}] CA recovering — fresh IP + UA + clean cookies")
+        # Terminate the OLD browser first (disconnect + browsers.stop) or it keeps billing ~1.5h.
         try:
-            await self._bw.disconnect_cdp()
+            await self._orchestrator._teardown_browser(self._bw)
         except Exception:
             pass
         self._proxy_idx = (self._proxy_idx + 13) % 50         # fresh, distinct US Decodo IP
