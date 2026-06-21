@@ -86,11 +86,11 @@ class ChatAvenueWorker:
         self._bw.agent_id = agent_id
         self._bw.slot = slot
         self._bw.agent_total = self.agent_total
-        # Distinct US Decodo IP per agent (first 50 entries = us.decodo.com) so every guest
-        # registration comes from a fresh, unused IP — avoids Chat Avenue's per-IP cap.
-        # _proxy_idx advances on each kick-recovery to grab a fresh IP.
-        self._proxy_idx = slot % 50
-        self.custom_proxy = fcn.DECODA_PROXIES[self._proxy_idx]
+        # Proxy: BU Cloud native US residential (no Decodo). BU assigns a fresh exit IP per
+        # browsers.create(), so every guest registration is from a clean IP — avoiding Chat
+        # Avenue's per-IP cap without a separate Decodo subscription. (Decodo dropped 2026-06-21
+        # to stop the FCN-on-BU + CA-on-Decodo double-pay.)
+        self.custom_proxy = None
 
     @property
     def _page(self):
@@ -484,10 +484,10 @@ class ChatAvenueWorker:
             await self._orchestrator._teardown_browser(self._bw)
         except Exception:
             pass
-        self._proxy_idx = (self._proxy_idx + 13) % 50         # fresh, distinct US Decodo IP
-        proxy = fcn.DECODA_PROXIES[self._proxy_idx]
+        # BU native proxy (no Decodo): a fresh browsers.create() already yields a new US
+        # residential exit IP, which is the whole point of recovery — no custom proxy needed.
         try:
-            if not await self._orchestrator._provision_and_connect(self._bw, custom_proxy=proxy,
+            if not await self._orchestrator._provision_and_connect(self._bw,
                                                                    platform="chatavenue"):
                 logger.warning(f"[{self.agent_id}] CA recover: provision failed")
                 return False
@@ -498,7 +498,7 @@ class ChatAvenueWorker:
         if ok:
             self.status = "running"
             self.room = " + ".join(t["room"] for t in self.tabs)
-            logger.info(f"[{self.agent_id}] CA recovered on decodo:{proxy['port']} -> {self.room}")
+            logger.info(f"[{self.agent_id}] CA recovered on bu-native -> {self.room}")
         return ok
 
     async def stop(self):

@@ -1085,8 +1085,10 @@ class BotOrchestrator:
             w = ChatAvenueWorker(persona, aid, slot=slot, agent_total=count)
             w._orchestrator = self      # so broadcasts land in the shared dashboard feed
             try:
-                if not await self._provision_and_connect(w._bw, custom_proxy=w.custom_proxy,
-                                                          platform="chatavenue"):
+                # BU native proxy (no Decodo). BU auto-selects a fresh US residential exit IP per
+                # browser, so each CA registration still gets a clean IP — without the Decodo
+                # subscription. Consolidated here to kill the FCN(BU)+CA(Decodo) double-pay.
+                if not await self._provision_and_connect(w._bw, platform="chatavenue"):
                     return None
             except Exception as e:
                 logger.warning(f"[{aid}] CA provision error: {e}")
