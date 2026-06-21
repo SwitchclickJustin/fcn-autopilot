@@ -2324,7 +2324,14 @@ class BotOrchestrator:
                                     dm_st["partner_age"] = info.get("age")
                                     dm_st["partner_country"] = info.get("country")
                                 msgs = await worker.read_chat(15)  # DM: last 15 is plenty of context
-                                if msgs:
+                                # DM sanity: a real 1-on-1 thread has the bot + ONE other sender. 3+
+                                # distinct senders = the DM didn't actually open and the panel is still
+                                # on a ROOM — skip so we don't reply to a crowd / leak a broadcast.
+                                _sndrs = {m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m}
+                                if len(_sndrs) > 2:
+                                    logger.warning(f"[{worker.agent_id}] DM open didn't take ({len(_sndrs)} senders = room) — skip")
+                                    worker.in_dm = False
+                                elif msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
@@ -2359,7 +2366,14 @@ class BotOrchestrator:
                                 worker.in_dm = True
                                 worker.room = other_user
                                 msgs = await worker.read_chat(15)  # DM: last 15 is plenty of context
-                                if msgs:
+                                # DM sanity: a real 1-on-1 thread has the bot + ONE other sender. 3+
+                                # distinct senders = the DM didn't actually open and the panel is still
+                                # on a ROOM — skip so we don't reply to a crowd / leak a broadcast.
+                                _sndrs = {m.split(":", 1)[0].strip() for m in (msgs or []) if ":" in m}
+                                if len(_sndrs) > 2:
+                                    logger.warning(f"[{worker.agent_id}] DM open didn't take ({len(_sndrs)} senders = room) — skip")
+                                    worker.in_dm = False
+                                elif msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
                                     await self._log_dm_messages(worker, other_user, msgs, persona_id)
