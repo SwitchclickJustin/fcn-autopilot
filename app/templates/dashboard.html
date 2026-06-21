@@ -63,6 +63,31 @@
   </div>
 </div>
 
+<!-- Cost / unit economics (BU Cloud billing API, refreshes every 5 min) -->
+<div class="card" id="cost-card" style="margin-bottom:.75rem">
+  <div class="card-title">💰 Session Cost <span id="cost-updated" class="text-dim" style="font-weight:400;text-transform:none;letter-spacing:0;font-size:.7rem"></span></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.55rem">
+    <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
+      <div style="font-size:1.3rem;font-weight:700" id="cost-total">$—</div>
+      <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Total spend</div></div>
+    <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
+      <div style="font-size:1.3rem;font-weight:700;color:var(--green)" id="cost-per-conv">$—</div>
+      <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Per conversion</div></div>
+    <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
+      <div style="font-size:1.3rem;font-weight:700" id="cost-conv">—</div>
+      <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Conversions</div></div>
+    <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
+      <div style="font-size:1.3rem;font-weight:700;color:#6aa0ff" id="cost-fcn">$—</div>
+      <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">FCN cost</div></div>
+    <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
+      <div style="font-size:1.3rem;font-weight:700;color:#7c3aed" id="cost-ca">$—</div>
+      <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Chat Ave cost</div></div>
+    <div style="text-align:center;padding:.55rem .4rem;background:var(--surface-2);border-radius:var(--radius)">
+      <div style="font-size:1.3rem;font-weight:700" id="cost-balance">$—</div>
+      <div style="font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em">Credits left</div></div>
+  </div>
+</div>
+
 <!-- Main Grid: Live Agents + Chat/Stats -->
 <div class="grid-2">
 
@@ -461,6 +486,31 @@ function onStatsRange(){
 connectWS();
 loadStats();
 setInterval(loadStats,20000);
+
+// ─── Cost (BU Cloud billing API) — refresh every 5 min ────────────────────────
+let costTimer=null;
+async function refreshCost(){
+  try{
+    const d=await(await fetch('/api/cost')).json();
+    if(!d||d.detail) return;
+    const money=v=>(v==null?'—':'$'+Number(v).toFixed(2));
+    const money4=v=>(v==null?'—':'$'+Number(v).toFixed(4));
+    const set=(id,v)=>{const el=document.getElementById(id); if(el) el.textContent=v;};
+    set('cost-total',money(d.session_cost_usd));
+    set('cost-per-conv', d.cost_per_conversion_usd==null?'—':money4(d.cost_per_conversion_usd));
+    set('cost-conv', d.conversions==null?'—':d.conversions);
+    set('cost-fcn', money(d.by_platform_usd&&d.by_platform_usd.fcn));
+    set('cost-ca', money(d.by_platform_usd&&d.by_platform_usd.chatavenue));
+    set('cost-balance', money(d.balance_usd));
+    set('cost-updated', d.updated_at?('· '+d.updated_at):'');
+  }catch(e){}
+}
+function startCostPolling(){
+  refreshCost();
+  if(costTimer) clearInterval(costTimer);
+  costTimer=setInterval(refreshCost, 300000); // every 5 min
+}
+startCostPolling();
 
 // Restore live agents if they are already running when the page loads
 (async function initDashboard(){

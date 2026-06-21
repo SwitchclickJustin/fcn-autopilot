@@ -84,7 +84,7 @@ _PUBLIC = {"/health", "/login", "/api/telegram-conversion"}
 # so an operator can poll logs + agent status without logging in. Exposes NO secrets and
 # NO controls. The bypass is INERT unless DEBUG_KEY is set in the environment.
 _KEY_READABLE = {"/debug/logs", "/debug/browser-status",
-                 "/debug/ca-launch", "/debug/ca-status", "/debug/ca-stop"}
+                 "/debug/ca-launch", "/debug/ca-status", "/debug/ca-stop", "/api/cost"}
 _DEBUG_KEY = os.environ.get("DEBUG_KEY", "").strip()
 
 # Auth middleware added first so SessionMiddleware (added after) wraps it and runs first,
@@ -1439,6 +1439,17 @@ async def session_state():
         "live_url": first.get("live_url", ""),
         "auto_pilot": bool(agents),
     }
+
+@app.get("/api/cost")
+async def api_cost():
+    """Real-time BU Cloud spend for the current session: total, per-platform (FCN vs Chat
+    Avenue), $/conversion, and 5-min snapshots."""
+    import traceback
+    try:
+        return await browser_manager.cost_summary()
+    except Exception as e:
+        logger.error(f"COST SUMMARY ERROR: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, detail=f"cost summary failed: {e}")
 
 @app.get("/api/feed")
 async def api_feed():

@@ -471,7 +471,8 @@ class ChatAvenueWorker:
         self._proxy_idx = (self._proxy_idx + 13) % 50         # fresh, distinct US Decodo IP
         proxy = fcn.DECODA_PROXIES[self._proxy_idx]
         try:
-            if not await self._orchestrator._provision_and_connect(self._bw, custom_proxy=proxy):
+            if not await self._orchestrator._provision_and_connect(self._bw, custom_proxy=proxy,
+                                                                   platform="chatavenue"):
                 logger.warning(f"[{self.agent_id}] CA recover: provision failed")
                 return False
         except Exception as e:

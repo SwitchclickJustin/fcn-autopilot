@@ -771,6 +771,13 @@ class BotOrchestrator:
         self._session_start: Optional[float] = None
         # Chat Avenue broadcaster fleet (separate type from FCN BotWorkers).
         self._ca_workers: list = []
+        # Cost tracking via the BU Cloud billing API: tag each provisioned browser with its
+        # platform, snapshot the account balance at session start, and cache the summary.
+        self._session_platform: dict = {}      # browser_id -> 'fcn' | 'chatavenue'
+        self._cost_start_balance = None        # account balance (USD) when this session started
+        self._cost_start_dt = None             # UTC datetime when this session started
+        self._cost_cache = None                # (epoch, data) — 60s cache to respect rate limits
+        self._cost_snapshots: list = []        # 5-min cost/conversion points for the timeline
 
     # ── SDK client (lazy, single instance) ─────────────────────────────────
 
@@ -849,6 +856,7 @@ class BotOrchestrator:
         Room assignments respect the max-2-agents-per-room rule. Agents provision
         in parallel — start time ≈ time for one agent, not N × that.
         """
+        await self._ensure_cost_baseline()
         count = max(1, min(count, 16))
         room_pairs = assign_rooms(count, FCN_ROOMS)
         username = persona.get("username", "ChatBot_42")
@@ -874,10 +882,96 @@ class BotOrchestrator:
         except Exception:
             pass
 
+    async def _ensure_cost_baseline(self):
+        """Snapshot the BU Cloud balance + UTC start time once per session (cleared by stop_all).
+        Session spend = baseline balance - current balance."""
+        if self._cost_start_dt is not None:
+            return
+        from datetime import datetime
+        self._cost_start_dt = datetime.utcnow()
+        try:
+            acct = await (await self._get_client()).billing.account()
+            self._cost_start_balance = float(acct.total_credits_balance_usd)
+            logger.info(f"cost baseline: ${self._cost_start_balance:.2f} balance @ session start")
+        except Exception as e:
+            logger.warning(f"cost baseline failed: {e}")
+
+    async def cost_summary(self) -> dict:
+        """Real-time BU Cloud spend for this session: total, per-platform (FCN vs Chat Avenue),
+        cost-per-conversion, 5-min snapshots. Cached 60s to respect the billing rate limit."""
+        import time as _t
+        from datetime import datetime
+        now = _t.time()
+        if self._cost_cache and now - self._cost_cache[0] < 60:
+            return self._cost_cache[1]
+        client = await self._get_client()
+        bal = None
+        try:
+            acct = await client.billing.account()
+            bal = float(acct.total_credits_balance_usd)
+        except Exception as e:
+            logger.warning(f"cost: billing.account: {e}")
+        by_platform = {"fcn": 0.0, "chatavenue": 0.0}
+        counted = 0
+        start_dt = self._cost_start_dt
+        try:
+            page = 1
+            while page <= 6:
+                resp = await client.browsers.list(page=page, page_size=100)
+                items = getattr(resp, "items", None) or []
+                if not items:
+                    break
+                reached_old = False
+                for s in items:
+                    started = getattr(s, "started_at", None)
+                    if start_dt and started and started.replace(tzinfo=None) < start_dt:
+                        reached_old = True
+                        continue
+                    c = float(s.browser_cost or 0) + float(s.proxy_cost or 0)
+                    plat = self._session_platform.get(str(s.id), "fcn")
+                    by_platform[plat] = by_platform.get(plat, 0.0) + c
+                    counted += 1
+                if reached_old or len(items) < 100:
+                    break
+                page += 1
+        except Exception as e:
+            logger.warning(f"cost: browsers.list: {e}")
+        sessions_cost = round(sum(by_platform.values()), 4)
+        spent = (round(max(0.0, self._cost_start_balance - bal), 4)
+                 if bal is not None and self._cost_start_balance is not None else None)
+        total = round(spent if spent is not None else sessions_cost, 4)
+        conv = 0
+        try:
+            if start_dt:
+                from app.database import count_events_since
+                conv = await count_events_since("telegram_conversion", start_dt)
+        except Exception as e:
+            logger.warning(f"cost: conversions: {e}")
+        data = {
+            "session_cost_usd": total,
+            "by_platform_usd": {k: round(v, 4) for k, v in by_platform.items()},
+            "balance_usd": round(bal, 2) if bal is not None else None,
+            "conversions": conv,
+            "cost_per_conversion_usd": round(total / conv, 4) if conv else None,
+            "sessions_counted": counted,
+            "started_at": (start_dt.isoformat() + "Z") if start_dt else None,
+            "updated_at": datetime.utcnow().strftime("%H:%M:%S UTC"),
+        }
+        if not self._cost_snapshots or now - self._cost_snapshots[-1]["t"] >= 300:
+            self._cost_snapshots.append({
+                "t": now, "cost": total, "conv": conv,
+                "fcn": data["by_platform_usd"]["fcn"], "ca": data["by_platform_usd"]["chatavenue"],
+            })
+            self._cost_snapshots = self._cost_snapshots[-300:]
+        data["snapshots"] = self._cost_snapshots
+        self._cost_cache = (now, data)
+        return data
+
     async def start_multi_chatavenue(self, count: int, persona: dict) -> list:
         """Launch `count` Chat Avenue broadcasters from one persona — each on its own distinct
         Decodo IP (fresh per registration), running the text-only broadcast loop."""
         from app.chatavenue import ChatAvenueWorker
+        await self._ensure_cost_baseline()
         count = max(1, min(count, 10))
         username = persona.get("username", "Alexa")
 
@@ -886,7 +980,8 @@ class BotOrchestrator:
             w = ChatAvenueWorker(persona, aid, slot=slot, agent_total=count)
             w._orchestrator = self      # so broadcasts land in the shared dashboard feed
             try:
-                if not await self._provision_and_connect(w._bw, custom_proxy=w.custom_proxy):
+                if not await self._provision_and_connect(w._bw, custom_proxy=w.custom_proxy,
+                                                          platform="chatavenue"):
                     return None
             except Exception as e:
                 logger.warning(f"[{aid}] CA provision error: {e}")
@@ -902,7 +997,8 @@ class BotOrchestrator:
         logger.info(f"start_multi_chatavenue: {len(workers)}/{count} CA agents live")
         return workers
 
-    async def _provision_and_connect(self, worker: BotWorker, custom_proxy: dict = None) -> bool:
+    async def _provision_and_connect(self, worker: BotWorker, custom_proxy: dict = None,
+                                     platform: str = "fcn") -> bool:
         """Provision a FRESH BU browser. custom_proxy (host/port/username/password) routes through
         a distinct residential IP (Decodo) for a guaranteed-fresh IP per registration; None = BU
         Cloud native residential. Falls back to native if the custom proxy is rejected.
@@ -946,6 +1042,7 @@ class BotOrchestrator:
             if cdp_url and await self._connect_cdp(worker, cdp_url):
                 worker.proxy_ip = (f"decodo:{custom_proxy['port']}" if custom_proxy else "bu-cloud-native")
                 worker.proxy_location = "US"
+                self._session_platform[str(worker.browser_id)] = platform   # for per-platform cost
                 logger.info(f"[{worker.username}] provisioned on {worker.proxy_ip} (try {attempt + 1})")
                 return True
             logger.warning(f"[{worker.username}] CDP connect failed (try {attempt + 1}); retrying")
@@ -2928,6 +3025,11 @@ class BotOrchestrator:
         await self.stop_fcn()
         await self.stop_chatavenue()
         self._session_start = None  # uptime clock resets when the fleet is stopped
+        # New session next launch → fresh cost baseline.
+        self._cost_start_dt = None
+        self._cost_start_balance = None
+        self._session_platform = {}
+        self._cost_cache = None
 
     async def close(self):
         """Full shutdown — stop bots + close SDK client."""
