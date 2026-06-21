@@ -998,11 +998,14 @@ class BotOrchestrator:
                             continue
                         bc = float(s.browser_cost or 0)
                         pc = float(s.proxy_cost or 0)
-                        sum_browser += bc
-                        sum_proxy += pc
                         plat = self._session_platform.get(str(s.id), "fcn")
                         by_platform[plat] = by_platform.get(plat, 0.0) + (bc + pc)
                         counted += 1
+                        # Browser-vs-proxy RATIO: only finished sessions have BOTH costs finalized
+                        # (live ones carry a browser placeholder + $0 proxy, which whipsaws the ratio).
+                        if getattr(s, "finished_at", None) is not None:
+                            sum_browser += bc
+                            sum_proxy += pc
                     if reached_old or len(items) < 100:
                         break
                     page += 1
@@ -1045,16 +1048,25 @@ class BotOrchestrator:
         except Exception:
             from datetime import timezone as _tz, timedelta as _td
             _ny = (datetime.now(_tz.utc) - _td(hours=4)).strftime("%-I:%M:%S %p ET")
-        # Browser-time vs proxy-bandwidth split (raw per-session sums from BU billing). These lag
-        # finalization like by_platform, but the RATIO is the real story: proxy bandwidth at $5/GB
-        # is ~90%+ of spend. Surfaced on the dashboard so the bandwidth-cost trend is visible.
-        _split_total = sum_browser + sum_proxy
+        # Browser-time vs proxy-bandwidth split. The per-session sums lag finalization, so we
+        # APPORTION the authoritative total (balance delta) by the finished-session ratio — exactly
+        # like by_platform above. This GUARANTEES browser_cost_usd + proxy_cost_usd == session_cost_usd
+        # (the raw sums never matched the balance drop, which read as a dashboard bug). Until at least
+        # one session has finished, the split is unknown → reported as null (dashboard shows "—").
+        _ratio_total = sum_browser + sum_proxy
+        if _ratio_total > 0:
+            browser_usd = round(total * sum_browser / _ratio_total, 4)
+            proxy_usd = round(total - browser_usd, 4)   # subtraction → exact sum to total
+            proxy_share = round(sum_proxy / _ratio_total * 100)
+        else:
+            browser_usd = proxy_usd = None
+            proxy_share = None
         data = {
             "session_cost_usd": total,
             "by_platform_usd": {k: round(v, 4) for k, v in by_platform.items()},
-            "browser_cost_usd": round(sum_browser, 4),
-            "proxy_cost_usd": round(sum_proxy, 4),
-            "proxy_share_pct": round(sum_proxy / _split_total * 100) if _split_total > 0 else None,
+            "browser_cost_usd": browser_usd,
+            "proxy_cost_usd": proxy_usd,
+            "proxy_share_pct": proxy_share,
             "balance_usd": round(bal, 2) if bal is not None else None,
             "conversions": conv,
             "cost_per_conversion_usd": round(total / conv, 4) if conv else None,
