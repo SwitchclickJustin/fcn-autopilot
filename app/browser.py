@@ -2365,19 +2365,22 @@ class BotOrchestrator:
                                     worker._dm_diag_n = _dn + 1
                                     try:
                                         _pan = await worker._page.evaluate("""() => {
-                                            const out = [];
-                                            document.querySelectorAll('.room-messages-container').forEach((b, i) => {
-                                                const it = b.querySelectorAll('.message-message');
+                                            const groups = []; const seen = new Set();
+                                            document.querySelectorAll('.message-message, li.message-item').forEach(m => {
+                                                const p = m.parentElement;
+                                                if (!p || seen.has(p)) return; seen.add(p);
+                                                const msgs = p.querySelectorAll(':scope > .message-message, :scope > li.message-item');
                                                 const sn = new Set();
-                                                it.forEach(m => { const me = m.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,18)); });
-                                                const r = b.getBoundingClientRect();
-                                                out.push({i, vis: r.width>0 && r.height>0, n: it.length, s: [...sn].slice(0,4), p: (b.parentElement ? (b.parentElement.className+'') : '').slice(0,32)});
+                                                msgs.forEach(x => { const me = x.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,16)); });
+                                                let chain = [], a = p;
+                                                for (let i=0;i<4 && a;i++){ chain.push((a.tagName.toLowerCase())+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
+                                                groups.push({n: msgs.length, sct: sn.size, s: [...sn].slice(0,3), vis: p.getBoundingClientRect().height>0, chain});
                                             });
-                                            return {u: location.pathname, panels: out};
+                                            return {u: location.pathname, groups};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_PANELS {json.dumps(_pan)[:650]}")
+                                        logger.info(f"[{worker.agent_id}] DM_GROUPS {json.dumps(_pan)[:760]}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_PANELS err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_GROUPS err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
@@ -2424,19 +2427,22 @@ class BotOrchestrator:
                                     worker._dm_diag_n = _dn + 1
                                     try:
                                         _pan = await worker._page.evaluate("""() => {
-                                            const out = [];
-                                            document.querySelectorAll('.room-messages-container').forEach((b, i) => {
-                                                const it = b.querySelectorAll('.message-message');
+                                            const groups = []; const seen = new Set();
+                                            document.querySelectorAll('.message-message, li.message-item').forEach(m => {
+                                                const p = m.parentElement;
+                                                if (!p || seen.has(p)) return; seen.add(p);
+                                                const msgs = p.querySelectorAll(':scope > .message-message, :scope > li.message-item');
                                                 const sn = new Set();
-                                                it.forEach(m => { const me = m.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,18)); });
-                                                const r = b.getBoundingClientRect();
-                                                out.push({i, vis: r.width>0 && r.height>0, n: it.length, s: [...sn].slice(0,4), p: (b.parentElement ? (b.parentElement.className+'') : '').slice(0,32)});
+                                                msgs.forEach(x => { const me = x.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,16)); });
+                                                let chain = [], a = p;
+                                                for (let i=0;i<4 && a;i++){ chain.push((a.tagName.toLowerCase())+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
+                                                groups.push({n: msgs.length, sct: sn.size, s: [...sn].slice(0,3), vis: p.getBoundingClientRect().height>0, chain});
                                             });
-                                            return {u: location.pathname, panels: out};
+                                            return {u: location.pathname, groups};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_PANELS {json.dumps(_pan)[:650]}")
+                                        logger.info(f"[{worker.agent_id}] DM_GROUPS {json.dumps(_pan)[:760]}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_PANELS err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_GROUPS err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
