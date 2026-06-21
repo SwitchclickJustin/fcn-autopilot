@@ -2100,12 +2100,25 @@ class BotOrchestrator:
         content bleed: a broadcast lands in a DM, a DM reply lands in a room)."""
         if not href:
             return False
+        is_dm = "/conv/" in href
         try:
             el = await page.query_selector(f'.roomlist-room a[href="{href}"]')
             if el is None:
                 return False
-            await el.click(timeout=2000)  # fail fast on stuck tabs
-            await page.wait_for_timeout(550)  # let the message PANEL switch, not just the tab
+            if is_dm:
+                # Clicking the <a> only updates the URL — FCN does NOT switch the conversation VIEW,
+                # so the DM thread never renders and read_chat sees the room. Click the conversation
+                # ROW element instead (triggers FCN's real switch handler), then give the thread time
+                # to fetch + render (slower than a room switch). Fall back to the link if no row.
+                row = await page.query_selector(f'.roomlist-room:has(a[href="{href}"])')
+                try:
+                    await (row or el).click(timeout=2000)
+                except Exception:
+                    await el.click(timeout=2000)
+                await page.wait_for_timeout(1500)
+            else:
+                await el.click(timeout=2000)  # fail fast on stuck tabs
+                await page.wait_for_timeout(550)  # let the message PANEL switch, not just the tab
             # Confirm the open. For a DM the URL is authoritative — FCN sets location to /conv/<id>
             # for the active thread — so we require both the tab active AND the URL matching the DM.
             # (Rooms stay on the lenient tab-active check; their href↔URL forms can differ.)
