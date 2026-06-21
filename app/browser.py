@@ -2371,16 +2371,19 @@ class BotOrchestrator:
                                                 if (!p || seen.has(p)) return; seen.add(p);
                                                 const msgs = p.querySelectorAll(':scope > .message-message, :scope > li.message-item');
                                                 const sn = new Set();
-                                                msgs.forEach(x => { const me = x.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,16)); });
+                                                msgs.forEach(x => { const me = x.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,14)); });
                                                 let chain = [], a = p;
-                                                for (let i=0;i<4 && a;i++){ chain.push((a.tagName.toLowerCase())+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
-                                                groups.push({n: msgs.length, sct: sn.size, s: [...sn].slice(0,3), vis: p.getBoundingClientRect().height>0, chain});
+                                                for (let i=0;i<5 && a;i++){ chain.push((a.tagName.toLowerCase())+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
+                                                groups.push({n: msgs.length, sct: sn.size, s: [...sn].slice(0,2), vis: p.getBoundingClientRect().height>0, chain});
                                             });
-                                            return {u: location.pathname, groups};
+                                            const small = groups.filter(g => g.sct <= 3 && g.n >= 1);
+                                            return {u: location.pathname, nbig: groups.length - small.length, dm: small.slice(0,5)};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_GROUPS {json.dumps(_pan)[:760]}")
+                                        logger.info(f"[{worker.agent_id}] DM_LOC url={_pan.get('u')} nbig={_pan.get('nbig')} dmgroups={len(_pan.get('dm') or [])}")
+                                        for _g in (_pan.get('dm') or [])[:5]:
+                                            logger.info(f"[{worker.agent_id}] DM_GRP sct={_g.get('sct')} n={_g.get('n')} vis={_g.get('vis')} s={_g.get('s')} chain={_g.get('chain')}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_GROUPS err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_LOC err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
@@ -2433,16 +2436,19 @@ class BotOrchestrator:
                                                 if (!p || seen.has(p)) return; seen.add(p);
                                                 const msgs = p.querySelectorAll(':scope > .message-message, :scope > li.message-item');
                                                 const sn = new Set();
-                                                msgs.forEach(x => { const me = x.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,16)); });
+                                                msgs.forEach(x => { const me = x.querySelector('.message-meta'); if (me) sn.add((me.textContent||'').trim().split(/\\s{2,}/)[0].slice(0,14)); });
                                                 let chain = [], a = p;
-                                                for (let i=0;i<4 && a;i++){ chain.push((a.tagName.toLowerCase())+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
-                                                groups.push({n: msgs.length, sct: sn.size, s: [...sn].slice(0,3), vis: p.getBoundingClientRect().height>0, chain});
+                                                for (let i=0;i<5 && a;i++){ chain.push((a.tagName.toLowerCase())+'.'+((a.className+'').split(' ').filter(Boolean).slice(0,2).join('.'))); a = a.parentElement; }
+                                                groups.push({n: msgs.length, sct: sn.size, s: [...sn].slice(0,2), vis: p.getBoundingClientRect().height>0, chain});
                                             });
-                                            return {u: location.pathname, groups};
+                                            const small = groups.filter(g => g.sct <= 3 && g.n >= 1);
+                                            return {u: location.pathname, nbig: groups.length - small.length, dm: small.slice(0,5)};
                                         }""")
-                                        logger.info(f"[{worker.agent_id}] DM_GROUPS {json.dumps(_pan)[:760]}")
+                                        logger.info(f"[{worker.agent_id}] DM_LOC url={_pan.get('u')} nbig={_pan.get('nbig')} dmgroups={len(_pan.get('dm') or [])}")
+                                        for _g in (_pan.get('dm') or [])[:5]:
+                                            logger.info(f"[{worker.agent_id}] DM_GRP sct={_g.get('sct')} n={_g.get('n')} vis={_g.get('vis')} s={_g.get('s')} chain={_g.get('chain')}")
                                     except Exception as _e:
-                                        logger.info(f"[{worker.agent_id}] DM_GROUPS err {str(_e)[:100]}")
+                                        logger.info(f"[{worker.agent_id}] DM_LOC err {str(_e)[:100]}")
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM skip ({len(_sndrs)} senders = room panel)")
                                     worker.in_dm = False
