@@ -152,10 +152,15 @@
     <textarea id="photo-url-input" rows="3"
       placeholder="Paste one or more Bunny.net CDN URLs — one per line"
       style="width:100%;font-size:.85rem;box-sizing:border-box;font-family:monospace"></textarea>
-    <div class="flex" style="gap:.5rem;margin-top:.4rem">
+    <div class="flex" style="gap:.5rem;margin-top:.4rem;align-items:center;flex-wrap:wrap">
       <button class="btn btn-primary btn-sm" onclick="addPhotoUrl()" id="add-photo-btn">+ Add</button>
       <button class="btn btn-sm" onclick="removeBroken()" id="prune-photo-btn"
         title="Check every photo and delete any that no longer load (404)">Remove broken</button>
+      <span style="flex:1"></span>
+      <label class="text-sm text-dim" style="display:flex;align-items:center;gap:.3rem;cursor:pointer;user-select:none">
+        <input type="checkbox" id="photo-select-all" onchange="toggleSelectAllPhotos(this.checked)"> Select all
+      </label>
+      <button class="btn btn-red btn-sm" onclick="deleteSelectedPhotos()" id="del-selected-btn" disabled>🗑 Delete selected (0)</button>
     </div>
   </div>
   <div id="photo-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.75rem">
@@ -311,6 +316,9 @@ async function loadPhotos(personaId) {
       return `
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column">
         <div style="position:relative">
+          <input type="checkbox" class="photo-select" data-id="${p.id}" onchange="updatePhotoSelection()"
+                 title="Select for bulk delete"
+                 style="position:absolute;top:5px;left:5px;width:20px;height:20px;cursor:pointer;z-index:3;accent-color:#b41e1e">
           <img src="${esc(p.url)}"
                style="width:100%;height:140px;object-fit:cover;display:block"
                loading="lazy"
@@ -324,9 +332,39 @@ async function loadPhotos(personaId) {
         </div>
       </div>`;
     }).join('');
+    updatePhotoSelection();   // reset the "Delete selected" bar after a re-render
   } catch(e) {
     grid.innerHTML = `<p class="text-red text-sm" style="grid-column:1/-1">Error: ${e.message}</p>`;
   }
+}
+
+function updatePhotoSelection() {
+  const boxes = [...document.querySelectorAll('.photo-select')];
+  const sel = boxes.filter(b => b.checked).length;
+  const btn = document.getElementById('del-selected-btn');
+  if (btn) { btn.textContent = `🗑 Delete selected (${sel})`; btn.disabled = sel === 0; }
+  const all = document.getElementById('photo-select-all');
+  if (all) all.checked = boxes.length > 0 && sel === boxes.length;
+}
+
+function toggleSelectAllPhotos(on) {
+  document.querySelectorAll('.photo-select').forEach(b => b.checked = on);
+  updatePhotoSelection();
+}
+
+async function deleteSelectedPhotos() {
+  const ids = [...document.querySelectorAll('.photo-select:checked')].map(b => b.dataset.id);
+  if (!ids.length || !_photoPersonaId) return;
+  if (!confirm(`Delete ${ids.length} selected photo${ids.length > 1 ? 's' : ''}?`)) return;
+  const btn = document.getElementById('del-selected-btn');
+  btn.disabled = true; const orig = btn.textContent;
+  let done = 0;
+  for (const id of ids) {
+    btn.textContent = `Deleting ${++done}/${ids.length}…`;
+    try { await fetch(`/api/personas/${_photoPersonaId}/photos/${id}`, { method: 'DELETE' }); } catch(e) {}
+  }
+  toast(`Deleted ${ids.length} photo${ids.length > 1 ? 's' : ''}`);
+  await loadPhotos(_photoPersonaId);
 }
 
 async function addPhotoUrl() {
