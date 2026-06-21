@@ -2746,6 +2746,13 @@ class BotOrchestrator:
                         (("bbc", "black", "bull", "bnwo"), ("bbc",)),
                         (("small", "sph", "humiliat", "loser", "tiny", "sissy"), ("sph", "small")),
                         (("joi", "edg", "stroke", "goon"), ("joi", "edg")),
+                        (("subsanddom", "sub", "dom", "domme"), ("dom", "sub")),
+                        (("kink", "fetish"), ("kink", "fetish")),
+                        (("bbw", "curvy", "thick", "chubby"), ("bbw", "thick", "curvy")),
+                        (("booty", "butt"), ("booty", "butt", "ass")),
+                        (("selfie",), ("selfie",)),
+                        (("rating", "rate", "pussyrating"), ("rating", "rate")),
+                        (("camchat", "cam"), ("cam",)),
                     ]
                     _pool = _sections
                     for _kw, _sk in _theme:
