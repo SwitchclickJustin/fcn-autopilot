@@ -947,6 +947,13 @@ class BotOrchestrator:
                 conv = await count_events_since("telegram_conversion", start_dt)
         except Exception as e:
             logger.warning(f"cost: conversions: {e}")
+        # New York time for the "updated" stamp (falls back to EDT offset if tzdata missing).
+        try:
+            from zoneinfo import ZoneInfo
+            _ny = datetime.now(ZoneInfo("America/New_York")).strftime("%-I:%M:%S %p ET")
+        except Exception:
+            from datetime import timezone as _tz, timedelta as _td
+            _ny = (datetime.now(_tz.utc) - _td(hours=4)).strftime("%-I:%M:%S %p ET")
         data = {
             "session_cost_usd": total,
             "by_platform_usd": {k: round(v, 4) for k, v in by_platform.items()},
@@ -955,7 +962,7 @@ class BotOrchestrator:
             "cost_per_conversion_usd": round(total / conv, 4) if conv else None,
             "sessions_counted": counted,
             "started_at": (start_dt.isoformat() + "Z") if start_dt else None,
-            "updated_at": datetime.utcnow().strftime("%H:%M:%S UTC"),
+            "updated_at": _ny,
         }
         if not self._cost_snapshots or now - self._cost_snapshots[-1]["t"] >= 300:
             self._cost_snapshots.append({
