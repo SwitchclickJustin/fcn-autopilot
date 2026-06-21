@@ -1110,13 +1110,22 @@ class BotOrchestrator:
             return False
 
     async def _teardown_browser(self, worker: BotWorker):
-        """Disconnect CDP + stop the cloud browser for this worker."""
+        """Disconnect CDP + stop the cloud browser, recording its final cost for the stats."""
         await worker.disconnect_cdp()
         if worker.browser_id:
+            bid = str(worker.browser_id)
+            plat = self._session_platform.get(bid, "fcn")
             try:
-                await (await self._get_client()).browsers.stop(worker.browser_id)
+                view = await (await self._get_client()).browsers.stop(worker.browser_id)
+                try:
+                    from app.database import record_browser_cost
+                    await record_browser_cost(bid, plat, getattr(view, "browser_cost", 0),
+                                              getattr(view, "proxy_cost", 0))
+                except Exception:
+                    pass
             except Exception:
                 pass
+            self._session_platform.pop(bid, None)
             worker.browser_id = ""
             worker.live_url = ""
             worker.proxy_port = 0   # free the slot for other agents
@@ -3057,8 +3066,15 @@ class BotOrchestrator:
                         if st and st.replace(tzinfo=None) >= older_than:
                             continue                   # newer than cutoff — could be a fresh launch
                     try:
-                        await client.browsers.stop(sid)
+                        view = await client.browsers.stop(sid)
                         reaped += 1
+                        try:
+                            from app.database import record_browser_cost
+                            await record_browser_cost(sid, self._session_platform.get(sid, "unknown"),
+                                                      getattr(view, "browser_cost", 0),
+                                                      getattr(view, "proxy_cost", 0))
+                        except Exception:
+                            pass
                     except Exception:
                         pass
                 if len(items) < 100:

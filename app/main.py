@@ -1662,6 +1662,21 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
     warming = (not ss) or uptime < 600 or agent_hours <= 0
     per_agent_hr = None if warming else round(conv_session / agent_hours, 2)
     total_hr = None if per_agent_hr is None else round(per_agent_hr * agents, 2)
+    # BU Cloud cost for the range: persisted (stopped) browser costs + the live running session
+    # when the range reaches "now". cost-per-conversion uses the range's conversions.
+    from app.database import get_cost_stats
+    cost = await get_cost_stats(s.strftime(fmt), e.strftime(fmt))
+    cost_by = dict(cost["by_platform"])
+    live = None
+    try:
+        live = await browser_manager.cost_summary()
+    except Exception:
+        pass
+    if live and e >= now - timedelta(minutes=1):
+        for k, v in (live.get("by_platform_usd") or {}).items():
+            cost_by[k] = round(cost_by.get(k, 0.0) + float(v or 0), 4)
+    cost_total = round(sum(cost_by.values()), 4)
+    range_conversions = stats.get("conversions", 0)
     return {
         "range": range, "start": s.strftime(fmt), "end": e.strftime(fmt),
         "uptime_seconds": int(uptime),
@@ -1672,6 +1687,10 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
         "conversions_last_60m": conv_60,                  # actual count, not extrapolated
         "conversions_per_hr_per_agent": per_agent_hr,     # null while warming up
         "conversions_per_hr_total": total_hr,             # = per_agent × agents (reconciles)
+        "cost_usd": cost_total,
+        "cost_by_platform_usd": cost_by,
+        "cost_per_conversion_usd": round(cost_total / range_conversions, 4) if range_conversions else None,
+        "credits_balance_usd": (live.get("balance_usd") if live else None),
         **stats,
     }
 

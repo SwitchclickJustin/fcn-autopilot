@@ -164,6 +164,22 @@
           <div id="stat-cph" style="font-size:1.6rem;font-weight:700;color:#4ade80">–</div>
           <div style="font-size:.72rem;opacity:.65" id="stat-cph-label">Conv / hr / agent</div>
         </div>
+        <div style="background:rgba(224,180,106,.10);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-cost" style="font-size:1.6rem;font-weight:700;color:#e0b46a">–</div>
+          <div style="font-size:.72rem;opacity:.65">BU cost (range)</div>
+        </div>
+        <div style="background:rgba(224,180,106,.10);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-cost-per-conv" style="font-size:1.6rem;font-weight:700;color:#e0b46a">–</div>
+          <div style="font-size:.72rem;opacity:.65">Cost / conversion</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-cost-split" style="font-size:1.05rem;font-weight:700">–</div>
+          <div style="font-size:.72rem;opacity:.65">FCN / Chat Ave cost</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:.7rem;text-align:center">
+          <div id="stat-credits" style="font-size:1.6rem;font-weight:700">–</div>
+          <div style="font-size:.72rem;opacity:.65">Credits left (BU)</div>
+        </div>
       </div>
     </div>
 
@@ -439,6 +455,13 @@ async function loadStats(){
     }
     document.getElementById('stat-uptime').textContent=fmtUptime(d.uptime_seconds??0);
     document.getElementById('stat-agents').textContent=d.agents??0;
+    // Cost (BU Cloud)
+    const m2=v=>(v==null?'–':'$'+Number(v).toFixed(2));
+    document.getElementById('stat-cost').textContent=m2(d.cost_usd);
+    document.getElementById('stat-cost-per-conv').textContent=d.cost_per_conversion_usd==null?'–':'$'+Number(d.cost_per_conversion_usd).toFixed(4);
+    const cb=d.cost_by_platform_usd||{};
+    document.getElementById('stat-cost-split').textContent='$'+Number(cb.fcn||0).toFixed(2)+' / $'+Number(cb.chatavenue||0).toFixed(2);
+    document.getElementById('stat-credits').textContent=m2(d.credits_balance_usd);
   }catch(e){}
   loadAttribution();
 }

@@ -158,6 +158,13 @@ CREATE TABLE IF NOT EXISTS persona_photos (
     url TEXT DEFAULT '',   -- Bunny.net CDN URL
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS browser_costs (
+    id TEXT PRIMARY KEY,           -- BU Cloud browser/session id
+    platform TEXT DEFAULT 'fcn',   -- fcn | chatavenue | unknown
+    browser_cost REAL DEFAULT 0,
+    proxy_cost REAL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP   -- when the browser was stopped/recorded
+);
 """
 
 async def get_db():
@@ -535,6 +542,53 @@ async def count_events_since(event_type: str, since: datetime) -> int:
     finally:
         await close_db(db)
     return (rows[0]["c"] if rows else 0)
+
+
+async def record_browser_cost(browser_id: str, platform: str, browser_cost, proxy_cost):
+    """Persist a BU Cloud browser's final cost when it stops, so cost survives sessions and can
+    be reported per day/week/month. Upsert keyed on browser_id."""
+    bc = float(browser_cost or 0); pc = float(proxy_cost or 0)
+    plat = platform if platform in ("fcn", "chatavenue") else "unknown"
+    db = await get_db()
+    try:
+        if USE_NEON:
+            await _execute(
+                db, "INSERT INTO browser_costs (id, platform, browser_cost, proxy_cost) "
+                    "VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET "
+                    "platform=$2, browser_cost=$3, proxy_cost=$4",
+                [browser_id, plat, bc, pc])
+        else:
+            await _execute(
+                db, "INSERT INTO browser_costs (id, platform, browser_cost, proxy_cost) "
+                    "VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                    "platform=excluded.platform, browser_cost=excluded.browser_cost, proxy_cost=excluded.proxy_cost",
+                [browser_id, plat, bc, pc])
+    finally:
+        await close_db(db)
+
+
+async def get_cost_stats(start: str, end: str) -> dict:
+    """Sum recorded browser costs in [start, end) (UTC 'YYYY-MM-DD HH:MM:SS') grouped by
+    platform. Returns {total, by_platform:{fcn, chatavenue, unknown}}."""
+    db = await get_db()
+    try:
+        if USE_NEON:
+            s = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+            e = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+            rows = await _fetchall(
+                db, "SELECT platform, COALESCE(SUM(browser_cost+proxy_cost),0) AS c FROM browser_costs "
+                    "WHERE created_at >= $1 AND created_at < $2 GROUP BY platform", [s, e])
+        else:
+            rows = await _fetchall(
+                db, "SELECT platform, COALESCE(SUM(browser_cost+proxy_cost),0) AS c FROM browser_costs "
+                    "WHERE created_at >= ? AND created_at < ? GROUP BY platform", [start, end])
+    finally:
+        await close_db(db)
+    by = {"fcn": 0.0, "chatavenue": 0.0, "unknown": 0.0}
+    for r in rows:
+        p = (r["platform"] or "unknown")
+        by[p] = by.get(p, 0.0) + float(r["c"] or 0)
+    return {"total": round(sum(by.values()), 4), "by_platform": {k: round(v, 4) for k, v in by.items()}}
 
 
 async def get_recent_events(limit=40):
