@@ -389,6 +389,7 @@ async function startSession(){
     setAutoPilotUI(true);
     toast(`${data.agents.length} agent${data.agents.length>1?'s':''} launched!`);
     startPolling();
+    refreshCost(); loadStats();   // jump cost + stats to live numbers right away
   }catch(e){
     toast('Failed: '+e.message);
     clearAgentGrid();
@@ -508,7 +509,7 @@ function onStatsRange(){
 // ─── Init ───
 connectWS();
 loadStats();
-setInterval(loadStats,20000);
+setInterval(loadStats,60000);   // refresh stats every 60s
 
 // ─── Cost (BU Cloud billing API) — refresh every 5 min ────────────────────────
 let costTimer=null;
@@ -531,7 +532,7 @@ async function refreshCost(){
 function startCostPolling(){
   refreshCost();
   if(costTimer) clearInterval(costTimer);
-  costTimer=setInterval(refreshCost, 300000); // every 5 min
+  costTimer=setInterval(refreshCost, 60000); // every 60s
 }
 startCostPolling();
 
