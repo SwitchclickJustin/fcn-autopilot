@@ -1675,6 +1675,11 @@ async def api_stats(range: str = "today", start: str = "", end: str = ""):
     if live and e >= now - timedelta(minutes=1):
         for k, v in (live.get("by_platform_usd") or {}).items():
             cost_by[k] = round(cost_by.get(k, 0.0) + float(v or 0), 4)
+    # Fold untaggable orphan/leak costs (recorded as 'unknown' when reaped after a restart) into
+    # FCN so the total reconciles with the FCN/Chat-Ave split shown on the dashboard. Going
+    # forward there are no orphans (leak fixed), so 'unknown' stays ~0.
+    if cost_by.get("unknown"):
+        cost_by["fcn"] = round(cost_by.get("fcn", 0.0) + cost_by.pop("unknown"), 4)
     cost_total = round(sum(cost_by.values()), 4)
     range_conversions = stats.get("conversions", 0)
     return {
