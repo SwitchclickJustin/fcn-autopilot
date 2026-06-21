@@ -1292,7 +1292,7 @@ class BotOrchestrator:
 
             # Join the top-traffic NON-gay rooms via the room directory (dynamic — replaces
             # the static room assignment). The loop then rotates broadcasts across them.
-            await self._join_top_rooms(worker, n=3, min_traffic=300)
+            await self._join_top_rooms(worker, n=3, min_traffic=50)
 
             # Start the auto-pilot loop immediately.
             worker.phase = "starting_loop"
@@ -1312,7 +1312,7 @@ class BotOrchestrator:
     # dynamic we WANT. Verified against the live room directory.
     _GAY_ROOM_RE = "gay|trans|femboy|sissy|lgbt|lgtb|bisex|m4m|men4men|mature|milf|gilf|granny|cougar|bbw"
 
-    async def _join_top_rooms(self, worker: BotWorker, n: int = 3, min_traffic: int = 300) -> list:
+    async def _join_top_rooms(self, worker: BotWorker, n: int = 3, min_traffic: int = 50) -> list:
         """Open FCN's room directory, rank non-gay rooms with >= min_traffic by traffic, and
         join this agent's slice of `n` (distributed by slot so multiple agents spread across
         the top rooms). Joining = double-click the room tile's hidden '+' button. The loop
@@ -2215,7 +2215,7 @@ class BotOrchestrator:
                             next_send = time.monotonic() + 20
                             dm_next = time.monotonic() + 10
                             await asyncio.sleep(2)
-                            await self._join_top_rooms(worker, n=3, min_traffic=300)
+                            await self._join_top_rooms(worker, n=3, min_traffic=50)
                             last_ok_mono = time.monotonic()  # recovery = progress
                         await asyncio.sleep(3)
                         continue
