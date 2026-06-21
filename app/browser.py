@@ -914,32 +914,32 @@ class BotOrchestrator:
         by_platform = {"fcn": 0.0, "chatavenue": 0.0}
         counted = 0
         start_dt = self._cost_start_dt
-        try:
-            page = 1
-            while page <= 6:
-                resp = await client.browsers.list(page=page, page_size=100)
-                items = getattr(resp, "items", None) or []
-                if not items:
-                    break
-                reached_old = False
-                for s in items:
-                    started = getattr(s, "started_at", None)
-                    if start_dt and started and started.replace(tzinfo=None) < start_dt:
-                        reached_old = True
-                        continue
-                    c = float(s.browser_cost or 0) + float(s.proxy_cost or 0)
-                    plat = self._session_platform.get(str(s.id), "fcn")
-                    by_platform[plat] = by_platform.get(plat, 0.0) + c
-                    counted += 1
-                if reached_old or len(items) < 100:
-                    break
-                page += 1
-        except Exception as e:
-            logger.warning(f"cost: browsers.list: {e}")
-        sessions_cost = round(sum(by_platform.values()), 4)
-        spent = (round(max(0.0, self._cost_start_balance - bal), 4)
-                 if bal is not None and self._cost_start_balance is not None else None)
-        total = round(spent if spent is not None else sessions_cost, 4)
+        if start_dt:                       # only meaningful while a session is running
+            try:
+                page = 1
+                while page <= 6:
+                    resp = await client.browsers.list(page=page, page_size=100)
+                    items = getattr(resp, "items", None) or []
+                    if not items:
+                        break
+                    reached_old = False
+                    for s in items:
+                        started = getattr(s, "started_at", None)
+                        if started and started.replace(tzinfo=None) < start_dt:
+                            reached_old = True
+                            continue
+                        c = float(s.browser_cost or 0) + float(s.proxy_cost or 0)
+                        plat = self._session_platform.get(str(s.id), "fcn")
+                        by_platform[plat] = by_platform.get(plat, 0.0) + c
+                        counted += 1
+                    if reached_old or len(items) < 100:
+                        break
+                    page += 1
+            except Exception as e:
+                logger.warning(f"cost: browsers.list: {e}")
+        # Per-session browser+proxy cost = the real spend on any plan (the credits balance can
+        # read $0 on subscriptions, so a balance delta is unreliable).
+        total = round(sum(by_platform.values()), 4)
         conv = 0
         try:
             if start_dt:
