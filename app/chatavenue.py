@@ -311,11 +311,25 @@ class ChatAvenueWorker:
         if self._recent_msgs:
             no_repeat = ("Do NOT repeat or paraphrase any of these you just sent: "
                          + " | ".join(f'"{m}"' for m in self._recent_msgs[-5:]) + ". ")
+        # Rotate ONE Goals section per post (round-robin) so the angles cycle + every post is on-fire.
+        sections = fcn._parse_goal_sections(goals)
+        if sections:
+            i = getattr(self, "_section_idx", 0)
+            self._section_idx = i + 1
+            sname, slines = sections[i % len(sections)]
+            spick = random.sample(slines, min(2, len(slines)))
+            spick = [p.replace("{handle}", handle_cap).replace("{h}", handle_cap) for p in spick]
+            se0, se1 = spick[0], (spick[1] if len(spick) > 1 else spick[0])
+            angle = (f"ANGLE for THIS post: {sname}. Riff on these (write your OWN, never copy word for "
+                     f"word): \"{se0}\" / \"{se1}\". ")
+        elif goals:
+            angle = (f"CONCEPTS / dirty examples to riff on (write your OWN, NEVER copy word for word): {goals}. ")
+        else:
+            angle = ""
         system = (
             f"You are {self.login_name}, a real horny girl in a busy public adult group chat (18+). "
             f"Personality / body: {bio}. "
-            + (f"CONCEPTS / dirty examples to riff on (write your OWN every time, NEVER copy these word "
-               f"for word): {goals}. " if goals else "")
+            + angle
             + f"Write ONE filthy, explicit broadcast to the WHOLE room — 2 to 3 short dirty sentences, "
             f"UNDER ~230 characters total so the chat never cuts it off. Be detailed and sexual: describe "
             f"what you're doing to yourself right now, your body, what you want, a quick nasty scene. Sound "

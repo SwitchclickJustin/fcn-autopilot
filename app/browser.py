@@ -165,6 +165,30 @@ def _has_tg_cue(text: str, tg_token: str) -> bool:
     return tg_token.replace(_ZWSP, "").lower() in flat
 
 
+def _parse_goal_sections(goals: str) -> list:
+    """Parse the persona Goals into [(section_name, [lines])]. A section = a header line ending
+    in ':' (not a bullet) followed by '- ' bullet lines. Returns [] if no sectioned bait lines
+    are found (caller then falls back to the built-in examples)."""
+    if not goals:
+        return []
+    sections, name, lines = [], None, []
+    for raw in goals.splitlines():
+        s = raw.strip()
+        if not s:
+            continue
+        if s.endswith(":") and not s.startswith("-") and len(s) < 60:
+            if name and lines:
+                sections.append((name, lines))
+            name, lines = s.rstrip(":").strip(), []
+        elif s.startswith("-"):
+            ln = s.lstrip("-").strip()
+            if ln:
+                lines.append(ln)
+    if name and lines:
+        sections.append((name, lines))
+    return [(n, l) for n, l in sections if l]
+
+
 def _force_handle(text: str, handle: str) -> str:
     """Hard-lock the handle. Replace any {handle} placeholder OR any @username the model emitted
     with the REAL handle, BARE (no @). FCN search needs the handle without an @, and the model
@@ -2709,21 +2733,38 @@ class BotOrchestrator:
                     f"tell them to continue it with you on TG {handle_cap}. "
                 )
             else:
-                # Pick a random ANGLE + a couple concrete example formats so messages vary in
-                # TYPE (often a question to the room), not just wording.
-                _ex = random.sample(_BROADCAST_EXAMPLES, 2)
-                _ex = [e.replace("{h}", handle_cap) for e in _ex]
-                room_angle = (
-                    f"Angle for this message: {random.choice(_BROADCAST_STYLES)} "
-                    f"Mix it up: sometimes ask the room a QUESTION (like 'who's bored and has TG?'), "
-                    f"sometimes a statement or tease. VARY where your handle + Tela Grahm goes: "
-                    f"sometimes lead with it, sometimes middle or end (do NOT always end with it). "
-                    f"CRITICAL: every message must include a clear CALL TO ACTION to find you — "
-                    f"e.g. 'find me {handle_cap}' / 'im {handle_cap} on there'. A question alone is a "
-                    f"dead end: 'who's on Tela Grahm rn?' is BAD; 'who's on Tela Grahm rn? if so, "
-                    f"find me {handle_cap}' is GOOD. Examples of the vibe/format (write your OWN, do "
-                    f"NOT copy these word-for-word): \"{_ex[0]}\" / \"{_ex[1]}\". "
-                )
+                # Rotate ONE section of the persona's Goals bait lines per message (round-robin)
+                # so every post is on-fire + on-brand AND the angles cycle (NASTY -> BBC -> ...).
+                _sections = _parse_goal_sections((getattr(worker, "persona", None) or {}).get("goals", ""))
+                if _sections:
+                    _i = getattr(worker, "_section_idx", 0)
+                    worker._section_idx = _i + 1
+                    _name, _lines = _sections[_i % len(_sections)]
+                    _pick = random.sample(_lines, min(2, len(_lines)))
+                    _pick = [p.replace("{handle}", handle_cap).replace("{h}", handle_cap) for p in _pick]
+                    _e0, _e1 = _pick[0], (_pick[1] if len(_pick) > 1 else _pick[0])
+                    room_angle = (
+                        f"Angle for THIS message: {_name}. Write ONE filthy, explicit broadcast in this "
+                        f"exact vibe — describe what you're doing, be nasty and urgent, sound like a real "
+                        f"horny girl not an ad. ALWAYS include a clear 'find me on TG {handle_cap}' / "
+                        f"'find me on Tela Grahm {handle_cap}' call to action (vary its position). Riff on "
+                        f"these (write your OWN, never copy word-for-word): \"{_e0}\" / \"{_e1}\". "
+                    )
+                else:
+                    # Fallback: built-in angle + example formats when Goals has no sectioned lines.
+                    _ex = random.sample(_BROADCAST_EXAMPLES, 2)
+                    _ex = [e.replace("{h}", handle_cap) for e in _ex]
+                    room_angle = (
+                        f"Angle for this message: {random.choice(_BROADCAST_STYLES)} "
+                        f"Mix it up: sometimes ask the room a QUESTION (like 'who's bored and has TG?'), "
+                        f"sometimes a statement or tease. VARY where your handle + Tela Grahm goes: "
+                        f"sometimes lead with it, sometimes middle or end (do NOT always end with it). "
+                        f"CRITICAL: every message must include a clear CALL TO ACTION to find you — "
+                        f"e.g. 'find me {handle_cap}' / 'im {handle_cap} on there'. A question alone is a "
+                        f"dead end: 'who's on Tela Grahm rn?' is BAD; 'who's on Tela Grahm rn? if so, "
+                        f"find me {handle_cap}' is GOOD. Examples of the vibe/format (write your OWN, do "
+                        f"NOT copy these word-for-word): \"{_ex[0]}\" / \"{_ex[1]}\". "
+                    )
 
             if not group_drop_handle:
                 # Redirect mode: NO handle/telegram in the text — push DMs + "check my photo"
