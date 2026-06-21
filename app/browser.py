@@ -2333,6 +2333,40 @@ class BotOrchestrator:
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM open didn't take ({len(_sndrs)} senders = room) — skip")
                                     worker.in_dm = False
+                                    # One-shot DOM diagnostic (first 3 fails per launch): why didn't the
+                                    # panel switch? Dumps URL, the actually-active tab, the read container's
+                                    # size, any OTHER message-like containers (DM may render elsewhere),
+                                    # and blocking overlays. Remove once root-caused.
+                                    _dn = getattr(worker, "_dm_diag_n", 0)
+                                    if _dn < 3:
+                                        worker._dm_diag_n = _dn + 1
+                                        try:
+                                            _diag = await worker._page.evaluate(
+                                                """(href) => {
+                                                    const act = document.querySelector('.roomlist-room.active a[href]');
+                                                    const box = document.querySelector('.room-messages-container');
+                                                    const others = [];
+                                                    document.querySelectorAll('[class*=message i],[class*=conversation i],[class*=chat i],[class*=thread i]').forEach(e => {
+                                                        const kids = e.children ? e.children.length : 0;
+                                                        const c = (e.className + '').slice(0,55);
+                                                        if (kids >= 2 && c && !others.find(o => o.c === c)) others.push({c, kids});
+                                                    });
+                                                    const ov = [];
+                                                    document.querySelectorAll('*').forEach(e => {
+                                                        const s = getComputedStyle(e);
+                                                        if ((s.position==='fixed'||s.position==='absolute') && parseInt(s.zIndex||'0')>=50) {
+                                                            const r = e.getBoundingClientRect();
+                                                            if (r.width>250 && r.height>150) ov.push((e.tagName.toLowerCase()+'.'+(e.className+'')).slice(0,38));
+                                                        }
+                                                    });
+                                                    return {url: location.href, tried: href,
+                                                            activeHref: act ? act.getAttribute('href') : null,
+                                                            boxKids: box ? box.children.length : -1,
+                                                            containers: others.slice(0,14), overlays: ov.slice(0,6)};
+                                                }""", c["href"])
+                                            logger.warning(f"[{worker.agent_id}] DM_DIAG {json.dumps(_diag)[:700]}")
+                                        except Exception as _e:
+                                            logger.warning(f"[{worker.agent_id}] DM_DIAG err {str(_e)[:120]}")
                                 elif msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
@@ -2375,6 +2409,40 @@ class BotOrchestrator:
                                 if len(_sndrs) > 2:
                                     logger.warning(f"[{worker.agent_id}] DM open didn't take ({len(_sndrs)} senders = room) — skip")
                                     worker.in_dm = False
+                                    # One-shot DOM diagnostic (first 3 fails per launch): why didn't the
+                                    # panel switch? Dumps URL, the actually-active tab, the read container's
+                                    # size, any OTHER message-like containers (DM may render elsewhere),
+                                    # and blocking overlays. Remove once root-caused.
+                                    _dn = getattr(worker, "_dm_diag_n", 0)
+                                    if _dn < 3:
+                                        worker._dm_diag_n = _dn + 1
+                                        try:
+                                            _diag = await worker._page.evaluate(
+                                                """(href) => {
+                                                    const act = document.querySelector('.roomlist-room.active a[href]');
+                                                    const box = document.querySelector('.room-messages-container');
+                                                    const others = [];
+                                                    document.querySelectorAll('[class*=message i],[class*=conversation i],[class*=chat i],[class*=thread i]').forEach(e => {
+                                                        const kids = e.children ? e.children.length : 0;
+                                                        const c = (e.className + '').slice(0,55);
+                                                        if (kids >= 2 && c && !others.find(o => o.c === c)) others.push({c, kids});
+                                                    });
+                                                    const ov = [];
+                                                    document.querySelectorAll('*').forEach(e => {
+                                                        const s = getComputedStyle(e);
+                                                        if ((s.position==='fixed'||s.position==='absolute') && parseInt(s.zIndex||'0')>=50) {
+                                                            const r = e.getBoundingClientRect();
+                                                            if (r.width>250 && r.height>150) ov.push((e.tagName.toLowerCase()+'.'+(e.className+'')).slice(0,38));
+                                                        }
+                                                    });
+                                                    return {url: location.href, tried: href,
+                                                            activeHref: act ? act.getAttribute('href') : null,
+                                                            boxKids: box ? box.children.length : -1,
+                                                            containers: others.slice(0,14), overlays: ov.slice(0,6)};
+                                                }""", c["href"])
+                                            logger.warning(f"[{worker.agent_id}] DM_DIAG {json.dumps(_diag)[:700]}")
+                                        except Exception as _e:
+                                            logger.warning(f"[{worker.agent_id}] DM_DIAG err {str(_e)[:120]}")
                                 elif msgs:
                                     state = worker._dm_state.get(other_user, {})
                                     prev_count = state.get("logged_count", 0)
