@@ -624,24 +624,45 @@ class BotWorker:
         try:
             result = await self._page.evaluate("""
                 ((limit) => {
-                    // FCN room chat: ul > li.message-item, .message-meta (user) + .message-text.
-                    const box = document.querySelector('.room-messages-container');
-                    if (!box) return [];
-                    const items = box.querySelectorAll('li.message-item');
+                    // FCN current DOM: .messages > .message-message, each with .message-meta (sender)
+                    // + .message-text/.message-body (text). Older builds used li.message-item — support
+                    // both. NOTE: no raw-children fallback — that returned text blobs the DM sanity-guard
+                    // mis-counted as a crowd, which silently broke all DM replies.
+                    let items = document.querySelectorAll('.messages .message-message');
+                    if (!items.length) items = document.querySelectorAll('.room-messages-container li.message-item');
+                    if (!items.length) items = document.querySelectorAll('.message-message');
                     const out = [];
                     for (let i = Math.max(0, items.length - (limit + 10)); i < items.length; i++) {
-                        const li = items[i];
-                        const textEl = li.querySelector('.message-text');
-                        if (!textEl) continue;
-                        const msg = (textEl.textContent || '').trim();
+                        const el = items[i];
+                        let user = '';
+                        const metaEl = el.querySelector('.message-meta');
+                        if (metaEl) {
+                            const nameEl = metaEl.querySelector('.message-author, .username, .user, .name, a, b, strong');
+                            if (nameEl && (nameEl.textContent || '').trim()) {
+                                user = (nameEl.textContent || '').trim();
+                            } else {
+                                const mc = metaEl.cloneNode(true);
+                                mc.querySelectorAll('time, .message-time, .timestamp, .time').forEach(n => n.remove());
+                                user = (mc.textContent || '').trim();
+                            }
+                            user = user.replace(/[:\\s]+$/, '');
+                        }
+                        let msg = '';
+                        const textEl = el.querySelector('.message-text');
+                        if (textEl) {
+                            msg = (textEl.textContent || '').trim();
+                        } else {
+                            const bodyEl = el.querySelector('.message-body');
+                            if (bodyEl) {
+                                const bc = bodyEl.cloneNode(true);
+                                bc.querySelectorAll('.message-meta, time, .message-time').forEach(n => n.remove());
+                                msg = (bc.textContent || '').trim();
+                            }
+                        }
                         if (!msg) continue;
-                        const metaEl = li.querySelector('.message-meta');
-                        const user = metaEl ? (metaEl.textContent || '').trim().replace(/:+$/, '') : '';
                         out.push(user ? user + ': ' + msg : msg);
                     }
-                    if (out.length) return out.slice(-limit);
-                    return Array.from(box.children).slice(-limit)
-                        .map(e => (e.textContent || '').trim()).filter(t => t);
+                    return out.slice(-limit);
                 })
             """, limit)
             return result if isinstance(result, list) else []
@@ -2359,10 +2380,12 @@ class BotOrchestrator:
                                                             if (r.width>250 && r.height>150) ov.push((e.tagName.toLowerCase()+'.'+(e.className+'')).slice(0,38));
                                                         }
                                                     });
+                                                    const sm = document.querySelector('.messages .message-message:last-of-type') || document.querySelector('.message-message');
                                                     return {url: location.href, tried: href,
                                                             activeHref: act ? act.getAttribute('href') : null,
                                                             boxKids: box ? box.children.length : -1,
-                                                            containers: others.slice(0,14), overlays: ov.slice(0,6)};
+                                                            containers: others.slice(0,14), overlays: ov.slice(0,6),
+                                                            sampleMsg: sm ? sm.outerHTML.slice(0,420) : null};
                                                 }""", c["href"])
                                             logger.warning(f"[{worker.agent_id}] DM_DIAG {json.dumps(_diag)[:700]}")
                                         except Exception as _e:
@@ -2435,10 +2458,12 @@ class BotOrchestrator:
                                                             if (r.width>250 && r.height>150) ov.push((e.tagName.toLowerCase()+'.'+(e.className+'')).slice(0,38));
                                                         }
                                                     });
+                                                    const sm = document.querySelector('.messages .message-message:last-of-type') || document.querySelector('.message-message');
                                                     return {url: location.href, tried: href,
                                                             activeHref: act ? act.getAttribute('href') : null,
                                                             boxKids: box ? box.children.length : -1,
-                                                            containers: others.slice(0,14), overlays: ov.slice(0,6)};
+                                                            containers: others.slice(0,14), overlays: ov.slice(0,6),
+                                                            sampleMsg: sm ? sm.outerHTML.slice(0,420) : null};
                                                 }""", c["href"])
                                             logger.warning(f"[{worker.agent_id}] DM_DIAG {json.dumps(_diag)[:700]}")
                                         except Exception as _e:
