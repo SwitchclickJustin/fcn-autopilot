@@ -165,6 +165,18 @@ def _has_tg_cue(text: str, tg_token: str) -> bool:
     return tg_token.replace(_ZWSP, "").lower() in flat
 
 
+def _force_handle(text: str, handle: str) -> str:
+    """Hard-lock the handle. Replace any {handle} placeholder OR any @username the model emitted
+    with the REAL handle, BARE (no @). FCN search needs the handle without an @, and the model
+    sometimes invents one ('@alexa_mia_cum') that the retired/fuzzy/login guards can't catch."""
+    clean = (handle or "").lstrip("@")
+    if not clean:
+        return text
+    text = re.sub(r"\{+\s*handle\s*\}+", clean, text, flags=re.I)   # {handle}/{{handle}} -> real
+    text = re.sub(r"@\s*[A-Za-z0-9_.]{2,40}", clean, text)          # any @username -> real, no @
+    return text
+
+
 def _obfuscate_handle(text: str, handle: str, tg_token: str) -> str:
     """Insert a zero-width space into `handle` (varying position) so FCN's scanner
     can't match it, replace telegram refs with `tg_token`, strip other platforms, and
@@ -2778,6 +2790,7 @@ class BotOrchestrator:
         # Guard: replace any RETIRED handle the model emitted with the current one BEFORE we
         # store/share/send it — a flagged old handle in the room draws heat and dead-ends guys.
         if response and handle:
+            response = _force_handle(response, handle)   # kill @usernames + {handle} placeholders first
             _orig = response
             response = _scrub_retired_handles(response, handle)
             if response != _orig:

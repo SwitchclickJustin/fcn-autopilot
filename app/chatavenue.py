@@ -329,6 +329,7 @@ class ChatAvenueWorker:
             return ""
         # reuse the FCN guard/sanitizer chain
         if handle:
+            resp = fcn._force_handle(resp, handle)        # @usernames + {handle} placeholders -> real, no @
             resp = fcn._scrub_retired_handles(resp, handle)
             resp = fcn._normalize_handle(resp, handle)
         tg = fcn._pick_tg_token(is_dm=False)
