@@ -2115,6 +2115,20 @@ class BotOrchestrator:
             logger.warning(f"[captcha] CapSolver error: {e}")
         return ""
 
+    async def _captcha_present(self, page) -> bool:
+        """Fast (~0.1s) check: is FCN's in-chat hCaptcha dialog actually showing? FCN mounts it in
+        #hcap-script as a visible hCaptcha iframe inside a .dialog-body (verified live 2026-06-22).
+        offsetParent!==null filters out lingering hidden widgets so we only rotate on a real prompt."""
+        if not page:
+            return False
+        try:
+            return bool(await page.evaluate("""() => {
+                const c = document.querySelector('#hcap-script, iframe[src*="hcaptcha"], .h-captcha');
+                return !!(c && c.offsetParent !== null);
+            }"""))
+        except Exception:
+            return False
+
     async def _handle_captcha(self, worker: BotWorker) -> bool:
         """NON-BLOCKING in-room captcha solver for FCN's hCaptcha (and Turnstile).
 
@@ -2376,6 +2390,7 @@ class BotOrchestrator:
 
         tick = 0
         ban_strikes = 0
+        captcha_strikes = 0  # in-chat captcha → rotate (FCN's hCaptcha can't be solved in-place)
         next_send = 0.0     # group-room pace gate (monotonic seconds)
         dm_next = 0.0       # hot-DM pace gate (faster)
         dm_poll_next = 0.0  # quiet-DM re-check gate (low priority, never blocks group)
@@ -2481,8 +2496,33 @@ class BotOrchestrator:
                     await self._kill_ads(worker._page)
                     _t_ads = time.monotonic()
 
-                    # Click through any in-room captcha dialog every tick.
-                    await self._handle_captcha(worker)
+                    # In-chat captcha → ROTATE to a fresh session/IP. FCN's hCaptcha is
+                    # checkbox-rendered and server-validated; an externally solved 2Captcha
+                    # token isn't accepted (callback + getResponse override both rejected,
+                    # verified 2026-06-22), so rotating is the reliable fix. Debounced 2 ticks
+                    # to ignore a transient flash. The 30-60s broadcast throttle keeps captchas
+                    # rare enough that rotation cost stays low.
+                    if await self._captcha_present(worker._page):
+                        captcha_strikes += 1
+                        logger.info(f"[{agent_id}] captcha signal #{captcha_strikes}")
+                        if captcha_strikes >= 2:
+                            captcha_strikes = 0
+                            try:
+                                await db.log_event(persona_id, "captcha", room=worker.room)
+                            except Exception:
+                                pass
+                            logger.warning(f"[{agent_id}] captcha persists — rotating session")
+                            if not await self._recover(worker):
+                                worker.status = "error"
+                                break
+                            next_send = time.monotonic() + 20
+                            dm_next = time.monotonic() + 10
+                            await asyncio.sleep(2)
+                            await self._join_top_rooms(worker, n=3, min_traffic=50)
+                            last_ok_mono = time.monotonic()
+                        await asyncio.sleep(3)
+                        continue
+                    captcha_strikes = 0
                     _t_cap = time.monotonic()
 
                     # Heavier cleanup (tip dismiss, popups, refocus) only periodically.
