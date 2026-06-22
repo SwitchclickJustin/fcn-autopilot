@@ -1526,56 +1526,50 @@ class BotOrchestrator:
             """
             await worker._page.add_init_script(_stealth_js)
 
-            # Ad guard: block ONLY known ad/pop networks by exact domain.
-            # Do NOT use broad wildcards like "**traffic**" — that matches FCN's own
-            # analytics scripts and triggers bot-detection / captchas.
-            async def _ad_guard(route):
+            # ── Network guard (CONTEXT level → also covers popup/popunder tabs) ──────────
+            # ONE handler does three jobs, cheapest-check-first:
+            #   1) Known ad/popunder networks -> abort (floor, applies even if allowlist off).
+            #      proof.ovh.net + adultsense.info added: FCN popunders pull video-ad payloads
+            #      from these (~90% of proxy bandwidth, measured via Decodo per-target spend).
+            #   2) ALLOWLIST (settings.block_thirdparty): anything not freechatnow.com / Cloudflare
+            #      is third-party -> abort. This is the real fix — popunders can't load proof.ovh.net
+            #      even when the ad script opens a fresh tab, because the rule is context-wide.
+            #   3) Media block (settings.block_media): abort image/media/font on allowed hosts too.
+            # Cloudflare is allowlisted so CF Bot Management / Turnstile login still works.
+            from urllib.parse import urlparse as _urlparse
+            _ALLOWED = ("freechatnow.com", "cloudflare.com", "cloudflareinsights.com")
+            _AD_HOSTS = ("proof.ovh.net", "adultsense.info", "12chats.com", "exoclick.com",
+                         "popads.net", "doubleclick.net", "propellerads.com", "adsterra.com",
+                         "trafficjunky.com", "popunder.net", "adnium.com", "juicyads.com")
+            _MEDIA_TYPES = {"image", "media", "font"}
+
+            def _host_in(host, doms):
+                return any(host == d or host.endswith("." + d) for d in doms)
+
+            async def _net_guard(route):
                 req = route.request
                 try:
-                    f = req.frame
-                    top_nav = req.is_navigation_request() and (f is None or f.parent_frame is None)
-                    if top_nav:
-                        await route.continue_()
-                    else:
-                        await route.abort()
+                    url = req.url
+                    if not url.startswith("http"):     # data:/blob:/ws: — local, no bandwidth
+                        await route.continue_(); return
+                    host = (_urlparse(url).hostname or "").lower()
+                    if _host_in(host, _AD_HOSTS):
+                        await route.abort(); return
+                    if settings.block_thirdparty and not _host_in(host, _ALLOWED):
+                        await route.abort(); return
+                    if settings.block_media and req.resource_type in _MEDIA_TYPES:
+                        await route.abort(); return
+                    await route.continue_()
                 except Exception:
                     try:
-                        await route.abort()
+                        await route.continue_()
                     except Exception:
                         pass
 
-            for host in ("12chats.com", "exoclick.com", "popads.net", "doubleclick.net",
-                         "propellerads.com", "adsterra.com", "trafficjunky.com",
-                         "popunder.net", "adnium.com", "juicyads.com"):
-                try:
-                    await worker._page.route(f"**{host}**", _ad_guard)
-                except Exception:
-                    pass
-
-            # Bandwidth guard: abort image/media/font downloads — the bulk of BU proxy
-            # bandwidth ($5/GB) and useless to a text-only bot (read_chat parses text;
-            # send_photo builds the File from base64, not a network fetch). Registered
-            # LAST so it runs FIRST: non-blocked types fall back to the ad-guard/default
-            # chain above, so ad-blocking is preserved. Gated by settings.block_media.
-            if settings.block_media:
-                _BLOCKED_TYPES = {"image", "media", "font"}
-
-                async def _media_guard(route):
-                    try:
-                        if route.request.resource_type in _BLOCKED_TYPES:
-                            await route.abort()
-                        else:
-                            await route.fallback()
-                    except Exception:
-                        try:
-                            await route.fallback()
-                        except Exception:
-                            pass
-
-                try:
-                    await worker._page.route("**/*", _media_guard)
-                except Exception:
-                    pass
+            try:
+                await worker._page.context.route("**/*", _net_guard)
+            except Exception:
+                pass
 
             return True
         except ImportError:

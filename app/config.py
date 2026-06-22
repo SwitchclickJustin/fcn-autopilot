@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # text + send photos from base64, neither of which loads inbound media). Set BLOCK_MEDIA=false
     # to disable if a page misbehaves.
     block_media: bool = True
+    # Block ALL third-party hosts (everything not freechatnow.com / Cloudflare). FCN's ad scripts
+    # spawn popunders that pull huge payloads from ad CDNs (e.g. proof.ovh.net) — measured at ~90%
+    # of proxy bandwidth, dwarfing the chat site itself. Applied at the browser-CONTEXT level so it
+    # also covers popup/popunder tabs (page-level routes don't). Set BLOCK_THIRDPARTY=false to
+    # disable if Cloudflare login breaks.
+    block_thirdparty: bool = True
 
     class Config:
         env_file = ".env"
