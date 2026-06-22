@@ -2021,40 +2021,65 @@ class BotOrchestrator:
         except Exception:
             pass
 
+    async def _twocaptcha_solve(self, page_url: str, sitekey: str, kind: str) -> str:
+        """Solve via 2Captcha (the hCaptcha solver — CapSolver dropped hCaptcha support).
+        kind = 'hcaptcha' | 'turnstile'. Returns the token, or '' on failure / no key.
+        Uses httpx (aiohttp is NOT a project dependency)."""
+        if not settings.twocaptcha_api_key or not sitekey:
+            return ""
+        method = {"hcaptcha": "hcaptcha", "turnstile": "turnstile"}.get(kind, "hcaptcha")
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=20) as s:
+                sub = (await s.get("https://2captcha.com/in.php", params={
+                    "key": settings.twocaptcha_api_key, "method": method,
+                    "sitekey": sitekey, "pageurl": page_url, "json": 1})).json()
+                if str(sub.get("status")) != "1":
+                    logger.warning(f"[captcha] 2captcha submit failed: {sub.get('request')}")
+                    return ""
+                cid = sub["request"]
+                for _ in range(24):     # ~2min budget (hCaptcha can take 15-60s)
+                    await asyncio.sleep(5)
+                    res = (await s.get("https://2captcha.com/res.php", params={
+                        "key": settings.twocaptcha_api_key, "action": "get",
+                        "id": cid, "json": 1})).json()
+                    if str(res.get("status")) == "1":
+                        return res["request"]
+                    if res.get("request") != "CAPCHA_NOT_READY":
+                        logger.warning(f"[captcha] 2captcha result error: {res.get('request')}")
+                        return ""
+        except Exception as e:
+            logger.warning(f"[captcha] 2captcha error: {e}")
+        return ""
+
     async def _capsolver_solve(self, page_url: str, sitekey: str, kind: str) -> str:
-        """Solve a captcha via CapSolver. kind = 'hcaptcha' | 'turnstile'. Returns the token
-        string, or '' on failure / no API key. Proxyless tasks (token is domain+sitekey bound,
-        works for FCN's normal-difficulty widgets)."""
+        """Solve via CapSolver (reCAPTCHA / Turnstile only — NOT hCaptcha, which CapSolver dropped).
+        kind = 'turnstile' | 'recaptcha'. Returns the token or ''. Uses httpx."""
         if not settings.capsolver_api_key or not sitekey:
             return ""
-        task_type = {"hcaptcha": "HCaptchaTaskProxyLess",
-                     "turnstile": "AntiTurnstileTaskProxyLess"}.get(kind)
+        task_type = {"turnstile": "AntiTurnstileTaskProxyLess",
+                     "recaptcha": "ReCaptchaV2TaskProxyLess"}.get(kind)
         if not task_type:
             return ""
         try:
-            import aiohttp
-            payload = {"clientKey": settings.capsolver_api_key,
-                       "task": {"type": task_type, "websiteURL": page_url, "websiteKey": sitekey}}
-            async with aiohttp.ClientSession() as sess:
-                async with sess.post("https://api.capsolver.com/createTask", json=payload,
-                                     timeout=aiohttp.ClientTimeout(total=10)) as r:
-                    resp = await r.json()
+            import httpx
+            async with httpx.AsyncClient(timeout=15) as s:
+                resp = (await s.post("https://api.capsolver.com/createTask", json={
+                    "clientKey": settings.capsolver_api_key,
+                    "task": {"type": task_type, "websiteURL": page_url, "websiteKey": sitekey}})).json()
                 if resp.get("errorId"):
                     logger.warning(f"[captcha] CapSolver createTask error: {resp.get('errorDescription')}")
                     return ""
                 task_id = resp.get("taskId")
                 if not task_id:
                     return ""
-                for _ in range(20):     # ~60s budget
+                for _ in range(20):
                     await asyncio.sleep(3)
-                    async with sess.post("https://api.capsolver.com/getTaskResult",
-                                         json={"clientKey": settings.capsolver_api_key, "taskId": task_id},
-                                         timeout=aiohttp.ClientTimeout(total=10)) as r2:
-                        res = await r2.json()
+                    res = (await s.post("https://api.capsolver.com/getTaskResult", json={
+                        "clientKey": settings.capsolver_api_key, "taskId": task_id})).json()
                     if res.get("status") == "ready":
                         sol = res.get("solution", {})
-                        # hCaptcha → gRecaptchaResponse; Turnstile → token. Accept either.
-                        return sol.get("gRecaptchaResponse") or sol.get("token") or ""
+                        return sol.get("token") or sol.get("gRecaptchaResponse") or ""
                     if res.get("status") == "failed" or res.get("errorId"):
                         logger.warning(f"[captcha] CapSolver solve failed: {res.get('errorDescription')}")
                         return ""
@@ -2116,10 +2141,17 @@ class BotOrchestrator:
                 logger.warning(f"[captcha] {kind} present but no sitekey found")
                 return False
             solve_kind = "hcaptcha" if kind == "hcaptcha" else "turnstile"
-            logger.info(f"[captcha] {solve_kind} detected sitekey={sitekey[:14]}… — solving via CapSolver")
-            token = await self._capsolver_solve(page.url, sitekey, solve_kind)
+            # hCaptcha → 2Captcha (CapSolver can't solve hCaptcha). Turnstile → 2Captcha if its key
+            # is set, else CapSolver. FCN's in-chat captcha is hCaptcha, so this is the live path.
+            logger.info(f"[captcha] {solve_kind} detected sitekey={sitekey[:14]}… — solving")
+            if solve_kind == "hcaptcha":
+                token = await self._twocaptcha_solve(page.url, sitekey, "hcaptcha")
+            elif settings.twocaptcha_api_key:
+                token = await self._twocaptcha_solve(page.url, sitekey, "turnstile")
+            else:
+                token = await self._capsolver_solve(page.url, sitekey, "turnstile")
             if not token:
-                logger.warning(f"[captcha] {solve_kind} CapSolver returned no token (check key/balance/type)")
+                logger.warning(f"[captcha] {solve_kind} solver returned no token (check key/balance)")
                 return False
             if solve_kind == "hcaptcha":
                 await page.evaluate("""(tok) => {
