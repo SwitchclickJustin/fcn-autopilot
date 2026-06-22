@@ -872,6 +872,8 @@ class BotOrchestrator:
         self._session_platform: dict = {}      # browser_id -> 'fcn' | 'chatavenue'
         self._cost_start_balance = None        # account balance (USD) when this session started
         self._cost_start_dt = None             # UTC datetime when this session started
+        self._cost_spent = 0.0                 # accumulated spend (sums balance DECREASES only —
+        self._cost_last_bal = None             # so a mid-session credit top-up doesn't zero it out)
         self._cost_cache = None                # (epoch, data) — 60s cache to respect rate limits
         self._cost_snapshots: list = []        # 5-min cost/conversion points for the timeline
 
@@ -985,9 +987,12 @@ class BotOrchestrator:
             return
         from datetime import datetime
         self._cost_start_dt = datetime.utcnow()
+        self._cost_spent = 0.0          # fresh session → reset the spend accumulator
+        self._cost_last_bal = None
         try:
             acct = await (await self._get_client()).billing.account()
             self._cost_start_balance = float(acct.total_credits_balance_usd)
+            self._cost_last_bal = self._cost_start_balance
             logger.info(f"cost baseline: ${self._cost_start_balance:.2f} balance @ session start")
         except Exception as e:
             logger.warning(f"cost baseline failed: {e}")
@@ -1047,8 +1052,19 @@ class BotOrchestrator:
         # no balance is available (e.g. a $0-balance subscription plan).
         persession_total = round(sum(by_platform.values()), 4)
         total = persession_total
-        if bal is not None and self._cost_start_balance is not None:
-            bal_delta = round(max(0.0, self._cost_start_balance - bal), 4)
+        if bal is not None:
+            # Accumulate spend from balance DECREASES only. A balance INCREASE = a credit top-up
+            # (not negative spend), so we just re-reference without subtracting. Fixes the old
+            # (start_balance - bal) method, which went negative → clamped to $0 the instant credits
+            # were added mid-session (the "session cost stopped" bug).
+            if self._cost_last_bal is None:
+                self._cost_last_bal = bal
+            elif bal < self._cost_last_bal:
+                self._cost_spent += (self._cost_last_bal - bal)
+                self._cost_last_bal = bal
+            elif bal > self._cost_last_bal:
+                self._cost_last_bal = bal       # top-up — move the reference up, don't count it
+            bal_delta = round(self._cost_spent, 4)
             total = bal_delta
             # apportion the authoritative total across platforms by the per-session ratio
             if persession_total > 0:
@@ -3465,6 +3481,8 @@ class BotOrchestrator:
         # New session next launch → fresh cost baseline.
         self._cost_start_dt = None
         self._cost_start_balance = None
+        self._cost_spent = 0.0
+        self._cost_last_bal = None
         self._session_platform = {}
         self._cost_cache = None
 
