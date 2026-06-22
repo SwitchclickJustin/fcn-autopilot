@@ -2116,8 +2116,10 @@ class BotOrchestrator:
                 logger.warning(f"[captcha] {kind} present but no sitekey found")
                 return False
             solve_kind = "hcaptcha" if kind == "hcaptcha" else "turnstile"
+            logger.info(f"[captcha] {solve_kind} detected sitekey={sitekey[:14]}… — solving via CapSolver")
             token = await self._capsolver_solve(page.url, sitekey, solve_kind)
             if not token:
+                logger.warning(f"[captcha] {solve_kind} CapSolver returned no token (check key/balance/type)")
                 return False
             if solve_kind == "hcaptcha":
                 await page.evaluate("""(tok) => {
@@ -2142,8 +2144,15 @@ class BotOrchestrator:
                     const f = document.querySelector('form[id*=captcha i], form[class*=captcha i]');
                     if (f) try { f.submit(); } catch(e){}
                 }""", token)
-            await page.wait_for_timeout(3000)
-            logger.info(f"[captcha] {solve_kind} CapSolver token injected ✅")
+            # Verify the inject actually cleared it (self-validation in production logs)
+            await page.wait_for_timeout(4000)
+            still = await page.evaluate("""() => !!document.querySelector(
+                '.h-captcha, iframe[src*="hcaptcha"], .cf-turnstile, iframe[src*="challenges.cloudflare"]')""")
+            if still:
+                logger.warning(f"[captcha] {solve_kind} token injected but captcha STILL present "
+                               f"(sitekey={sitekey[:14]}…) — injection needs FCN-specific tuning")
+                return False
+            logger.info(f"[captcha] {solve_kind} SOLVED + cleared ✅ (sitekey={sitekey[:14]}…)")
             return True
         except Exception as e:
             logger.warning(f"[captcha] handler error: {e}")
