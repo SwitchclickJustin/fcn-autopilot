@@ -365,6 +365,29 @@ _PROXY_WEIGHTS = {
 _PROXY_ALLOWED_CC = {"US", "CA", "GB", "AU"}
 
 
+# ── Network allowlist (bandwidth control) ────────────────────────────────────────
+# When settings.block_thirdparty is on, the per-bot network guard (_connect_cdp) allows
+# ONLY these domains; everything else (ad CDNs, popunder payloads like proof.ovh.net,
+# trackers) is aborted before it spends proxy bandwidth ($5/GB). Measured 2026-06-22:
+# this cut per-bot proxy cost ~27x (proof.ovh.net alone was ~90% of spend).
+#
+# ►►► ONBOARDING A NEW PLATFORM: add its domain(s) HERE, or that platform's own bots will
+#     have all their traffic blocked. Keep the Cloudflare entries — they're required for
+#     CF Bot Management / Turnstile login on every platform.
+PLATFORM_DOMAINS = (
+    "freechatnow.com",         # FCN bots
+    "chat-avenue.com",         # Chat Avenue bots (adultchat.chat-avenue.com, www.chat-avenue.com)
+    "cloudflare.com",          # CF challenge / Turnstile — REQUIRED for guest login
+    "cloudflareinsights.com",  # CF analytics — allowed so blocking it can't trip bot-detection
+)
+# Known ad / popunder / tracker hosts — always aborted (floor, even if allowlist disabled).
+AD_HOSTS = (
+    "proof.ovh.net", "adultsense.info", "12chats.com", "exoclick.com", "popads.net",
+    "doubleclick.net", "propellerads.com", "adsterra.com", "trafficjunky.com",
+    "popunder.net", "adnium.com", "juicyads.com",
+)
+
+
 def _build_ua_pool() -> list:
     """Build a 500+ entry UA pool spanning desktop, tablet, and mobile devices."""
     uas = []
@@ -1537,10 +1560,8 @@ class BotOrchestrator:
             #   3) Media block (settings.block_media): abort image/media/font on allowed hosts too.
             # Cloudflare is allowlisted so CF Bot Management / Turnstile login still works.
             from urllib.parse import urlparse as _urlparse
-            _ALLOWED = ("freechatnow.com", "cloudflare.com", "cloudflareinsights.com")
-            _AD_HOSTS = ("proof.ovh.net", "adultsense.info", "12chats.com", "exoclick.com",
-                         "popads.net", "doubleclick.net", "propellerads.com", "adsterra.com",
-                         "trafficjunky.com", "popunder.net", "adnium.com", "juicyads.com")
+            _ALLOWED = PLATFORM_DOMAINS
+            _AD_HOSTS = AD_HOSTS
             _MEDIA_TYPES = {"image", "media", "font"}
 
             def _host_in(host, doms):
