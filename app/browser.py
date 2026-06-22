@@ -2021,31 +2021,64 @@ class BotOrchestrator:
         except Exception:
             pass
 
-    async def _handle_captcha(self, page) -> bool:
-        """Detect and click through FCN's in-room captcha dialog.
-
-        FCN shows a Cloudflare Turnstile "I am human" checkbox modal while the
-        agent is active in the room. Since it's rendered in the main DOM (not a
-        cross-origin iframe), we can click the checkbox directly via CDP.
-
-        Falls back to CapSolver API for Turnstile tokens if CAPSOLVER_API_KEY is
-        set and the simple click path fails.
-
-        Returns True if a captcha was found and handled (or already gone).
-        """
+    async def _capsolver_solve(self, page_url: str, sitekey: str, kind: str) -> str:
+        """Solve a captcha via CapSolver. kind = 'hcaptcha' | 'turnstile'. Returns the token
+        string, or '' on failure / no API key. Proxyless tasks (token is domain+sitekey bound,
+        works for FCN's normal-difficulty widgets)."""
+        if not settings.capsolver_api_key or not sitekey:
+            return ""
+        task_type = {"hcaptcha": "HCaptchaTaskProxyLess",
+                     "turnstile": "AntiTurnstileTaskProxyLess"}.get(kind)
+        if not task_type:
+            return ""
         try:
-            # Step 1 — detect any captcha overlay in the page
-            has_captcha = await page.evaluate("""() => {
-                return !!(
-                    document.querySelector('[class*=captcha i], [id*=captcha i]') ||
-                    document.querySelector('iframe[src*="challenges.cloudflare"]') ||
-                    document.querySelector('#cf-challenge-running, .cf-turnstile')
-                );
+            import aiohttp
+            payload = {"clientKey": settings.capsolver_api_key,
+                       "task": {"type": task_type, "websiteURL": page_url, "websiteKey": sitekey}}
+            async with aiohttp.ClientSession() as sess:
+                async with sess.post("https://api.capsolver.com/createTask", json=payload,
+                                     timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    resp = await r.json()
+                if resp.get("errorId"):
+                    logger.warning(f"[captcha] CapSolver createTask error: {resp.get('errorDescription')}")
+                    return ""
+                task_id = resp.get("taskId")
+                if not task_id:
+                    return ""
+                for _ in range(20):     # ~60s budget
+                    await asyncio.sleep(3)
+                    async with sess.post("https://api.capsolver.com/getTaskResult",
+                                         json={"clientKey": settings.capsolver_api_key, "taskId": task_id},
+                                         timeout=aiohttp.ClientTimeout(total=10)) as r2:
+                        res = await r2.json()
+                    if res.get("status") == "ready":
+                        sol = res.get("solution", {})
+                        # hCaptcha → gRecaptchaResponse; Turnstile → token. Accept either.
+                        return sol.get("gRecaptchaResponse") or sol.get("token") or ""
+                    if res.get("status") == "failed" or res.get("errorId"):
+                        logger.warning(f"[captcha] CapSolver solve failed: {res.get('errorDescription')}")
+                        return ""
+        except Exception as e:
+            logger.warning(f"[captcha] CapSolver error: {e}")
+        return ""
+
+    async def _handle_captcha(self, page) -> bool:
+        """Detect + clear FCN's in-room captcha. Handles BOTH hCaptcha (FCN's in-chat anti-spam,
+        confirmed 2026-06-22) and Cloudflare Turnstile. Tries a cheap click first; falls back to
+        CapSolver (HCaptchaTaskProxyLess / AntiTurnstileTaskProxyLess) when CAPSOLVER_API_KEY is set.
+        Returns True if a captcha was found and handled."""
+        try:
+            # Step 1 — detect + classify
+            kind = await page.evaluate("""() => {
+                if (document.querySelector('.h-captcha, iframe[src*="hcaptcha"], [data-hcaptcha-widget-id]')) return 'hcaptcha';
+                if (document.querySelector('.cf-turnstile, iframe[src*="challenges.cloudflare"], #cf-challenge-running')) return 'turnstile';
+                if (document.querySelector('[class*=captcha i], [id*=captcha i]')) return 'generic';
+                return null;
             }""")
-            if not has_captcha:
+            if not kind:
                 return False
 
-            # Step 2 — try clicking the checkbox inside the captcha dialog
+            # Step 2 — cheap click path (clears Turnstile checkbox / generic dialogs; harmless for hCaptcha)
             clicked = await page.evaluate("""() => {
                 const modal = document.querySelector('[class*=captcha i], [id*=captcha i]');
                 if (modal) {
@@ -2054,77 +2087,64 @@ class BotOrchestrator:
                     const btn = modal.querySelector('button, [class*=submit i], [class*=confirm i], [class*=verify i]');
                     if (btn) { btn.click(); return 'button'; }
                 }
-                // Also try clicking the cf-turnstile widget directly
                 const cf = document.querySelector('.cf-turnstile, [data-sitekey]');
                 if (cf) { cf.click(); return 'cf_widget'; }
                 return null;
             }""")
             if clicked:
-                logger.info(f"[captcha] clicked {clicked} — waiting for auto-solve…")
                 await page.wait_for_timeout(4000)
-                # Check if it's gone
-                still_there = await page.evaluate("""() => {
-                    return !!(document.querySelector('[class*=captcha i], [id*=captcha i]') &&
-                              document.querySelector('[class*=captcha i], [id*=captcha i]').offsetParent !== null);
+                still = await page.evaluate("""() => {
+                    const e = document.querySelector('.h-captcha, .cf-turnstile, [class*=captcha i], [id*=captcha i]');
+                    return !!(e && e.offsetParent !== null);
                 }""")
-                if not still_there:
-                    logger.info("[captcha] cleared ✅")
+                if not still:
+                    logger.info(f"[captcha] {kind} cleared via click ✅")
                     return True
 
-            # Step 3 — CapSolver API fallback (for Cloudflare Turnstile tokens)
-            if settings.capsolver_api_key:
-                try:
-                    sitekey = await page.evaluate("""() => {
-                        const el = document.querySelector('[data-sitekey], .cf-turnstile, iframe[src*="challenges.cloudflare"]');
-                        if (!el) return null;
-                        return el.getAttribute('data-sitekey') ||
-                               (el.src || '').match(/k=([^&]+)/)?.[1] || null;
-                    }""")
-                    if sitekey:
-                        import aiohttp
-                        page_url = page.url
-                        payload = {
-                            "clientKey": settings.capsolver_api_key,
-                            "task": {
-                                "type": "AntiTurnstileTaskProxyLess",
-                                "websiteURL": page_url,
-                                "websiteKey": sitekey,
-                            }
-                        }
-                        async with aiohttp.ClientSession() as sess:
-                            async with sess.post("https://api.capsolver.com/createTask",
-                                                 json=payload, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                                resp = await r.json()
-                            task_id = resp.get("taskId")
-                            if task_id:
-                                for _ in range(20):
-                                    await asyncio.sleep(3)
-                                    async with sess.post("https://api.capsolver.com/getTaskResult",
-                                                         json={"clientKey": settings.capsolver_api_key,
-                                                               "taskId": task_id},
-                                                         timeout=aiohttp.ClientTimeout(total=10)) as r2:
-                                        res = await r2.json()
-                                    if res.get("status") == "ready":
-                                        token = res["solution"]["token"]
-                                        await page.evaluate("""(tok) => {
-                                            // Inject token into turnstile response field
-                                            const inp = document.querySelector('[name="cf-turnstile-response"], input[name*=turnstile]');
-                                            if (inp) inp.value = tok;
-                                            // Fire the callback if exposed
-                                            if (window.onTurnstileSuccess) window.onTurnstileSuccess(tok);
-                                            if (window.turnstileCallback) window.turnstileCallback(tok);
-                                            // Submit any captcha form
-                                            const f = document.querySelector('form[id*=captcha i], form[class*=captcha i]');
-                                            if (f) f.submit();
-                                        }""", token)
-                                        logger.info("[captcha] CapSolver token injected ✅")
-                                        return True
-                                    if res.get("status") == "failed":
-                                        break
-                except Exception as e:
-                    logger.warning(f"[captcha] CapSolver error: {e}")
-
-            return False
+            # Step 3 — CapSolver (the only thing that clears FCN's hCaptcha; BU auto-solve does not)
+            if not settings.capsolver_api_key:
+                return False
+            sitekey = await page.evaluate("""() => {
+                const el = document.querySelector('.h-captcha[data-sitekey], [data-sitekey], .cf-turnstile, '
+                         + 'iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"]');
+                if (!el) return null;
+                return el.getAttribute('data-sitekey')
+                    || ((el.src || '').match(/[?&](?:sitekey|k)=([^&]+)/) || [])[1]
+                    || null;
+            }""")
+            if not sitekey:
+                logger.warning(f"[captcha] {kind} present but no sitekey found")
+                return False
+            solve_kind = "hcaptcha" if kind == "hcaptcha" else "turnstile"
+            token = await self._capsolver_solve(page.url, sitekey, solve_kind)
+            if not token:
+                return False
+            if solve_kind == "hcaptcha":
+                await page.evaluate("""(tok) => {
+                    // Set every known hCaptcha response field
+                    document.querySelectorAll('textarea[name="h-captcha-response"], textarea[name="g-recaptcha-response"], '
+                        + '#h-captcha-response, [name="h-captcha-response"]').forEach(t => { t.value = tok; });
+                    // Invoke the widget's data-callback with the token (how the site is notified)
+                    const w = document.querySelector('.h-captcha, [data-hcaptcha-widget-id], [data-sitekey]');
+                    if (w) {
+                        const cb = w.getAttribute('data-callback');
+                        if (cb && typeof window[cb] === 'function') { try { window[cb](tok); } catch(e){} }
+                        const f = w.closest('form');
+                        if (f) { try { f.requestSubmit ? f.requestSubmit() : f.submit(); } catch(e){} }
+                    }
+                }""", token)
+            else:
+                await page.evaluate("""(tok) => {
+                    const inp = document.querySelector('[name="cf-turnstile-response"], input[name*=turnstile]');
+                    if (inp) inp.value = tok;
+                    if (window.onTurnstileSuccess) window.onTurnstileSuccess(tok);
+                    if (window.turnstileCallback) window.turnstileCallback(tok);
+                    const f = document.querySelector('form[id*=captcha i], form[class*=captcha i]');
+                    if (f) try { f.submit(); } catch(e){}
+                }""", token)
+            await page.wait_for_timeout(3000)
+            logger.info(f"[captcha] {solve_kind} CapSolver token injected ✅")
+            return True
         except Exception as e:
             logger.warning(f"[captcha] handler error: {e}")
             return False
@@ -2495,7 +2515,9 @@ class BotOrchestrator:
                             messages = await worker.read_chat(5)  # group: only need a little context
                             if messages:
                                 await self._auto_pilot_tick(worker, messages, client)
-                        next_send = now + random.randint(10, 20)  # snappier room rotation
+                        # Throttled cadence (settings.broadcast_min_s/max_s, default 30-60s) to stay
+                        # under FCN's anti-spam hCaptcha. Tunable via env without a redeploy of logic.
+                        next_send = now + random.randint(settings.broadcast_min_s, settings.broadcast_max_s)
                     elif poll_dms and now >= dm_poll_next:
                         # Low-priority safety: re-check already-replied DMs for new guy messages
                         # the badge may have missed. Runs only when no hot DM and no group send

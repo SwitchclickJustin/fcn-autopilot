@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # also covers popup/popunder tabs (page-level routes don't). Set BLOCK_THIRDPARTY=false to
     # disable if Cloudflare login breaks.
     block_thirdparty: bool = True
+    # Seconds between a bot's group-room broadcasts. Was a hardcoded 10-20s, which broadcast
+    # ~4x/min and tripped FCN's anti-spam hCaptcha fast. Slower + wider variance = far fewer
+    # captchas (less CapSolver spend) at a small exposure cost. Tune via env if needed.
+    broadcast_min_s: int = 30
+    broadcast_max_s: int = 60
 
     class Config:
         env_file = ".env"
