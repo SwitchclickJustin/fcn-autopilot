@@ -2115,112 +2115,88 @@ class BotOrchestrator:
             logger.warning(f"[captcha] CapSolver error: {e}")
         return ""
 
-    async def _handle_captcha(self, page) -> bool:
-        """Detect + clear FCN's in-room captcha. Handles BOTH hCaptcha (FCN's in-chat anti-spam,
-        confirmed 2026-06-22) and Cloudflare Turnstile. Tries a cheap click first; falls back to
-        CapSolver (HCaptchaTaskProxyLess / AntiTurnstileTaskProxyLess) when CAPSOLVER_API_KEY is set.
-        Returns True if a captcha was found and handled."""
+    async def _handle_captcha(self, worker: BotWorker) -> bool:
+        """NON-BLOCKING in-room captcha solver for FCN's hCaptcha (and Turnstile).
+
+        Called every tick. The 2Captcha solve takes 40-120s, so it runs in a BACKGROUND task
+        (worker._cap_task) — the tick never blocks on it (a blocking solve froze the bot for
+        ~125s and the page died before the token could be injected). State machine per tick:
+          1. captcha gone        → clear solve state, return
+          2. token ready         → inject (call the captured hcaptcha.render callback), verify
+          3. solve in flight     → return immediately (keep ticking, stay responsive)
+          4. no solve started    → kick off a background solve, return
+        FCN's captcha is hCaptcha (the render-hook captured its callback+sitekey on window.__hcap);
+        classification trusts that hook over racy DOM element checks."""
+        page = worker._page
+        if not page:
+            return False
         try:
-            # Step 1 — detect + classify
-            kind = await page.evaluate("""() => {
-                if (document.querySelector('.h-captcha, iframe[src*="hcaptcha"], [data-hcaptcha-widget-id]')) return 'hcaptcha';
-                if (document.querySelector('.cf-turnstile, iframe[src*="challenges.cloudflare"], #cf-challenge-running')) return 'turnstile';
-                if (document.querySelector('[class*=captcha i], [id*=captcha i]')) return 'generic';
-                return null;
+            info = await page.evaluate("""() => {
+                const hookHcap = !!(window.__hcap && (window.__hcap.sitekey || window.__hcap.cb));
+                const hcapDom = !!document.querySelector('.h-captcha, iframe[src*="hcaptcha"], [data-hcaptcha-widget-id]');
+                const turnstile = !hookHcap && !hcapDom && !!document.querySelector('.cf-turnstile, iframe[src*="challenges.cloudflare"], #cf-challenge-running');
+                const present = hookHcap || hcapDom || turnstile;
+                let sitekey = (window.__hcap && window.__hcap.sitekey) || null;
+                if (!sitekey) { const el = document.querySelector('[data-sitekey], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"]');
+                    if (el) sitekey = el.getAttribute('data-sitekey') || ((el.src||'').match(/[?&](?:sitekey|k)=([^&]+)/)||[])[1] || null; }
+                return {present, isHcap: hookHcap || hcapDom, cbReady: !!(window.__hcap && typeof window.__hcap.cb==='function'), sitekey};
             }""")
-            if not kind:
+
+            if not info["present"]:
+                worker._cap_task = None
+                worker._cap_token = None
                 return False
 
-            # Step 2 — cheap click path (clears Turnstile checkbox / generic dialogs; harmless for hCaptcha)
-            clicked = await page.evaluate("""() => {
-                const modal = document.querySelector('[class*=captcha i], [id*=captcha i]');
-                if (modal) {
-                    const cb = modal.querySelector('input[type=checkbox]');
-                    if (cb && !cb.checked) { cb.click(); return 'checkbox'; }
-                    const btn = modal.querySelector('button, [class*=submit i], [class*=confirm i], [class*=verify i]');
-                    if (btn) { btn.click(); return 'button'; }
-                }
-                const cf = document.querySelector('.cf-turnstile, [data-sitekey]');
-                if (cf) { cf.click(); return 'cf_widget'; }
-                return null;
-            }""")
-            if clicked:
-                await page.wait_for_timeout(4000)
-                still = await page.evaluate("""() => {
-                    const e = document.querySelector('.h-captcha, .cf-turnstile, [class*=captcha i], [id*=captcha i]');
-                    return !!(e && e.offsetParent !== null);
-                }""")
-                if not still:
-                    logger.info(f"[captcha] {kind} cleared via click ✅")
-                    return True
-
-            # Step 3 — solve via service (2Captcha for hCaptcha; CapSolver for Turnstile/reCAPTCHA)
-            if not (settings.twocaptcha_api_key or settings.capsolver_api_key):
-                return False
-            sitekey = await page.evaluate("""() => {
-                // Prefer the sitekey captured from hcaptcha.render() (most reliable) over DOM scraping
-                if (window.__hcap && window.__hcap.sitekey) return window.__hcap.sitekey;
-                const el = document.querySelector('.h-captcha[data-sitekey], [data-sitekey], .cf-turnstile, '
-                         + 'iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"]');
-                if (!el) return null;
-                return el.getAttribute('data-sitekey')
-                    || ((el.src || '').match(/[?&](?:sitekey|k)=([^&]+)/) || [])[1]
-                    || null;
-            }""")
-            if not sitekey:
-                logger.warning(f"[captcha] {kind} present but no sitekey found")
-                return False
-            solve_kind = "hcaptcha" if kind == "hcaptcha" else "turnstile"
-            # hCaptcha → 2Captcha (CapSolver can't solve hCaptcha). Turnstile → 2Captcha if its key
-            # is set, else CapSolver. FCN's in-chat captcha is hCaptcha, so this is the live path.
-            logger.info(f"[captcha] {solve_kind} detected sitekey={sitekey[:14]}… — solving")
-            if solve_kind == "hcaptcha":
-                token = await self._twocaptcha_solve(page.url, sitekey, "hcaptcha")
-            elif settings.twocaptcha_api_key:
-                token = await self._twocaptcha_solve(page.url, sitekey, "turnstile")
-            else:
-                token = await self._capsolver_solve(page.url, sitekey, "turnstile")
-            if not token:
-                logger.warning(f"[captcha] {solve_kind} solver returned no token (check key/balance)")
-                return False
-            if solve_kind == "hcaptcha":
+            # 2) Token ready → inject it (fast)
+            if getattr(worker, "_cap_token", None):
+                tok = worker._cap_token
+                worker._cap_token = None
+                worker._cap_task = None
                 path = await page.evaluate("""(tok) => {
-                    // Populate response fields (some flows also read these)
-                    document.querySelectorAll('textarea[name="h-captcha-response"], textarea[name="g-recaptcha-response"], '
-                        + '#h-captcha-response, [name="h-captcha-response"]').forEach(t => { t.value = tok; });
-                    // PRIMARY: call FCN's captured hcaptcha.render callback — this is how the JS-API
-                    // widget notifies FCN (no DOM data-callback exists on FCN's setup).
+                    document.querySelectorAll('textarea[name="h-captcha-response"], textarea[name="g-recaptcha-response"], #h-captcha-response').forEach(t => { t.value = tok; });
                     if (window.__hcap && typeof window.__hcap.cb === 'function') {
                         try { window.__hcap.cb(tok); return 'render-callback'; } catch(e) { return 'cb_err:' + e.message; }
                     }
-                    // FALLBACK: legacy data-callback attribute
-                    const w = document.querySelector('.h-captcha[data-callback], [data-hcaptcha-widget-id][data-callback]');
-                    if (w) {
-                        const cb = w.getAttribute('data-callback');
-                        if (cb && typeof window[cb] === 'function') { try { window[cb](tok); return 'data-callback'; } catch(e){} }
-                    }
+                    if (window.onTurnstileSuccess) { try { window.onTurnstileSuccess(tok); return 'turnstile-cb'; } catch(e){} }
                     return 'no-callback-found';
-                }""", token)
-                logger.info(f"[captcha] hcaptcha inject via: {path}")
-            else:
-                await page.evaluate("""(tok) => {
-                    const inp = document.querySelector('[name="cf-turnstile-response"], input[name*=turnstile]');
-                    if (inp) inp.value = tok;
-                    if (window.onTurnstileSuccess) window.onTurnstileSuccess(tok);
-                    if (window.turnstileCallback) window.turnstileCallback(tok);
-                    const f = document.querySelector('form[id*=captcha i], form[class*=captcha i]');
-                    if (f) try { f.submit(); } catch(e){}
-                }""", token)
-            # Verify the inject actually cleared it (self-validation in production logs)
-            await page.wait_for_timeout(4000)
-            still = await page.evaluate("""() => !!document.querySelector(
-                '.h-captcha, iframe[src*="hcaptcha"], .cf-turnstile, iframe[src*="challenges.cloudflare"]')""")
-            if still:
-                logger.warning(f"[captcha] {solve_kind} token injected but captcha STILL present "
-                               f"(sitekey={sitekey[:14]}…) — injection needs FCN-specific tuning")
+                }""", tok)
+                logger.info(f"[captcha] inject via: {path}")
+                await page.wait_for_timeout(3500)
+                still = await page.evaluate("""() => !!document.querySelector('.h-captcha, iframe[src*="hcaptcha"], .cf-turnstile, iframe[src*="challenges.cloudflare"]')""")
+                if not still:
+                    logger.info("[captcha] SOLVED + cleared ✅")
+                    return True
+                logger.warning("[captcha] token injected but captcha STILL present — callback path may need tuning")
                 return False
-            logger.info(f"[captcha] {solve_kind} SOLVED + cleared ✅ (sitekey={sitekey[:14]}…)")
-            return True
+
+            # 3) Solve in flight → collect result if done, else keep ticking (no block)
+            task = getattr(worker, "_cap_task", None)
+            if task is not None:
+                if not task.done():
+                    return False
+                try:
+                    worker._cap_token = task.result() or None
+                except Exception:
+                    worker._cap_token = None
+                worker._cap_task = None
+                if not worker._cap_token:
+                    logger.warning("[captcha] solver returned no token (will retry next detection)")
+                return False
+
+            # 4) No solve yet → start one in the background
+            if not (settings.twocaptcha_api_key or settings.capsolver_api_key):
+                return False
+            if not info["sitekey"]:
+                logger.warning("[captcha] present but no sitekey found")
+                return False
+            kind = "hcaptcha" if (info["isHcap"] or info["cbReady"]) else "turnstile"
+            logger.info(f"[captcha] {kind} detected sitekey={info['sitekey'][:14]}… — solving (background)")
+            url = page.url
+            if kind == "hcaptcha" or settings.twocaptcha_api_key:
+                worker._cap_task = asyncio.create_task(self._twocaptcha_solve(url, info["sitekey"], kind))
+            else:
+                worker._cap_task = asyncio.create_task(self._capsolver_solve(url, info["sitekey"], "turnstile"))
+            return False
         except Exception as e:
             logger.warning(f"[captcha] handler error: {e}")
             return False
@@ -2460,6 +2436,10 @@ class BotOrchestrator:
                     if worker.send_oks > last_ok:
                         last_ok = worker.send_oks
                         last_ok_mono = _t0
+                    elif getattr(worker, "_cap_task", None) is not None or getattr(worker, "_cap_token", None):
+                        # A captcha solve is in flight — a reload here would wipe the captured
+                        # hcaptcha.render callback (window.__hcap) and kill the solve. Hold off.
+                        last_ok_mono = _t0
                     elif _t0 - last_ok_mono > 90:
                         # No send in 90s. A stuck page reloads fine; a CLOSED browser (BU Cloud
                         # session TTL ~1-1.5h → TargetClosedError) cannot reload — it must be
@@ -2502,7 +2482,7 @@ class BotOrchestrator:
                     _t_ads = time.monotonic()
 
                     # Click through any in-room captcha dialog every tick.
-                    await self._handle_captcha(worker._page)
+                    await self._handle_captcha(worker)
                     _t_cap = time.monotonic()
 
                     # Heavier cleanup (tip dismiss, popups, refocus) only periodically.
