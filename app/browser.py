@@ -1555,6 +1555,34 @@ class BotOrchestrator:
             """
             await worker._page.add_init_script(_stealth_js)
 
+            # hCaptcha callback capture: FCN renders hCaptcha via the JS API
+            # (hcaptcha.render(el, {callback, sitekey})) with NO DOM data-callback, so a solved
+            # token must be delivered by CALLING that callback. This init script (runs before FCN's
+            # JS) wraps hcaptcha.render to stash the callback + sitekey on window.__hcap*, which
+            # _handle_captcha then invokes with the 2Captcha token. Also wraps hcaptcha.getResponse
+            # so any FCN polling sees the token. No-op if hCaptcha never loads.
+            _hcap_hook = """
+                (function(){
+                  window.__hcap = {cb:null, sitekey:null, widget:null};
+                  function wrap(){
+                    if(window.hcaptcha && window.hcaptcha.render && !window.hcaptcha.__wrapped){
+                      const orig = window.hcaptcha.render;
+                      window.hcaptcha.render = function(c, o){
+                        try { if(o){ window.__hcap.cb = o.callback || window.__hcap.cb;
+                                     window.__hcap.sitekey = o.sitekey || window.__hcap.sitekey; } } catch(e){}
+                        const id = orig.apply(this, arguments);
+                        try { window.__hcap.widget = id; } catch(e){}
+                        return id;
+                      };
+                      window.hcaptcha.__wrapped = true;
+                    }
+                  }
+                  let n=0; const iv=setInterval(function(){ wrap(); if((window.hcaptcha&&window.hcaptcha.__wrapped)||n++>300) clearInterval(iv); }, 100);
+                  wrap();
+                })();
+            """
+            await worker._page.add_init_script(_hcap_hook)
+
             # ── Network guard (CONTEXT level → also covers popup/popunder tabs) ──────────
             # ONE handler does three jobs, cheapest-check-first:
             #   1) Known ad/popunder networks -> abort (floor, applies even if allowlist off).
@@ -2126,10 +2154,12 @@ class BotOrchestrator:
                     logger.info(f"[captcha] {kind} cleared via click ✅")
                     return True
 
-            # Step 3 — CapSolver (the only thing that clears FCN's hCaptcha; BU auto-solve does not)
-            if not settings.capsolver_api_key:
+            # Step 3 — solve via service (2Captcha for hCaptcha; CapSolver for Turnstile/reCAPTCHA)
+            if not (settings.twocaptcha_api_key or settings.capsolver_api_key):
                 return False
             sitekey = await page.evaluate("""() => {
+                // Prefer the sitekey captured from hcaptcha.render() (most reliable) over DOM scraping
+                if (window.__hcap && window.__hcap.sitekey) return window.__hcap.sitekey;
                 const el = document.querySelector('.h-captcha[data-sitekey], [data-sitekey], .cf-turnstile, '
                          + 'iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"]');
                 if (!el) return null;
@@ -2154,19 +2184,24 @@ class BotOrchestrator:
                 logger.warning(f"[captcha] {solve_kind} solver returned no token (check key/balance)")
                 return False
             if solve_kind == "hcaptcha":
-                await page.evaluate("""(tok) => {
-                    // Set every known hCaptcha response field
+                path = await page.evaluate("""(tok) => {
+                    // Populate response fields (some flows also read these)
                     document.querySelectorAll('textarea[name="h-captcha-response"], textarea[name="g-recaptcha-response"], '
                         + '#h-captcha-response, [name="h-captcha-response"]').forEach(t => { t.value = tok; });
-                    // Invoke the widget's data-callback with the token (how the site is notified)
-                    const w = document.querySelector('.h-captcha, [data-hcaptcha-widget-id], [data-sitekey]');
+                    // PRIMARY: call FCN's captured hcaptcha.render callback — this is how the JS-API
+                    // widget notifies FCN (no DOM data-callback exists on FCN's setup).
+                    if (window.__hcap && typeof window.__hcap.cb === 'function') {
+                        try { window.__hcap.cb(tok); return 'render-callback'; } catch(e) { return 'cb_err:' + e.message; }
+                    }
+                    // FALLBACK: legacy data-callback attribute
+                    const w = document.querySelector('.h-captcha[data-callback], [data-hcaptcha-widget-id][data-callback]');
                     if (w) {
                         const cb = w.getAttribute('data-callback');
-                        if (cb && typeof window[cb] === 'function') { try { window[cb](tok); } catch(e){} }
-                        const f = w.closest('form');
-                        if (f) { try { f.requestSubmit ? f.requestSubmit() : f.submit(); } catch(e){} }
+                        if (cb && typeof window[cb] === 'function') { try { window[cb](tok); return 'data-callback'; } catch(e){} }
                     }
+                    return 'no-callback-found';
                 }""", token)
+                logger.info(f"[captcha] hcaptcha inject via: {path}")
             else:
                 await page.evaluate("""(tok) => {
                     const inp = document.querySelector('[name="cf-turnstile-response"], input[name*=turnstile]');
