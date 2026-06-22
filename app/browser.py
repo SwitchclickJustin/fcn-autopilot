@@ -379,6 +379,12 @@ PLATFORM_DOMAINS = (
     "chat-avenue.com",         # Chat Avenue bots (adultchat.chat-avenue.com, www.chat-avenue.com)
     "cloudflare.com",          # CF challenge / Turnstile — REQUIRED for guest login
     "cloudflareinsights.com",  # CF analytics — allowed so blocking it can't trip bot-detection
+    # CAPTCHA widgets — REQUIRED so the challenge can render + be solved. Blocking these leaves a
+    # blank captcha box the bot can never clear (it just rotates IP forever). Low bandwidth.
+    "hcaptcha.com",            # hCaptcha (+ newassets/imgs.hcaptcha.com via suffix match)
+    "recaptcha.net",           # reCAPTCHA
+    "gstatic.com",             # reCAPTCHA assets (www.gstatic.com/recaptcha)
+    "google.com",              # reCAPTCHA api (www.google.com/recaptcha)
 )
 # Known ad / popunder / tracker hosts — always aborted (floor, even if allowlist disabled).
 AD_HOSTS = (
