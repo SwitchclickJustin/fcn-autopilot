@@ -6,11 +6,16 @@
 
 ## 1. Goal
 
-A standalone service that, for every new Fanvue subscriber:
+A standalone service that does two jobs:
 
+**A. New-subscriber welcome** — for every new Fanvue subscriber:
 1. Sends an **instant Telegram notification** to the operator ("new sub: @handle on creator X").
 2. **~60 seconds after Fanvue's own generic auto-welcome** appears in the chat, sends a
    custom welcome message + a free photo, designed to push the fan toward Telegram.
+
+**B. Unanswered-message watchdog** — across ALL chats (any fan, new or old):
+3. If a chat has gone **unanswered for ≥5 minutes** (fan messaged, operator hasn't replied),
+   send a Telegram notification so someone goes and responds. Once per unanswered message.
 
 Must work in **both** agency mode (many managed creators under one agency token) and
 single-creator mode (one creator's own token).
@@ -56,6 +61,19 @@ honors `Retry-After` + `X-RateLimit-*` headers on 429.
 - `price: null` = **free**. (PPV floor is 300, i.e. ~$3.00 — not used here.)
 - Returns `{ messageUuid }`.
 
+### Detect unanswered chats (watchdog)
+- **Creator:** `GET /chats?filter=not_answered&sortBy=most_recent_messages&size=50`
+- **Agency:** `GET /creators/{creatorUserUuid}/chats?filter=not_answered&size=50` (per managed creator)
+- Fanvue **pre-computes** the unanswered state — `filter=not_answered` returns only chats where
+  the fan messaged and the operator hasn't replied (there's also `sortBy=most_unanswered_chats`).
+  We do NOT have to reconstruct "who replied last."
+- Each chat row gives us everything the alert needs:
+  - `user`: `uuid`, `handle`, `displayName`, `nickname` (the fan)
+  - `lastMessage`: `text`, `uuid` (stable dedupe key), `sentAt` (labelled `date` — may be
+    date-only), `senderUuid` (sanity-check it equals `user.uuid`), `type`
+  - `lastMessageAt`, `isRead`, `unreadMessagesCount`
+- Cost: **1 request per creator per loop.** Cheap.
+
 ### Resolve the welcome photo
 - **Agency:** `GET /creators/{creatorUserUuid}/vault/folders/{folderName}/media` (scopes `read:creator`, `read:media`)
 - **Creator:** `GET /vault/folders/{folderName}/media` (scope `read:media`)
@@ -96,6 +114,17 @@ plus a tiny `/health` endpoint for Railway.
                   │  source.send_message(creator, sub, text, photo) │
                   │  status=SENT  (or FAILED+retry w/ backoff)      │
                   └───────────────────────────────────────────────┘
+                  ┌───────────────────────────────────────────────┐
+  every ~60s ───▶ │ UNANSWERED WATCHDOG  (independent of new subs) │
+                  │  for each creator:                             │
+                  │    source.list_unanswered_chats(creator)        │
+                  │  upsert unanswered_watch (key: last_message_uuid)
+                  │    new last_message_uuid → reset first_seen,    │
+                  │                            notified=false       │
+                  │  if now-first_seen >= 5m AND not notified:      │
+                  │    telegram.notify_unanswered(...); notified=t  │
+                  │  rows no longer returned → answered → delete    │
+                  └───────────────────────────────────────────────┘
 ```
 
 ## 5. Mode abstraction
@@ -108,7 +137,12 @@ class SubscriberSource(Protocol):
     async def find_generic_welcome(creator_uuid, sub_uuid) -> bool   # True once AUTOMATED_NEW_SUBSCRIBER seen
     async def resolve_welcome_photo(creator_uuid) -> str | None      # media uuid or None
     async def send_message(creator_uuid, sub_uuid, text, media_uuid) -> str
+    async def list_unanswered_chats(creator_uuid) -> list[UnansweredChat]
+        # UnansweredChat(creator_uuid, user_uuid, handle, display_name, last_message_uuid, last_message_text)
 ```
+
+In agency mode, `list_unanswered_chats` is called once per managed creator (from `GET /creators`).
+In creator mode it's called once against `/chats`. Watchdog and welcome share the same creator list.
 
 - `AgencySource` → `/agencies/subscribers`, `/creators/{c}/chats/{u}/...`, `/creators/{c}/vault/...`.
   In agency mode `creator_uuid` is the real creator UUID from each row.
@@ -135,8 +169,23 @@ welcome_jobs(
   PRIMARY KEY (creator_uuid, sub_uuid)
 )
 
+unanswered_watch(
+  creator_uuid TEXT, user_uuid TEXT,
+  last_message_uuid TEXT,   -- the fan message we're watching; changes => new alert cycle
+  handle TEXT, display_name TEXT, last_message_text TEXT,
+  first_seen_at TEXT,       -- when WE first observed this chat as unanswered (anchor)
+  notified INTEGER DEFAULT 0,
+  PRIMARY KEY (creator_uuid, user_uuid)
+)
+
 meta(key TEXT PRIMARY KEY, value TEXT)   -- e.g. bootstrap_done, service_first_start
 ```
+
+**Watchdog dedupe:** keyed on (creator, user). When the `last_message_uuid` for that chat
+changes (fan sent a newer message), `first_seen_at` resets and `notified` clears — so each
+distinct unanswered message gets at most one alert. When a chat stops appearing in
+`not_answered` (operator replied), its row is deleted; if the fan messages again later it's a
+fresh row → fresh alert.
 
 `seen` is the dedupe key: **welcome once per (creator, subscriber) ever.** Re-subscribes
 are not re-welcomed in v1.
@@ -174,6 +223,11 @@ Default template (per-creator overridable via config):
 | `WELCOME_FOLDER` | — | vault folder name, default `Welcome` |
 | `WELCOME_TEXT` | — | overrides default copy |
 | `POLL_INTERVAL_SECONDS` | — | default `30` |
+| `UNANSWERED_THRESHOLD_MINUTES` | — | default `5` (alert after this long unanswered) |
+| `UNANSWERED_POLL_INTERVAL_SECONDS` | — | default `60` (watchdog loop) |
+| `UNANSWERED_RENOTIFY_MINUTES` | — | default `0` = single alert; >0 = remind every N min while still unanswered |
+| `UNANSWERED_SUBSCRIBERS_ONLY` | — | default `false`; if true, also pass `filter=subscribers` |
+| `WATCHDOG_ENABLED` | — | default `true`; lets the welcome bot run without the watchdog |
 | `ANCHOR_INTERVAL_SECONDS` | — | default `20` |
 | `ANCHOR_TIMEOUT_MINUTES` | — | default `30` (give up waiting for generic welcome) |
 | `DB_PATH` | — | default `/data/fanvue.db` (Railway volume) |
@@ -197,6 +251,10 @@ refresh_token). Flagged as a known risk, not built in v1.
   chat id** as Papacito/Aurora so all alerts land in one Telegram chat; only the header differs
   (e.g. `🟣 New Fanvue Sub!`). See memory `[[fcn-telegram-shared-bot]]` /
   `[[aurora-sale-telegram-alert]]`.
+- **Two alert types, distinct headers:**
+  - New sub: `🟣 New Fanvue Sub!` + `@handle` + creator (agency).
+  - Unanswered: `⏰ Unanswered {N}m — reply needed!` + `@handle` (+ creator) + the fan's
+    last message text (escaped, truncated ~200 chars). Call-to-action tone.
 - All loops survive individual-item errors (per-job try/except; a bad job → FAILED, not a crash).
 - State is durable in SQLite, so a restart resumes pending/awaiting jobs without double-sending
   (status transitions are the idempotency guard).
@@ -213,6 +271,20 @@ refresh_token). Flagged as a known risk, not built in v1.
   doesn't matter.
 - **Duplicate detection across restarts:** `seen` + job status prevent re-notify and re-send.
 
+**Watchdog-specific:**
+- **`lastMessage.sentAt` date-only:** we anchor the 5-min timer on `first_seen_at` (our own
+  first observation of the chat as unanswered), not on `sentAt` — so date granularity doesn't
+  matter. Trade-off: if a message was already old when the watchdog first sees it (e.g. after
+  downtime), the alert can lag by up to one extra threshold. Acceptable.
+- **Operator's own bot replying:** our welcome send (job B) counts as an operator reply, so a
+  freshly-welcomed chat won't trip the watchdog unless the fan messages again. Correct behaviour.
+- **Last message is from the operator but filter still returns it:** guard by checking
+  `lastMessage.senderUuid == user.uuid`; skip if not (defensive — shouldn't happen).
+- **Restart:** `unanswered_watch` is durable, so `notified` flags survive and we don't
+  re-alert already-alerted chats. Rows for now-answered chats are reaped on the next loop.
+- **Welcome alert vs watchdog alert for the same chat:** distinct Telegram messages with
+  distinct headers; the new-sub ping is informational, the watchdog ping is a call to action.
+
 ## 12. Testing strategy (TDD)
 
 - **FakeSource** implementing `SubscriberSource` + a fake clock to test:
@@ -221,7 +293,10 @@ refresh_token). Flagged as a known risk, not built in v1.
   - anchor transition (AWAITING_GENERIC → PENDING only after generic seen),
   - scheduler fires at/after `fire_at`, marks SENT,
   - anchor timeout → EXPIRED,
-  - restart resumes without double-send.
+  - restart resumes without double-send,
+  - **watchdog:** chat unanswered < threshold → no alert; ≥ threshold → exactly one alert;
+    new `last_message_uuid` → new alert; chat answered (drops from `not_answered`) → row reaped,
+    no alert; restart preserves `notified` (no duplicate alert); `senderUuid != user.uuid` skipped.
 - **DRY_RUN** integration mode: run against the live API read endpoints, log intended sends.
 - One real smoke test: confirm `sentAt` granularity and a real send on a throwaway sub
   before going live.
