@@ -189,6 +189,14 @@ refresh_token). Flagged as a known risk, not built in v1.
 - One shared async HTTP client with a token-bucket capped under 100/60s; on 429, sleep
   `Retry-After` then retry.
 - Telegram failures must not block the welcome send, and vice versa (independent try/except).
+- **Telegram helper reuses the Papacito/Aurora pattern** (`artifacts/api-server/src/utils/telegramNotify.ts`
+  in both repos): `POST https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage` with
+  `{ chat_id, text, parse_mode: "HTML" }`, every interpolated value HTML-escaped. Contract:
+  env-gated (missing token/chat → log warning + no-op, never throw), best-effort, never raises.
+  Ported 1:1 from TypeScript to an async `httpx` helper. Reuse the **same shared bot token +
+  chat id** as Papacito/Aurora so all alerts land in one Telegram chat; only the header differs
+  (e.g. `🟣 New Fanvue Sub!`). See memory `[[fcn-telegram-shared-bot]]` /
+  `[[aurora-sale-telegram-alert]]`.
 - All loops survive individual-item errors (per-job try/except; a bad job → FAILED, not a crash).
 - State is durable in SQLite, so a restart resumes pending/awaiting jobs without double-sending
   (status transitions are the idempotency guard).
