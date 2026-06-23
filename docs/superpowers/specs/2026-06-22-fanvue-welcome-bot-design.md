@@ -20,6 +20,16 @@ A standalone service that does two jobs:
 Must work in **both** agency mode (many managed creators under one agency token) and
 single-creator mode (one creator's own token).
 
+## 1b. Deployment & branding
+
+- **Product name / domain:** **BoltChatter.com**.
+- **v1 (this build):** headless backend service on Railway. No public web UI; only a `/health`
+  endpoint. The domain can be pointed at the service or reserved for the future dashboard.
+- **Future:** a **downloadable PWA** dashboard (operator console — view subs, alerts, override
+  copy). Out of scope for v1. When built, the PWA **install walkthrough must be copied from
+  Papacito** (`~/Projects/papacito/artifacts/papacito/public/install.html`), per standing
+  instruction — not a static GIF/MP4.
+
 ## 2. Why standalone
 
 The existing FCN Auto-Pilot app is built entirely on browser automation (Browser Use Cloud
@@ -174,7 +184,7 @@ unanswered_watch(
   last_message_uuid TEXT,   -- the fan message we're watching; changes => new alert cycle
   handle TEXT, display_name TEXT, last_message_text TEXT,
   first_seen_at TEXT,       -- when WE first observed this chat as unanswered (anchor)
-  notified INTEGER DEFAULT 0,
+  notified_at TEXT,         -- null until first alert; set to send time (supports renotify)
   PRIMARY KEY (creator_uuid, user_uuid)
 )
 
