@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # captchas (less CapSolver spend) at a small exposure cost. Tune via env if needed.
     broadcast_min_s: int = 30
     broadcast_max_s: int = 60
+    # Route FCN bots through Decodo US residential proxies instead of BU Cloud native.
+    # BU native passes CF Bot Management out-of-the-box; Decodo may get CF 522s on some IPs.
+    # Set USE_DECODO_FOR_FCN=true to A/B test cost vs ban-rate with Decodo.
+    use_decodo_for_fcn: bool = False
 
     class Config:
         env_file = ".env"

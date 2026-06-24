@@ -938,7 +938,13 @@ class BotOrchestrator:
             # Provision a verified-working US browser (NO profile → no cookies carry
             # over, so a ban can't follow us into the next session).
             worker.status = "connecting"
-            if not await self._provision_and_connect(worker):
+            _fcn_proxy = None
+            if settings.use_decodo_for_fcn:
+                # Pick a random US Decodo port. Media/third-party blocking is applied at
+                # the CDP level independently of which proxy is used.
+                _us_pool = [p for p in DECODA_PROXIES if p["host"] == "us.decodo.com"]
+                _fcn_proxy = random.choice(_us_pool)
+            if not await self._provision_and_connect(worker, custom_proxy=_fcn_proxy):
                 logger.error(f"[{agent_id}] no working US proxy after retries")
                 worker.status = "error"
                 self._workers.pop(agent_id, None)
