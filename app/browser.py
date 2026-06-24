@@ -3126,8 +3126,11 @@ class BotOrchestrator:
             try:
                 openers = await db.get_top_converting_openers(persona_id, limit=5)
                 if openers:
+                    # Scrub retired handles (e.g. DeepThroatAlexa) out of past openers BEFORE showing
+                    # them to the model — otherwise a converted opener carrying the OLD handle teaches
+                    # the model to emit it again. Output is scrubbed too, but don't feed it the dead one.
                     examples = "\n".join(
-                        f'• "{o["opener"]}" ({o["conversions"]}/{o["uses"]} converted)'
+                        f'• "{_scrub_retired_handles(o["opener"], handle)}" ({o["conversions"]}/{o["uses"]} converted)'
                         for o in openers if o["conversions"] > 0
                     )
                     if examples:
