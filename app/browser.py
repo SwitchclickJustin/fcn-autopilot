@@ -1559,22 +1559,24 @@ class BotOrchestrator:
 
             # Do NOT set a custom User-Agent via set_extra_http_headers.
             # CF's Bot Management compares the HTTP UA header against
-            # navigator.userAgent (JS) and the TLS ClientHello fingerprint —
-            # any mismatch is an immediate bot signal that blocks /api/chat/login.
-            # BU Cloud's native Chromium UA is already consistent across all three,
-            # so we leave it untouched and spoof only the non-UA signals below.
-            worker._ua = ""  # no custom UA
+            # Pick a random desktop UA per session so every bot looks like a different
+            # browser. Inject into both HTTP headers (set_extra_http_headers) AND
+            # navigator.userAgent in JS via init script — FCN's own detection checks both.
+            # CF Bot Management is already handled by BU Cloud's native residential IPs;
+            # the UA rotation targets FCN's application-level pattern matching.
+            worker._ua = random.choice(self._USER_AGENTS)
+            await worker._page.context.set_extra_http_headers({"User-Agent": worker._ua})
 
             # BU Cloud already provides a stealth browser (no navigator.webdriver,
-            # proper TLS fingerprint, real UA). Custom overrides like fake plugins
-            # arrays or spoofed hardwareConcurrency create detectable inconsistencies
-            # that CF Bot Management flags — verified: debug endpoint (zero stealth JS)
-            # passes CF consistently; production with overrides fails every time.
-            # Only remove Playwright's own automation markers which BU Cloud may not
-            # strip on every page navigation.
-            _stealth_js = """
-                try { delete window.__playwright; } catch(e) {}
-                try { delete window.__pw_manual; } catch(e) {}
+            # proper TLS fingerprint, real UA). Only remove Playwright's own automation
+            # markers and override navigator.userAgent to match the HTTP header.
+            _ua_escaped = worker._ua.replace("\\", "\\\\").replace("'", "\\'")
+            _stealth_js = f"""
+                try {{ delete window.__playwright; }} catch(e) {{}}
+                try {{ delete window.__pw_manual; }} catch(e) {{}}
+                try {{
+                    Object.defineProperty(navigator, 'userAgent', {{ get: () => '{_ua_escaped}', configurable: true }});
+                }} catch(e) {{}}
             """
             await worker._page.add_init_script(_stealth_js)
 
