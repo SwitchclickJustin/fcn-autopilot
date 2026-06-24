@@ -3029,8 +3029,25 @@ class BotOrchestrator:
             else:
                 # Rotate ONE section of the persona's Goals bait lines per message (round-robin)
                 # so every post is on-fire + on-brand AND the angles cycle (NASTY -> BBC -> ...).
-                _sections = _parse_goal_sections((getattr(worker, "persona", None) or {}).get("goals", ""))
-                if _sections:
+                _persona = getattr(worker, "persona", None) or {}
+                # User's dedicated Group Openers (one per line) → the riff pool, top priority.
+                _go_lines = [l.strip().lstrip("-•*").strip()
+                             for l in (_persona.get("group_openers", "") or "").splitlines() if l.strip()]
+                _sections = _parse_goal_sections(_persona.get("goals", ""))
+                if _go_lines:
+                    # BALANCED freedom: write fresh in our style, but ALWAYS keep the find-me CTA.
+                    _pick = random.sample(_go_lines, min(3, len(_go_lines)))
+                    _pick = [p.replace("{handle}", handle_cap).replace("{h}", handle_cap) for p in _pick]
+                    _exs = '" / "'.join(_pick)
+                    room_angle = (
+                        f"Write ONE original group broadcast in YOUR OWN words — fresh every time, never "
+                        f"recycled. Below are some of our best openers, for vibe/style INSPIRATION ONLY "
+                        f"(do NOT copy them — write something new in that spirit): \"{_exs}\". You have full "
+                        f"creative freedom on wording, angle and structure. ONE hard rule: the post MUST "
+                        f"include a clear 'find me on TG {handle_cap}' / 'find me on Tela Grahm {handle_cap}' "
+                        f"call to action — vary its wording AND position (don't always end with it). "
+                    )
+                elif _sections:
                     # Bias to a Goals section that fits THIS room's theme; else round-robin all.
                     _rl = (worker.room or "").lower()
                     _theme = [

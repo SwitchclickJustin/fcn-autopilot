@@ -16,6 +16,7 @@ class Persona(BaseModel):
     bio: str = ""
     goals: str = ""
     telegram_handle: str = ""
+    group_openers: str = ""
     default_tone: str = "casual"
     default_length: str = "medium"
     proxy_country: str = "us"
@@ -43,6 +44,7 @@ class PersonaCreate(BaseModel):
     bio: str = ""
     goals: str = ""
     telegram_handle: str = ""
+    group_openers: str = ""
     default_tone: str = "flirty"
     default_length: str = "short"
     proxy_country: str = "us"
@@ -69,6 +71,7 @@ class PersonaUpdate(BaseModel):
     bio: Optional[str] = None
     goals: Optional[str] = None
     telegram_handle: Optional[str] = None
+    group_openers: Optional[str] = None
     default_tone: Optional[str] = None
     default_length: Optional[str] = None
     proxy_country: Optional[str] = None

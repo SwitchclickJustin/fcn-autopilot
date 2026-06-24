@@ -64,6 +64,10 @@
         </div>
         <div class="text-sm text-dim">The AI will work this into conversations naturally when the Goals call for it.</div>
       </div>
+      <div class="mb"><label>📢 Group Openers (your style — for room broadcasts)</label>
+        <textarea id="p-group-openers" rows="5" placeholder="One opener per line — your own best room broadcasts. The AI riffs on these for FRESH variety (it won't copy them word-for-word) and always keeps a 'find me on TG {handle}' CTA. Use {handle} where your handle goes. e.g.&#10;who's bored and horny rn? find me {handle} on TG&#10;need someone to watch me play.. you on Tela Grahm? im {handle}&#10;first 5 guys to pull me up {handle} get a dirty pic"></textarea>
+        <div class="text-sm text-dim">Group rooms only. Leave blank to use the built-in defaults. These take priority over Goals for broadcasts.</div>
+      </div>
       <div class="mb">
         <label>🔄 Custom Proxy (optional)</label>
         <input id="p-proxy-custom" placeholder="socks5://user:pass@host:port">
@@ -219,6 +223,7 @@ async function savePersona(e) {
     bio: document.getElementById('p-bio').value.trim(),
     goals: document.getElementById('p-goals').value.trim(),
     telegram_handle: document.getElementById('p-telegram').value.trim(),
+    group_openers: document.getElementById('p-group-openers').value.trim(),
     default_tone: document.getElementById('p-tone').value,
     default_length: 'short',
     proxy_country: 'us',
@@ -272,6 +277,7 @@ async function editPersona(id) {
     document.getElementById('p-bio').value = p.bio || '';
     document.getElementById('p-goals').value = p.goals || '';
     document.getElementById('p-telegram').value = p.telegram_handle || '';
+    document.getElementById('p-group-openers').value = p.group_openers || '';
     document.getElementById('p-proxy-custom').value = p.proxy_custom || '';
     document.getElementById('p-ua').value = p.user_agent || 'random';
     if (p.default_tone) document.getElementById('p-tone').value = p.default_tone;

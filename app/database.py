@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS personas (
     bio TEXT DEFAULT '',
     goals TEXT DEFAULT '',
     telegram_handle TEXT DEFAULT '',
+    group_openers TEXT DEFAULT '',
     default_tone TEXT DEFAULT 'casual',
     default_length TEXT DEFAULT 'medium',
     proxy_country TEXT DEFAULT 'us',
@@ -184,6 +185,11 @@ async def get_db():
         # personas migration: platform tag (fcn | chatavenue) on existing prod tables
         try:
             await conn.execute("ALTER TABLE personas ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'fcn'")
+        except Exception:
+            pass
+        # personas migration: dedicated group-broadcast openers (riff pool, separate from Goals)
+        try:
+            await conn.execute("ALTER TABLE personas ADD COLUMN IF NOT EXISTS group_openers TEXT DEFAULT ''")
         except Exception:
             pass
         # persona_photos migration: add url column if the table was created with the old schema
