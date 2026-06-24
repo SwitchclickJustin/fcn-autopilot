@@ -311,9 +311,22 @@ class ChatAvenueWorker:
         if self._recent_msgs:
             no_repeat = ("Do NOT repeat or paraphrase any of these you just sent: "
                          + " | ".join(f'"{m}"' for m in self._recent_msgs[-5:]) + ". ")
+        # Group Openers (operator's own room broadcasts, one per line) → top-priority riff pool.
+        go_lines = [l.strip().lstrip("-•*").strip()
+                    for l in (self.persona.get("group_openers", "") or "").splitlines() if l.strip()]
         # Rotate ONE Goals section per post (round-robin) so the angles cycle + every post is on-fire.
         sections = fcn._parse_goal_sections(goals)
-        if sections:
+        if go_lines:
+            # BALANCED freedom: write fresh in our style, but ALWAYS keep the find-me CTA.
+            pick = random.sample(go_lines, min(3, len(go_lines)))
+            pick = [p.replace("{handle}", handle_cap).replace("{h}", handle_cap) for p in pick]
+            exs = '" / "'.join(pick)
+            angle = (f"Write ONE original broadcast in YOUR OWN words — fresh every time, never recycled. "
+                     f"Below are some of our best openers, for vibe/style INSPIRATION ONLY (do NOT copy — "
+                     f"write something new in that spirit): \"{exs}\". Full creative freedom on wording + "
+                     f"angle. ONE hard rule: include a clear 'find me on TG {handle_cap}' / 'Tela Grahm "
+                     f"{handle_cap}' call to action. ")
+        elif sections:
             i = getattr(self, "_section_idx", 0)
             self._section_idx = i + 1
             sname, slines = sections[i % len(sections)]
