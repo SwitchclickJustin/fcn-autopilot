@@ -134,16 +134,16 @@ def _safe_tg(token: str) -> str:
 # scanned + human-modded) use ONLY misspelled/spaced forms — a bare "TG" got an agent
 # booted (2026-06-19). Wide GROUP pool so the SAME platform string isn't repeated every
 # broadcast (repetition itself is a ban signal — 2026-06-19).
-_TG_TOKENS_DM = ["TG", "the TG", "on TG", "Tela Gramm", "Tella Gramm", "Tela Grahm", "Tella Gram"]
+_TG_TOKENS_DM = ["TG", "the TG", "on TG", "Tela Gra,mm", "Tella Gra.mm", "Tela Grahm", "Tella Grahm"]
 # Wide GROUP pool — many ways to say it so the SAME string is never repeated (repetition
 # is the ban trigger). "TG"/"T G" are zero-width-space protected by _safe_tg so they read
 # as TG to humans but can't be exact-string matched. All scanner-safe.
 _TG_TOKENS_GROUP = [
     "TG", "T G", "T.G.", "on TG", "TG app",
-    "Tela Gram", "Tela Gramm", "Tella Gram", "Tella Gramm", "TelaGramm",
-    "TellaGramm", "Tela Grahm", "Tella Grahm", "TelaGrahm", "TallaGrahm",
-    "Talla Grahm", "Tel A Gram", "Tel A Gramm", "Tela Graham", "Tella Graham",
-    "T3la Gramm", "T3lla Gramm", "Te1a Gramm", "T3l3gram", "T3l a Grahm",
+    "Tela' Gra.mh", "Tela?Gra.mm", "Tella Gra,hm", "Tella Grahmm", "TelaGrahmm",
+    "TellaGra,mm", "Tela,Grahm", "Tella Grahm", "TelaGrahm", "TallaGrahm",
+    "Talla Grahm", "Tel A Gra'm", "Tel A Gra'mm", "Tela Graham", "Tella Graham",
+    "T3la Gramm", "T3lla Gramm", "Te1a Gra,mm", "T3l3gram", "T3l a Grahm",
     "tlgrm",
 ]
 
