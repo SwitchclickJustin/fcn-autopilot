@@ -1669,6 +1669,18 @@ class BotOrchestrator:
         "Daisy", "Skye", "Jade", "Roxy", "Coco", "Lexi", "Demi", "Remi", "Cleo", "Tessa",
         "Hazel", "Willow", "Sienna", "Eva", "Nia", "Gemma", "Faye", "Elle", "Juno", "Cora",
         "Stella", "Penny", "Naomi", "Iris", "Layla", "Hanna", "Riley", "Paige", "Mila", "Joss",
+        # Latina-sounding names — the personas are Latinas from Miami
+        "Sofia", "Isabella", "Valentina", "Camila", "Gabriela", "Daniela", "Lucia", "Ximena",
+        "Catalina", "Carolina", "Renata", "Antonella", "Julieta", "Emilia", "Martina", "Fernanda",
+        "Alejandra", "Paloma", "Marisol", "Selena", "Jazmin", "Adriana", "Vanessa", "Lorena",
+        "Veronica", "Liliana", "Dulce", "Itzel", "Mariana", "Elena", "Regina", "Salma",
+        "Maite", "Pilar", "Carmen", "Mariela", "Lucero", "Bianca", "Florencia", "Noelia",
+    ]
+    # Optional flavor tag appended after the name (before the number) ~35% of the time, e.g.
+    # CamilaFit827, Valentinaxxx12, Sofiafun9. NOTE: "xxx" is suggestive — if FCN starts throwing
+    # "problematic username" bans, pull it (and Hot/Spicy) first.
+    _NAME_SUFFIX = [
+        "Fit", "Fun", "xxx", "Vip", "Latina", "Miami", "Hot", "Spicy", "Cutie", "Babe",
     ]
     # Softer prefixes only — dropped Naughty/Wild/Sultry/Kitten/Foxy/Babe, which read as
     # suggestive and risk FCN's "problematic username" ban (seen 2026-06-20). Also dropped
@@ -1679,10 +1691,13 @@ class BotOrchestrator:
     ]
 
     def _unique_username(self) -> str:
-        """Mint a fresh, female-sounding, high-entropy username (~75M combos)."""
+        """Mint a fresh, female/Latina-sounding, high-entropy username (~200M+ combos).
+        Shape: [prefix?] Name [suffix?] <number>  e.g. Camila4827, SweetValentina91, Sofiaxxx12."""
         name = random.choice(self._FEMALE_NAMES)
-        if random.random() < 0.45:
+        if random.random() < 0.40:
             name = random.choice(self._FLIRTY_PREFIX) + name
+        if random.random() < 0.35:
+            name = name + random.choice(self._NAME_SUFFIX)
         return f"{name}{random.randint(10, 99999)}"
 
     async def _cdp_guest_login(self, worker: BotWorker, _attempt: int = 0) -> bool:
