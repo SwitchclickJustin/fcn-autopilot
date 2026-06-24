@@ -288,6 +288,7 @@ def _force_group_cta(text: str, handle: str, tg_token: str) -> str:
 # one before sending. Add a handle here whenever you rotate the username.
 _RETIRED_HANDLES = [
     r"alexandra\s*swallows",
+    r"deep\s*throat\s*alexa",   # retired 2026-06-24 → LonelyLatina
 ]
 _RETIRED_HANDLE_RE = re.compile(r"(?:@\s*)?(?:" + "|".join(_RETIRED_HANDLES) + r")", re.I)
 
