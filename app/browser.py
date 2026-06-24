@@ -1671,9 +1671,10 @@ class BotOrchestrator:
         "Stella", "Penny", "Naomi", "Iris", "Layla", "Hanna", "Riley", "Paige", "Mila", "Joss",
     ]
     # Softer prefixes only — dropped Naughty/Wild/Sultry/Kitten/Foxy/Babe, which read as
-    # suggestive and risk FCN's "problematic username" ban (seen 2026-06-20).
+    # suggestive and risk FCN's "problematic username" ban (seen 2026-06-20). Also dropped
+    # "Sugar" 2026-06-24 — FCN flags names containing it.
     _FLIRTY_PREFIX = [
-        "Sweet", "Honey", "Sassy", "Cherry", "Sugar", "Velvet",
+        "Sweet", "Honey", "Sassy", "Cherry", "Velvet",
         "Angel", "Star", "Silk", "Peach", "Misty", "Lush", "Cozy",
     ]
 
